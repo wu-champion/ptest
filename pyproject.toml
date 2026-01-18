@@ -1,7 +1,7 @@
 [project]
 name = "ptest"
 version = "0.1.0"
-description = "Add your description here"
+description = "一个简单的测试框架"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
