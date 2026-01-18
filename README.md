@@ -11,7 +11,7 @@ pip install .
 或者从源码安装：
 
 ```bash
-git clone https://github.com/your-org/ptest.git
+git clone https://github.com/wu-champion/ptest.git
 cd ptest
 pip install -e .
 ```
