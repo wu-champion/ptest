@@ -13,7 +13,9 @@ class EnvironmentManager:
         self.config = DEFAULT_CONFIG
         self.logger = None
         
-    def init_environment(self, path) -> str:
+    def init_environment(self, path) -> object:
+        # TODO 后续计划将测试环境初始化为一个独立的隔离环境
+        # 可以尝试使用类似virtualenv的方式创建隔离环境
         """初始化测试环境"""
         self.test_path = Path(path).resolve()
         if not self.test_path.exists():
@@ -40,8 +42,8 @@ class EnvironmentManager:
                 
         self.config = load_config(config_file)
         
-        self.logger.info(f"Test environment initialized at: {self.test_path}")
-        return f"✓ Test environment initialized at: {self.test_path}"
+        self.logger.info(f"✓ Test environment initialized at: {self.test_path}")
+        return self.test_path
     
     def get_env_status(self):# -> dict[str, Any] | Literal['Environment not initialized']:
         """获取环境状态"""
