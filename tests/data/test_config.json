@@ -1,0 +1,76 @@
+{
+  "test_environments": {
+    "unit": {
+      "description": "Unit tests",
+      "database": ":memory:",
+      "timeout": 10
+    },
+    "integration": {
+      "description": "Integration tests", 
+      "database": "/tmp/ptest_test.db",
+      "timeout": 30
+    }
+  },
+  "database_configurations": {
+    "sqlite": {
+      "driver": "sqlite",
+      "database": ":memory:",
+      "timeout": 30
+    },
+    "mysql_test": {
+      "driver": "mysql",
+      "host": "localhost",
+      "port": 3306,
+      "username": "test_user",
+      "password": "test_password",
+      "database": "test_db"
+    },
+    "postgresql_test": {
+      "driver": "postgresql",
+      "host": "localhost", 
+      "port": 5432,
+      "username": "test_user",
+      "password": "test_password",
+      "database": "test_db"
+    },
+    "mongodb_test": {
+      "driver": "mongodb",
+      "host": "localhost",
+      "port": 27017,
+      "database": "test_db"
+    }
+  },
+  "test_cases": {
+    "basic_sql": {
+      "type": "database",
+      "db_object": "test_db",
+      "query": "SELECT 1 as test",
+      "expected_result": [{"test": 1}]
+    },
+    "user_count": {
+      "type": "database", 
+      "db_object": "test_db",
+      "query": "SELECT COUNT(*) as count FROM users",
+      "expected_result": {"count": 0}
+    },
+    "mongodb_query": {
+      "type": "database",
+      "db_object": "test_mongodb", 
+      "query": "{\"collection\": \"users\", \"filter\": {}}",
+      "expected_result": {"count": 0}
+    }
+  },
+  "test_data": {
+    "sample_users": [
+      {"id": 1, "name": "Alice", "email": "alice@example.com", "status": "active"},
+      {"id": 2, "name": "Bob", "email": "bob@example.com", "status": "inactive"},
+      {"id": 3, "name": "Charlie", "email": "charlie@example.com", "status": "active"}
+    ],
+    "sample_api_response": {
+      "users": [
+        {"id": 1, "name": "Alice"},
+        {"id": 2, "name": "Bob"}
+      ]
+    }
+  }
+}
