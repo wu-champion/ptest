@@ -25,6 +25,7 @@ ptest init --path /home/test/
 ```
 
 ### 管理测试对象
+以Mysql为例
 ```bash
 # 安装MySQL对象
 ptest obj install mysql my_mysql_db --version 9.9.9
