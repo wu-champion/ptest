@@ -6,11 +6,11 @@ ptest是一个全面的测试框架，用于管理测试环境、测试对象和
 
 完整的文档请访问 [docs/](../docs/) 目录：
 
-- **[用户指南](../docs/user-guide/README.md)** - 快速开始和使用说明
-- **[架构文档](../docs/architecture/)** - 系统设计和架构说明  
-- **[使用指南](../docs/guides/)** - 详细的使用指南
-- **[开发文档](../docs/development/)** - 开发规范和贡献指南
-- **[API文档](../docs/api/)** - 接口和数据格式说明
+- **[用户指南](./docs/user-guide/README.md)** - 快速开始和使用说明
+- **[架构文档](./docs/architecture/)** - 系统设计和架构说明  
+- **[使用指南](./docs/guides/)** - 详细的使用指南
+- **[开发文档](./docs/development/)** - 开发规范和贡献指南
+- **[API文档](./docs/api/)** - 接口和数据格式说明
 
 ## 🚀 快速开始
 
