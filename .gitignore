@@ -11,4 +11,4 @@ wheels/
 *.cache/
 
 # 开发过程文档
-.docs/plan/
+*.docs/plan/
