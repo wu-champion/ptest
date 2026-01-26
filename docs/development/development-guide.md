@@ -732,7 +732,7 @@ print(os.environ.get("PYTHONPATH"))
 - [pytest 文档](https://docs.pytest.org/)
 
 ### 社区
-- [GitHub Discussions](https://github.com/your-org/ptest/discussions)
+- [GitHub Discussions](https://github.com/wu-champion/ptest/discussions)
 - [Stack Overflow](https://stackoverflow.com/questions/tagged/ptest)
 - [开发者邮件列表](mailto:dev@ptest.org)
 

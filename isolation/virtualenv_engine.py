@@ -1,17 +1,29 @@
 """
-Virtualenv隔离引擎 - 占位符
+Virtualenv隔离引擎实现
 
-提供Python虚拟环境隔离功能
+提供Python虚拟环境隔离功能，包括虚拟环境创建、激活、包管理等
 """
 
-from typing import Dict, Any, List
+import os
+import sys
+import venv
+import shutil
+import subprocess
+from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
-import logging
+import json
+from datetime import datetime
+import socket
+from contextlib import closing
 
-from .base import IsolationEngine, IsolatedEnvironment
-from .enums import EnvironmentStatus
+from .base import IsolationEngine, IsolatedEnvironment, ProcessResult
+from .enums import EnvironmentStatus, ProcessStatus, IsolationEvent
 
-logger = logging.getLogger(__name__)
+# 使用框架的日志管理器
+from core import get_logger, execute_command
+
+# 使用框架的日志管理器
+logger = get_logger("virtualenv_engine")
 
 
 class VirtualenvEnvironment(IsolatedEnvironment):
@@ -22,61 +34,317 @@ class VirtualenvEnvironment(IsolatedEnvironment):
         env_id: str,
         path: Path,
         isolation_engine: "VirtualenvIsolationEngine",
-        config: Dict[str, Any] = None,
+        config: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__(env_id, path, isolation_engine, config)
+        super().__init__(env_id, path, isolation_engine, config or {})
+        self.venv_path = path / "venv"
+        self.python_path = self.venv_path / "bin" / "python"
+        self.pip_path = self.venv_path / "bin" / "pip"
+        self.activate_script = self.venv_path / "bin" / "activate"
         self.status = EnvironmentStatus.CREATED
-        # TODO: 实现Virtualenv环境创建逻辑
+        self._is_active = False
+
+    def create_virtualenv(self) -> bool:
+        """创建虚拟环境"""
+        try:
+            # 确保父目录存在
+            self.path.mkdir(parents=True, exist_ok=True)
+
+            # 获取Python解释器路径
+            python_exe = self.config.get("python_path", sys.executable)
+
+            # 创建虚拟环境
+            builder = venv.EnvBuilder(
+                system_site_packages=self.config.get("system_site_packages", False),
+                clear=self.config.get("clear", False),
+                symlinks=self.config.get("symlinks", True),
+                upgrade=self.config.get("upgrade", False),
+                with_pip=True,
+            )
+
+            logger.info(f"Creating virtual environment at {self.venv_path}")
+            builder.create(str(self.venv_path))
+
+            # 验证创建结果
+            if not self.python_path.exists():
+                raise RuntimeError(f"Python executable not found at {self.python_path}")
+
+            if not self.pip_path.exists():
+                raise RuntimeError(f"Pip executable not found at {self.pip_path}")
+
+            self.status = EnvironmentStatus.CREATED
+            self._emit_event(IsolationEvent.ENVIRONMENT_CREATED)
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to create virtual environment: {e}")
+            self.status = EnvironmentStatus.ERROR
+            return False
 
     def activate(self) -> bool:
-        # TODO: 实现虚拟环境激活
-        self.status = EnvironmentStatus.ACTIVE
-        return True
+        """激活虚拟环境"""
+        try:
+            if not self.venv_path.exists():
+                if not self.create_virtualenv():
+                    return False
+
+            # 设置环境变量
+            env = os.environ.copy()
+            env["PATH"] = f"{self.venv_path / 'bin'}:{env.get('PATH', '')}"
+            env["VIRTUAL_ENV"] = str(self.venv_path)
+            env["PYTHONPATH"] = ""
+
+            # 验证激活
+            result = subprocess.run(
+                [str(self.python_path), "-c", "import sys; print(sys.prefix)"],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=10,
+            )
+
+            if result.returncode == 0 and str(self.venv_path) in result.stdout.strip():
+                self._is_active = True
+                self.status = EnvironmentStatus.ACTIVE
+                self.activated_at = datetime.now()
+                self._emit_event(IsolationEvent.ENVIRONMENT_ACTIVATED)
+                return True
+            else:
+                logger.error("Virtual environment activation verification failed")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to activate virtual environment: {e}")
+            self.status = EnvironmentStatus.ERROR
+            return False
 
     def deactivate(self) -> bool:
-        # TODO: 实现虚拟环境停用
+        """停用虚拟环境"""
+        self._is_active = False
         self.status = EnvironmentStatus.INACTIVE
+        self.deactivated_at = datetime.now()
+        self._emit_event(IsolationEvent.ENVIRONMENT_DEACTIVATED)
         return True
 
-    def execute_command(self, cmd: List[str], timeout=None, env_vars=None, cwd=None):
-        # TODO: 实现虚拟环境中的命令执行
-        from .base import ProcessResult
+    def execute_command(
+        self,
+        cmd: List[str],
+        timeout: Optional[float] = None,
+        env_vars: Optional[Dict[str, str]] = None,
+        cwd: Optional[Path] = None,
+    ) -> ProcessResult:
+        """在虚拟环境中执行命令"""
+        start_time = datetime.now()
 
-        return ProcessResult(returncode=0, stdout="TODO", stderr="")
+        try:
+            if not self._is_active:
+                if not self.activate():
+                    return ProcessResult(
+                        returncode=1,
+                        stderr="Virtual environment not active",
+                        command=cmd,
+                        start_time=start_time,
+                    )
+
+            # 设置环境变量
+            env = os.environ.copy()
+            env["PATH"] = f"{self.venv_path / 'bin'}:{env.get('PATH', '')}"
+            env["VIRTUAL_ENV"] = str(self.venv_path)
+            env["PYTHONPATH"] = ""
+
+            # 添加自定义环境变量
+            if env_vars:
+                env.update(env_vars)
+
+            # 执行命令
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=cwd or self.path,
+                timeout=timeout or self.config.get("command_timeout", 300),
+            )
+
+            return ProcessResult(
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                command=cmd,
+                timeout=timeout,
+                start_time=start_time,
+                end_time=datetime.now(),
+            )
+
+        except subprocess.TimeoutExpired:
+            return ProcessResult(
+                returncode=-1,
+                stderr=f"Command timed out after {timeout} seconds",
+                command=cmd,
+                timeout=timeout,
+                start_time=start_time,
+                end_time=datetime.now(),
+            )
+        except Exception as e:
+            return ProcessResult(
+                returncode=1,
+                stderr=str(e),
+                command=cmd,
+                timeout=timeout,
+                start_time=start_time,
+                end_time=datetime.now(),
+            )
 
     def install_package(
-        self, package: str, version: str = None, upgrade: bool = False
+        self, package: str, version: Optional[str] = None, upgrade: bool = False
     ) -> bool:
-        # TODO: 实现包安装
-        return False
+        """安装Python包"""
+        try:
+            package_spec = package
+            if version:
+                package_spec = f"{package}=={version}"
+
+            cmd = [str(self.pip_path), "install"]
+            if upgrade:
+                cmd.append("--upgrade")
+            cmd.append(package_spec)
+
+            # 设置超时
+            timeout = self.config.get("pip_timeout", 300)
+
+            result = self.execute_command(cmd, timeout=timeout)
+
+            if result.success:
+                logger.info(f"Successfully installed package: {package_spec}")
+                self._emit_event(IsolationEvent.PACKAGE_INSTALLED, package=package_spec)
+                return True
+            else:
+                logger.error(
+                    f"Failed to install package {package_spec}: {result.stderr}"
+                )
+                return False
+
+        except Exception as e:
+            logger.error(f"Error installing package {package}: {e}")
+            return False
 
     def uninstall_package(self, package: str) -> bool:
-        # TODO: 实现包卸载
-        return False
+        """卸载Python包"""
+        try:
+            cmd = [str(self.pip_path), "uninstall", "-y", package]
+
+            result = self.execute_command(
+                cmd, timeout=self.config.get("pip_timeout", 300)
+            )
+
+            if result.success:
+                logger.info(f"Successfully uninstalled package: {package}")
+                self._emit_event(IsolationEvent.PACKAGE_INSTALLED, package=package)
+                return True
+            else:
+                logger.error(f"Failed to uninstall package {package}: {result.stderr}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error uninstalling package {package}: {e}")
+            return False
 
     def get_installed_packages(self) -> Dict[str, str]:
-        # TODO: 实现包列表获取
-        return {}
+        """获取已安装的包列表"""
+        try:
+            cmd = [str(self.pip_path), "list", "--format=json"]
+            result = self.execute_command(cmd, timeout=30)
 
-    def get_package_version(self, package: str) -> str:
-        # TODO: 实现包版本获取
-        return ""
+            if result.success:
+                packages = json.loads(result.stdout)
+                return {pkg["name"]: pkg["version"] for pkg in packages}
+            else:
+                logger.error(f"Failed to get package list: {result.stderr}")
+                return {}
+
+        except Exception as e:
+            logger.error(f"Error getting package list: {e}")
+            return {}
+
+    def get_package_version(self, package: str) -> Optional[str]:
+        """获取特定包的版本"""
+        packages = self.get_installed_packages()
+        return packages.get(package.lower())
 
     def allocate_port(self) -> int:
-        # TODO: 实现端口分配
-        return 0
+        """分配端口"""
+        return self._find_free_port()
 
     def release_port(self, port: int) -> bool:
-        # TODO: 实现端口释放
+        """释放端口"""
+        if port in self.allocated_ports:
+            self.allocated_ports.remove(port)
+            return True
         return False
 
+    def _find_free_port(self) -> int:
+        """查找可用端口"""
+        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+            s.bind(("", 0))
+            s.listen(1)
+            port = s.getsockname()[1]
+        self.allocated_ports.append(port)
+        return port
+
     def cleanup(self, force: bool = False) -> bool:
-        # TODO: 实现环境清理
-        return True
+        """清理虚拟环境"""
+        try:
+            # 先停用环境
+            if self._is_active:
+                self.deactivate()
+
+            # 删除虚拟环境目录
+            if self.venv_path.exists():
+                shutil.rmtree(str(self.venv_path), ignore_errors=force)
+
+            # 删除整个环境目录（如果为空）
+            if force and self.path.exists() and not any(self.path.iterdir()):
+                self.path.rmdir()
+
+            self.status = EnvironmentStatus.CLEANUP_COMPLETE
+            self._emit_event(IsolationEvent.ENVIRONMENT_CLEANUP_COMPLETE)
+            return True
+
+        except Exception as e:
+            logger.error(f"Error cleaning up environment: {e}")
+            if not force:
+                self.status = EnvironmentStatus.ERROR
+                return False
+            return True  # 强制清理时即使出错也返回True
 
     def validate_isolation(self) -> bool:
-        # TODO: 实现隔离验证
-        return True
+        """验证隔离有效性"""
+        try:
+            # 检查虚拟环境是否存在
+            if not self.venv_path.exists():
+                return False
+
+            # 检查Python解释器是否存在
+            if not self.python_path.exists():
+                return False
+
+            # 验证Python解释器是否使用虚拟环境
+            result = subprocess.run(
+                [str(self.python_path), "-c", "import sys; print(sys.prefix)"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            if result.returncode == 0:
+                python_prefix = result.stdout.strip()
+                return str(self.venv_path) == python_prefix
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error validating isolation: {e}")
+            return False
 
 
 class VirtualenvIsolationEngine(IsolationEngine):
@@ -90,24 +358,60 @@ class VirtualenvIsolationEngine(IsolationEngine):
             "process_execution",
             "port_allocation",
         ]
-        # TODO: 初始化Virtualenv相关配置
+        # 初始化Virtualenv相关配置
+        self.default_config = {
+            "python_path": sys.executable,
+            "system_site_packages": False,
+            "clear": False,
+            "symlinks": True,
+            "upgrade": False,
+            "command_timeout": 300,
+            "pip_timeout": 300,
+            "max_env_size": "1GB",
+        }
+        # 合并用户配置
+        self.engine_config = {**self.default_config, **config}
 
     def create_isolation(
         self, path: Path, env_id: str, isolation_config: Dict[str, Any]
-    ) -> VirtualenvEnvironment:
-        # TODO: 实现Virtualenv环境创建
-        env = VirtualenvEnvironment(env_id, path, self, isolation_config)
+    ) -> IsolatedEnvironment:
+        """创建Virtualenv隔离环境"""
+        # 合并引擎配置和隔离配置
+        final_config = {**self.engine_config, **isolation_config}
+
+        env = VirtualenvEnvironment(env_id, path, self, final_config)
+
+        # 创建虚拟环境
+        if not env.create_virtualenv():
+            logger.error(f"Failed to create virtual environment for {env_id}")
+            raise RuntimeError(f"Virtual environment creation failed for {env_id}")
+
         self.created_environments[env_id] = env
+        logger.info(f"Created virtual environment: {env_id} at {path}")
         return env
 
-    def cleanup_isolation(self, env: VirtualenvEnvironment) -> bool:
-        # TODO: 实现Virtualenv环境清理
-        return env.cleanup(force=True)
+    def cleanup_isolation(self, env: IsolatedEnvironment) -> bool:
+        """清理隔离环境"""
+        if isinstance(env, VirtualenvEnvironment):
+            success = env.cleanup(force=True)
+            if success:
+                # 从引擎的创建环境列表中移除
+                if env.env_id in self.created_environments:
+                    del self.created_environments[env.env_id]
+                logger.info(
+                    f"Successfully cleaned up virtual environment: {env.env_id}"
+                )
+            else:
+                logger.error(f"Failed to clean up virtual environment: {env.env_id}")
+            return success
+        else:
+            logger.error(f"Invalid environment type for Virtualenv engine: {type(env)}")
+            return False
 
     def get_isolation_status(self, env_id: str) -> Dict[str, Any]:
-        # TODO: 实现状态查询
+        """获取隔离状态"""
         if env_id not in self.created_environments:
-            return {"status": "not_found"}
+            return {"status": "not_found", "isolation_type": "virtualenv"}
 
         env = self.created_environments[env_id]
         status = env.get_status()
@@ -115,13 +419,44 @@ class VirtualenvIsolationEngine(IsolationEngine):
             {
                 "isolation_type": "virtualenv",
                 "supported_features": self.supported_features,
+                "engine_config": self.engine_config,
             }
         )
+
+        # 添加Virtualenv特定的属性（如果适用）
+        if isinstance(env, VirtualenvEnvironment):
+            status.update(
+                {
+                    "venv_path": str(env.venv_path),
+                    "python_path": str(env.python_path),
+                }
+            )
         return status
 
-    def validate_isolation(self, env: VirtualenvEnvironment) -> bool:
-        # TODO: 实现隔离验证
-        return env.validate_isolation()
+    def validate_isolation(self, env: IsolatedEnvironment) -> bool:
+        """验证隔离有效性"""
+        if isinstance(env, VirtualenvEnvironment):
+            is_valid = env.validate_isolation()
+            logger.debug(f"Validation result for {env.env_id}: {is_valid}")
+            return is_valid
+        else:
+            logger.error(f"Invalid environment type for Virtualenv engine: {type(env)}")
+            return False
 
     def get_supported_features(self) -> List[str]:
+        """获取支持的功能列表"""
         return self.supported_features.copy()
+
+    def get_engine_info(self) -> Dict[str, Any]:
+        """获取引擎信息"""
+        info = super().get_engine_info()
+        info.update(
+            {
+                "engine_type": "virtualenv",
+                "python_version": sys.version,
+                "python_executable": sys.executable,
+                "engine_config": self.engine_config,
+                "venv_module_available": hasattr(venv, "EnvBuilder"),
+            }
+        )
+        return info
