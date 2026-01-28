@@ -402,11 +402,9 @@ class VirtualenvEnvironment(IsolatedEnvironment):
             "is_active": self._is_active,
         }
 
-    def _validate_python_executable(self) -> bool:
-        """验证Python解释器是否可用"""
-        # 检查Python解释器是否存在
-        if not self.python_path.exists():
-            return False
+            # 检查Python解释器是否存在
+            if not self.python_path.exists():
+                return False
 
             # 验证Python解释器是否使用虚拟环境
             result = subprocess.run(

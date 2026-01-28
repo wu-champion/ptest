@@ -7,22 +7,9 @@ try:
     from .service import ServiceObject
     from .db import DBObject
     from .db_enhanced import DatabaseServerObject, DatabaseClientObject
+    from ..utils import get_colored_text
 except ImportError as e:
     print(f"Warning: Failed to import some object classes: {e}")
-    WebObject = None
-    ServiceObject = None
-    DBObject = None
-    DatabaseServerObject = None
-    DatabaseClientObject = None
-
-try:
-    from ..utils import get_colored_text
-except ImportError:
-    try:
-        from ptest.utils import get_colored_text
-    except ImportError:
-        get_colored_text = str
-        print("Warning: get_colored_text function not available")
 
     # 简单的占位符类
     class WebObject:

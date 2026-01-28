@@ -10,5 +10,5 @@ wheels/
 .venv
 *.cache/
 
-# 开发过程文档
-*.docs/plan/
+# 开发过程文档 - 排除个人开发计划
+docs/plan/

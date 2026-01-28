@@ -2,29 +2,21 @@
 from pathlib import Path
 import json
 from datetime import datetime
-
-try:
-    from ..utils import get_colored_text
-except ImportError:
-    from ptest.utils import get_colored_text
-
+from ..utils import get_colored_text
 
 class ReportGenerator:
     """报告生成器"""
-
+    
     def __init__(self, env_manager, case_manager):
         self.env_manager = env_manager
         self.case_manager = case_manager
-        # 确保report_dir是Path对象
-        if not isinstance(env_manager.report_dir, Path):
-            self.env_manager.report_dir = Path(env_manager.report_dir)
-
+        
     def generate_html_report(self):
         """生成HTML报告"""
         total_cases = len(self.case_manager.cases)
         passed_count = len(self.case_manager.passed_cases)
         failed_count = len(self.case_manager.failed_cases)
-
+        
         html_content = f"""
 <!DOCTYPE html>
 <html>
@@ -47,7 +39,7 @@ class ReportGenerator:
 <body>
     <div class="header">
         <h1>ptest Test Report</h1>
-        <p>Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+        <p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
         <p>Test Environment: {self.env_manager.test_path}</p>
     </div>
     
@@ -68,14 +60,12 @@ class ReportGenerator:
         </thead>
         <tbody>
 """
-
+        
         for case_id, result in self.case_manager.results.items():
-            status_class = (
-                "status-passed" if result.status == "passed" else "status-failed"
-            )
+            status_class = "status-passed" if result.status == "passed" else "status-failed"
             error_msg = result.error_message or ""
             duration = f"{result.duration:.2f}" if result.duration > 0 else "N/A"
-
+            
             html_content += f"""
             <tr>
                 <td>{case_id}</td>
@@ -84,25 +74,21 @@ class ReportGenerator:
                 <td>{error_msg}</td>
             </tr>
 """
-
+        
         html_content += """
         </tbody>
     </table>
 </body>
 </html>
 """
-
-        report_file = (
-            Path(self.env_manager.report_dir)
-            / f"test_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-        )
-        with open(report_file, "w") as f:
+        
+        report_file = self.env_manager.report_dir / f"test_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+        with open(report_file, 'w') as f:
             f.write(html_content)
-
-        # 简化日志输出，避免logger依赖问题
-        print(f"HTML report generated: {report_file}")
+        
+        self.env_manager.logger.info(f"HTML report generated: {report_file}")
         return str(report_file)
-
+    
     def generate_json_report(self):
         """生成JSON报告"""
         report_data = {
@@ -111,33 +97,27 @@ class ReportGenerator:
             "summary": {
                 "total_cases": len(self.case_manager.cases),
                 "passed": len(self.case_manager.passed_cases),
-                "failed": len(self.case_manager.failed_cases),
+                "failed": len(self.case_manager.failed_cases)
             },
-            "results": {},
+            "results": {}
         }
-
+        
         for case_id, result in self.case_manager.results.items():
             report_data["results"][case_id] = {
                 "status": result.status,
                 "duration": result.duration,
                 "error_message": result.error_message,
-                "start_time": result.start_time.isoformat()
-                if result.start_time
-                else None,
-                "end_time": result.end_time.isoformat() if result.end_time else None,
+                "start_time": result.start_time.isoformat() if result.start_time else None,
+                "end_time": result.end_time.isoformat() if result.end_time else None
             }
-
-        report_file = (
-            Path(self.env_manager.report_dir)
-            / f"test_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        )
-        with open(report_file, "w") as f:
+        
+        report_file = self.env_manager.report_dir / f"test_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(report_file, 'w') as f:
             json.dump(report_data, f, indent=2)
-
-        # 简化日志输出，避免logger依赖问题
-        print(f"JSON report generated: {report_file}")
+        
+        self.env_manager.logger.info(f"JSON report generated: {report_file}")
         return str(report_file)
-
+    
     def generate_report(self, format_type: str = "html"):
         """
         生成测试报告
