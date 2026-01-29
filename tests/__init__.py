@@ -87,7 +87,7 @@ ensure_test_dirs()
 
 # 导出配置和工具
 __all__ = [
-    "TEST_CONFIG",
+    "DEFAULT_TEST_CONFIG",
     "TEST_ENV_VARS",
     "HAS_PYTEST",
     "HAS_UNITTEST",

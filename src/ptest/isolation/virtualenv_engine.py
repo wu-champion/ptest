@@ -9,6 +9,8 @@ import sys
 import venv
 import shutil
 import subprocess
+import time
+import uuid
 from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
 import json
@@ -79,14 +81,95 @@ class VirtualenvEnvironment(IsolatedEnvironment):
         except Exception as e:
             logger.error(f"Failed to create virtual environment: {e}")
             self.status = EnvironmentStatus.ERROR
-            return False
+return False
 
-    def activate(self) -> bool:
-        """激活虚拟环境"""
+    def validate_isolation(self) -> bool:
         try:
             if not self.venv_path.exists():
-                if not self.create_virtualenv():
-                    return False
+                return False
+            if not self.python_path.exists():
+                return False
+            if not self._is_active:
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Error validating isolation: {e}")
+            return False
+
+class VirtualenvIsolationEngine(IsolationEngine):
+    """Virtualenv隔离引擎实现"""
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self.supported_features = [
+            "filesystem_isolation",
+            "python_package_isolation",
+            "process_execution",
+            "port_allocation",
+        ]
+
+        self.default_config = {
+            "python_path": sys.executable,
+            "system_site_packages": False,
+            "clear": False,
+            "symlinks": True,
+            "upgrade": False,
+        }
+        self.engine_config = {**self.default_config, **config}
+
+    def create_isolation(
+        self, path: Path, env_id: str, isolation_config: Dict[str, Any]
+    ) -> IsolatedEnvironment:
+        final_config = {**self.engine_config, **isolation_config}
+        env = VirtualenvEnvironment(env_id, path, self, final_config)
+        if not env.create_virtualenv():
+            raise RuntimeError(f"Virtual environment creation failed for {env_id}")
+        self.created_environments[env_id] = env
+        logger.info(f"Created virtual environment: {env_id} at {path}")
+        return env
+
+    def cleanup_isolation(self, env: IsolatedEnvironment) -> bool:
+        if isinstance(env, VirtualenvEnvironment):
+            success = env.cleanup(force=True)
+            if success and env.env_id in self.created_environments:
+                del self.created_environments[env.env_id]
+            return success
+        else:
+            logger.error(f"Invalid environment type for Virtualenv engine: {type(env)}")
+            return False
+
+    def get_isolation_status(self, env_id: str) -> Dict[str, Any]:
+        if env_id not in self.created_environments:
+            return {"status": "not_found", "isolation_type": "virtualenv"}
+        env = self.created_environments[env_id]
+        status = env.get_status()
+        status.update({
+            "isolation_type": "virtualenv",
+            "supported_features": self.supported_features,
+            "engine_config": self.engine_config,
+        })
+        return status
+
+    def validate_isolation(self, env: IsolatedEnvironment) -> bool:
+        if isinstance(env, VirtualenvEnvironment):
+            return env.validate_isolation()
+        else:
+            logger.error(f"Invalid environment type for Virtualenv engine: {type(env)}")
+            return False
+
+    def get_supported_features(self) -> List[str]:
+        return self.supported_features.copy()
+
+    def get_engine_info(self) -> Dict[str, Any]:
+        info = super().get_engine_info()
+        info.update({
+            "engine_type": "virtualenv",
+            "python_version": sys.version,
+            "python_executable": sys.executable,
+            "engine_config": self.engine_config,
+            "venv_module_available": hasattr(venv, "EnvBuilder"),
+        })
+        return info
 
             # 设置环境变量
             env = os.environ.copy()
@@ -318,223 +401,14 @@ class VirtualenvEnvironment(IsolatedEnvironment):
             return True  # 强制清理时即使出错也返回True
 
     def validate_isolation(self) -> bool:
-        """验证隔离有效性"""
         try:
-            # 检查虚拟环境路径是否存在
             if not self.venv_path.exists():
                 return False
-            
-            # 检查Python解释器是否存在
             if not self.python_path.exists():
                 return False
-                
-            # 检查环境是否激活
             if not self._is_active:
                 return False
-                
             return True
-            
         except Exception as e:
             logger.error(f"Error validating isolation: {e}")
             return False
-
-
-
-    def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
-        """从快照恢复Virtualenv环境"""
-        try:
-            snapshot_id = snapshot.get("snapshot_id")
-            self.logger.info(f"Restoring Virtualenv environment {self.env_id} from snapshot {snapshot_id}")
-            
-            # 调用基类恢复
-            if not super().restore_from_snapshot(snapshot):
-                return False
-            
-            # 恢复Virtualenv特有状态
-            virtualenv_info = snapshot.get("virtualenv_info", {})
-            
-            # 如果环境被停用，尝试重新激活
-            if not self._is_active and self.venv_path.exists():
-                self.activate()
-            
-            # 重新安装包（如果需要）
-            if "installed_packages" in virtualenv_info:
-                packages = virtualenv_info["installed_packages"]
-                current_packages = self.get_installed_packages()
-                
-                # 恢复缺失的包
-                for package, version in packages.items():
-                    if package not in current_packages or current_packages[package] != version:
-                        self.logger.info(f"Restoring package {package}=={version}")
-                        if not self.install_package(f"{package}=={version}"):
-                            self.logger.warning(f"Failed to restore package {package}=={version}")
-            
-            self.logger.info(f"Successfully restored Virtualenv environment from snapshot {snapshot_id}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to restore from snapshot: {e}")
-            return False
-
-    def delete_snapshot(self, snapshot_id: str) -> bool:
-        """删除Virtualenv快照"""
-        # 对于Virtualenv，快照只是配置，不需要特殊清理
-        return super().delete_snapshot(snapshot_id)
-
-    def list_snapshots(self) -> List[Dict[str, Any]]:
-        """列出所有快照"""
-        # Virtualenv引擎本身不存储快照，由管理器处理
-        return super().list_snapshots()
-
-    def export_snapshot_data(self) -> Dict[str, Any]:
-        """导出快照数据"""
-        return {
-            "env_id": self.env_id,
-            "env_type": "virtualenv",
-            "venv_path": str(self.venv_path),
-            "python_path": str(self.python_path),
-            "pip_path": str(self.pip_path),
-            "config": self.config,
-            "installed_packages": self.get_installed_packages(),
-            "allocated_ports": self.allocated_ports,
-            "status": self.status.value,
-            "created_at": self.created_at.isoformat(),
-            "is_active": self._is_active,
-        }
-
-            # 检查Python解释器是否存在
-            if not self.python_path.exists():
-                return False
-
-            # 验证Python解释器是否使用虚拟环境
-            result = subprocess.run(
-                [str(self.python_path), "-c", "import sys; print(sys.prefix)"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-
-            if result.returncode == 0:
-                python_prefix = result.stdout.strip()
-                return str(self.venv_path) == python_prefix
-
-            return False
-
-        except Exception as e:
-            logger.error(f"Error validating isolation: {e}")
-            return False
-
-
-class VirtualenvIsolationEngine(IsolationEngine):
-    """Virtualenv隔离引擎实现"""
-
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-        self.supported_features = [
-            "filesystem_isolation",
-            "python_package_isolation",
-            "process_execution",
-            "port_allocation",
-        ]
-        # 初始化Virtualenv相关配置
-        self.default_config = {
-            "python_path": sys.executable,
-            "system_site_packages": False,
-            "clear": False,
-            "symlinks": True,
-            "upgrade": False,
-            "command_timeout": 300,
-            "pip_timeout": 300,
-            "max_env_size": "1GB",
-        }
-        # 合并用户配置
-        self.engine_config = {**self.default_config, **config}
-
-    def create_isolation(
-        self, path: Path, env_id: str, isolation_config: Dict[str, Any]
-    ) -> IsolatedEnvironment:
-        """创建Virtualenv隔离环境"""
-        # 合并引擎配置和隔离配置
-        final_config = {**self.engine_config, **isolation_config}
-
-        env = VirtualenvEnvironment(env_id, path, self, final_config)
-
-        # 创建虚拟环境
-        if not env.create_virtualenv():
-            logger.error(f"Failed to create virtual environment for {env_id}")
-            raise RuntimeError(f"Virtual environment creation failed for {env_id}")
-
-        self.created_environments[env_id] = env
-        logger.info(f"Created virtual environment: {env_id} at {path}")
-        return env
-
-    def cleanup_isolation(self, env: IsolatedEnvironment) -> bool:
-        """清理隔离环境"""
-        if isinstance(env, VirtualenvEnvironment):
-            success = env.cleanup(force=True)
-            if success:
-                # 从引擎的创建环境列表中移除
-                if env.env_id in self.created_environments:
-                    del self.created_environments[env.env_id]
-                logger.info(
-                    f"Successfully cleaned up virtual environment: {env.env_id}"
-                )
-            else:
-                logger.error(f"Failed to clean up virtual environment: {env.env_id}")
-            return success
-        else:
-            logger.error(f"Invalid environment type for Virtualenv engine: {type(env)}")
-            return False
-
-    def get_isolation_status(self, env_id: str) -> Dict[str, Any]:
-        """获取隔离状态"""
-        if env_id not in self.created_environments:
-            return {"status": "not_found", "isolation_type": "virtualenv"}
-
-        env = self.created_environments[env_id]
-        status = env.get_status()
-        status.update(
-            {
-                "isolation_type": "virtualenv",
-                "supported_features": self.supported_features,
-                "engine_config": self.engine_config,
-            }
-        )
-
-        # 添加Virtualenv特定的属性（如果适用）
-        if isinstance(env, VirtualenvEnvironment):
-            status.update(
-                {
-                    "venv_path": str(env.venv_path),
-                    "python_path": str(env.python_path),
-                }
-            )
-        return status
-
-    def validate_isolation(self, env: IsolatedEnvironment) -> bool:
-        """验证隔离有效性"""
-        if isinstance(env, VirtualenvEnvironment):
-            is_valid = env.validate_isolation()
-            logger.debug(f"Validation result for {env.env_id}: {is_valid}")
-            return is_valid
-        else:
-            logger.error(f"Invalid environment type for Virtualenv engine: {type(env)}")
-            return False
-
-    def get_supported_features(self) -> List[str]:
-        """获取支持的功能列表"""
-        return self.supported_features.copy()
-
-    def get_engine_info(self) -> Dict[str, Any]:
-        """获取引擎信息"""
-        info = super().get_engine_info()
-        info.update(
-            {
-                "engine_type": "virtualenv",
-                "python_version": sys.version,
-                "python_executable": sys.executable,
-                "engine_config": self.engine_config,
-                "venv_module_available": hasattr(venv, "EnvBuilder"),
-            }
-        )
-        return info

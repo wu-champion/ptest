@@ -304,8 +304,7 @@ VIRTUAL_ENV_CONFIG = {
 
 
 
-[•] 
-实现并行安装器 (ParallelInstaller)
+
 [ ] 
 更新virtualenv_engine.py集成新功能
 [ ] 

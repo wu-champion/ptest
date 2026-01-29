@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .base import IsolationEngine, IsolatedEnvironment
 from .enums import IsolationLevel, EnvironmentStatus, IsolationEvent
-from core import get_logger
+from ..core import get_logger
 
 # 使用框架的日志管理器
 logger = get_logger("isolation_manager")

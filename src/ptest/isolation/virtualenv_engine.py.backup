@@ -9,6 +9,8 @@ import sys
 import venv
 import shutil
 import subprocess
+import time
+import uuid
 from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
 import json
@@ -323,55 +325,180 @@ class VirtualenvEnvironment(IsolatedEnvironment):
             # 检查虚拟环境路径是否存在
             if not self.venv_path.exists():
                 return False
-            
+
             # 检查Python解释器是否存在
             if not self.python_path.exists():
                 return False
-                
+
             # 检查环境是否激活
             if not self._is_active:
                 return False
-                
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Error validating isolation: {e}")
             return False
 
+    def create_snapshot(self, snapshot_id: Optional[str] = None) -> Dict[str, Any]:
+        """创建Virtualenv环境快照"""
+        try:
+            if snapshot_id is None:
+                timestamp = int(time.time())
+                snapshot_id = f"venv_snapshot_{timestamp}_{uuid.uuid4().hex[:8]}"
 
+            self.logger.info(
+                f"Creating snapshot {snapshot_id} for Virtualenv environment {self.env_id}"
+            )
+
+            snapshot_data = {
+                "snapshot_id": snapshot_id,
+                "env_id": self.env_id,
+                "created_at": datetime.now().isoformat(),
+                "env_type": "virtualenv",
+                "virtualenv_info": {
+                    "venv_path": str(self.venv_path),
+                    "python_path": str(self.python_path),
+                    "pip_path": str(self.pip_path),
+                    "config": self.config,
+                    "is_active": self._is_active,
+                    "allocated_ports": list(self.allocated_ports),
+                    "status": self.status.value,
+                    "python_version": self._get_python_version(),
+                },
+            }
+
+            try:
+                installed_packages = self.get_installed_packages()
+                snapshot_data["virtualenv_info"]["installed_packages"] = (
+                    installed_packages
+                )
+                self.logger.info(
+                    f"Captured {len(installed_packages)} packages in snapshot"
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to capture package information: {e}")
+                snapshot_data["virtualenv_info"]["installed_packages"] = {}
+
+            try:
+                config_files = self._backup_config_files()
+                snapshot_data["virtualenv_info"]["config_files"] = config_files
+            except Exception as e:
+                self.logger.warning(f"Failed to backup config files: {e}")
+                snapshot_data["virtualenv_info"]["config_files"] = {}
+
+            try:
+                custom_scripts = self._backup_custom_scripts()
+                snapshot_data["virtualenv_info"]["custom_scripts"] = custom_scripts
+            except Exception as e:
+                self.logger.warning(f"Failed to backup custom scripts: {e}")
+                snapshot_data["virtualenv_info"]["custom_scripts"] = {}
+
+            self._emit_event(IsolationEvent.SNAPSHOT_CREATED, snapshot_id=snapshot_id)
+
+            self.logger.info(f"Successfully created snapshot {snapshot_id}")
+            return snapshot_data
+
+        except Exception as e:
+            self.logger.error(f"Failed to create snapshot: {e}")
+            self._emit_event(IsolationEvent.ERROR_OCCURRED, error=str(e))
+            raise
+
+    def _get_python_version(self) -> str:
+        try:
+            if self.python_path.exists():
+                result = subprocess.run(
+                    [str(self.python_path), "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode == 0:
+                    return result.stdout.strip()
+        except Exception:
+            pass
+        return "unknown"
+
+    def _backup_config_files(self) -> Dict[str, str]:
+        config_files = {}
+        important_files = [
+            "pip.conf",
+            "setup.cfg",
+            "pyproject.toml",
+            "requirements.txt",
+            "Pipfile",
+        ]
+
+        for filename in important_files:
+            file_path = self.path / filename
+            if file_path.exists():
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    config_files[filename] = content
+                except Exception as e:
+                    self.logger.warning(f"Failed to read {filename}: {e}")
+
+        return config_files
+
+    def _backup_custom_scripts(self) -> Dict[str, str]:
+        scripts = {}
+        scripts_dir = self.path / "scripts"
+
+        if scripts_dir.exists() and scripts_dir.is_dir():
+            for script_file in scripts_dir.glob("*.py"):
+                try:
+                    with open(script_file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    scripts[script_file.name] = content
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to read script {script_file.name}: {e}"
+                    )
+
+        return scripts
 
     def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
         """从快照恢复Virtualenv环境"""
         try:
             snapshot_id = snapshot.get("snapshot_id")
-            self.logger.info(f"Restoring Virtualenv environment {self.env_id} from snapshot {snapshot_id}")
-            
+            self.logger.info(
+                f"Restoring Virtualenv environment {self.env_id} from snapshot {snapshot_id}"
+            )
+
             # 调用基类恢复
             if not super().restore_from_snapshot(snapshot):
                 return False
-            
+
             # 恢复Virtualenv特有状态
             virtualenv_info = snapshot.get("virtualenv_info", {})
-            
+
             # 如果环境被停用，尝试重新激活
             if not self._is_active and self.venv_path.exists():
                 self.activate()
-            
+
             # 重新安装包（如果需要）
             if "installed_packages" in virtualenv_info:
                 packages = virtualenv_info["installed_packages"]
                 current_packages = self.get_installed_packages()
-                
+
                 # 恢复缺失的包
                 for package, version in packages.items():
-                    if package not in current_packages or current_packages[package] != version:
+                    if (
+                        package not in current_packages
+                        or current_packages[package] != version
+                    ):
                         self.logger.info(f"Restoring package {package}=={version}")
                         if not self.install_package(f"{package}=={version}"):
-                            self.logger.warning(f"Failed to restore package {package}=={version}")
-            
-            self.logger.info(f"Successfully restored Virtualenv environment from snapshot {snapshot_id}")
+                            self.logger.warning(
+                                f"Failed to restore package {package}=={version}"
+                            )
+
+            self.logger.info(
+                f"Successfully restored Virtualenv environment from snapshot {snapshot_id}"
+            )
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Failed to restore from snapshot: {e}")
             return False
@@ -401,30 +528,6 @@ class VirtualenvEnvironment(IsolatedEnvironment):
             "created_at": self.created_at.isoformat(),
             "is_active": self._is_active,
         }
-
-    def _validate_python_executable(self) -> bool:
-        """验证Python解释器是否可用"""
-        # 检查Python解释器是否存在
-        if not self.python_path.exists():
-            return False
-
-            # 验证Python解释器是否使用虚拟环境
-            result = subprocess.run(
-                [str(self.python_path), "-c", "import sys; print(sys.prefix)"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-
-            if result.returncode == 0:
-                python_prefix = result.stdout.strip()
-                return str(self.venv_path) == python_prefix
-
-            return False
-
-        except Exception as e:
-            logger.error(f"Error validating isolation: {e}")
-            return False
 
 
 class VirtualenvIsolationEngine(IsolationEngine):

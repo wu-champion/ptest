@@ -7,6 +7,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+import time
 from typing import Dict, Any, Optional, List, Union, Callable
 from pathlib import Path
 import logging
@@ -190,6 +191,37 @@ class IsolatedEnvironment(ABC):
         pass
 
     # 快照功能作为抽象方法，由具体引擎实现
+
+    def create_snapshot(self, snapshot_id: Optional[str] = None) -> Dict[str, Any]:
+        """创建环境快照 - 子类可重写"""
+        if snapshot_id is None:
+            timestamp = int(time.time())
+            snapshot_id = f"snapshot_{timestamp}"
+
+        return {
+            "snapshot_id": snapshot_id,
+            "env_id": self.env_id,
+            "created_at": datetime.now().isoformat(),
+            "env_type": self.__class__.__name__,
+            "status": self.status.value,
+            "config": self.config,
+        }
+
+    def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
+        """从快照恢复环境 - 子类可重写"""
+        self.logger.info(
+            f"Restoring environment {self.env_id} from snapshot {snapshot.get('snapshot_id')}"
+        )
+        return True
+
+    def delete_snapshot(self, snapshot_id: str) -> bool:
+        """删除快照 - 子类可重写"""
+        self.logger.info(f"Deleting snapshot {snapshot_id}")
+        return True
+
+    def list_snapshots(self) -> List[Dict[str, Any]]:
+        """列出快照 - 由管理器处理"""
+        return []
 
     def get_status(self) -> Dict[str, Any]:
         """获取环境状态"""

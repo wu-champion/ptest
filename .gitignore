@@ -12,3 +12,6 @@ wheels/
 
 # 开发过程文档 - 排除个人开发计划
 docs/plan/
+
+*.opencode/
+oh-my-opencode
