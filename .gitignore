@@ -10,8 +10,24 @@ wheels/
 .venv
 *.cache/
 
-# 开发过程文档 - 排除个人开发计划
-docs/plan/
-
-*.opencode/
+# 开发工具和环境
+.opencode/
 oh-my-opencode
+*.opencode/
+
+# 文档/计划 - 不上传GitHub
+docs/plan/
+session-*.md
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+pytest.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

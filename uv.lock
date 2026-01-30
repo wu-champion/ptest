@@ -130,7 +130,7 @@ wheels = [
 [[package]]
 name = "ptest"
 version = "1.0.1"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "colorama" },
     { name = "docker" },
