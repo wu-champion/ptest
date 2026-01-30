@@ -914,3 +914,256 @@ class IsolationManager:
             f"Cleaned up {deleted_count} old snapshots (older than {days_old} days)"
         )
         return deleted_count
+
+    # ========== P2级批量操作方法 (FRAMEWORK-001) ==========
+
+    def create_environments_bulk(
+        self,
+        env_configs: List[Dict[str, Any]],
+        path_template: str = "{env_id}",
+        isolation_level: Optional[str] = None,
+    ) -> Dict[str, IsolatedEnvironment]:
+        """批量创建环境
+
+        Args:
+            env_configs: 环境配置列表
+            path_template: 路径模板，支持{env_id}占位符
+            isolation_level: 可选，指定隔离级别
+
+        Returns:
+            创建的环境字典 {env_id: environment}
+        """
+        from datetime import datetime
+
+        environments = {}
+        start_time = datetime.now()
+        self.logger.info(f"Starting bulk creation of {len(env_configs)} environments")
+
+        for i, config in enumerate(env_configs, 1):
+            env_id = config.get("env_id", f"env_{uuid.uuid4().hex[:8]}")
+            path = Path(path_template.format(env_id=env_id))
+
+            try:
+                if isolation_level:
+                    env = self.create_environment(path, isolation_level, config)
+                else:
+                    env = self.create_environment(
+                        path, config.get("isolation_level"), config
+                    )
+                environments[env_id] = env
+                self.logger.info(
+                    f"[{i}/{len(env_configs)}] Created environment {env_id}"
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to create environment {env_id}: {e}")
+                # 继续创建其他环境，不中断整个批量操作
+
+        elapsed = (datetime.now() - start_time).total_seconds()
+        self.logger.info(
+            f"Bulk creation completed: {len(environments)}/{len(env_configs)} "
+            f"environments created in {elapsed:.2f}s"
+        )
+
+        return environments
+
+    def cleanup_environments_bulk(
+        self, env_ids: Optional[List[str]] = None, force: bool = False
+    ) -> Dict[str, bool]:
+        """批量清理环境
+
+        Args:
+            env_ids: 环境ID列表，如果为None则清理所有环境
+            force: 是否强制清理
+
+        Returns:
+            清理结果 {env_id: success}
+        """
+        from datetime import datetime
+
+        # 如果没有指定env_ids，则清理所有环境
+        if env_ids is None:
+            env_ids = list(self.active_environments.keys())
+
+        if not env_ids:
+            self.logger.warning("No environments to cleanup")
+            return {}
+
+        results = {}
+        start_time = datetime.now()
+        self.logger.info(f"Starting bulk cleanup of {len(env_ids)} environments")
+
+        for i, env_id in enumerate(env_ids, 1):
+            env = self.active_environments.get(env_id)
+            if env:
+                try:
+                    success = self.cleanup_environment(env, force=force)
+                    results[env_id] = success
+                    status = "✓" if success else "✗"
+                    self.logger.info(
+                        f"[{i}/{len(env_ids)}] Cleaned environment {env_id}: {status}"
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to cleanup environment {env_id}: {e}")
+                    results[env_id] = False
+            else:
+                self.logger.warning(f"Environment {env_id} not found")
+                results[env_id] = False
+
+        elapsed = (datetime.now() - start_time).total_seconds()
+        success_count = sum(1 for success in results.values() if success)
+        self.logger.info(
+            f"Bulk cleanup completed: {success_count}/{len(env_ids)} "
+            f"environments cleaned in {elapsed:.2f}s"
+        )
+
+        return results
+
+    def check_environments_health(
+        self, env_ids: Optional[List[str]] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """检查所有环境的健康状态
+
+        Args:
+            env_ids: 环境ID列表，如果为None则检查所有环境
+
+        Returns:
+            {env_id: {
+                "status": "healthy" | "unhealthy" | "unknown",
+                "last_check": ISO timestamp,
+                "details": Dict[str, Any]
+            }}
+        """
+        from datetime import datetime
+
+        # 如果没有指定env_ids，则检查所有环境
+        if env_ids is None:
+            env_ids = list(self.active_environments.keys())
+
+        if not env_ids:
+            self.logger.warning("No environments to check health")
+            return {}
+
+        health_status = {}
+        self.logger.info(f"Starting health check for {len(env_ids)} environments")
+
+        for env_id in env_ids:
+            env = self.active_environments.get(env_id)
+            if env:
+                try:
+                    # 基础健康检查：环境路径是否存在
+                    path_exists = env.path.exists()
+
+                    # 特定引擎的健康检查
+                    engine_health = env.isolation_engine.check_environment_health(env)
+
+                    status = "healthy" if path_exists and engine_health else "unhealthy"
+
+                    health_status[env_id] = {
+                        "status": status,
+                        "last_check": datetime.now().isoformat(),
+                        "details": {
+                            "path_exists": path_exists,
+                            "engine_healthy": engine_health,
+                            "env_type": env.__class__.__name__,
+                            "isolation_level": env.isolation_engine.isolation_level.value,
+                        },
+                    }
+                except Exception as e:
+                    health_status[env_id] = {
+                        "status": "unhealthy",
+                        "last_check": datetime.now().isoformat(),
+                        "details": {"error": str(e), "error_type": type(e).__name__},
+                    }
+            else:
+                health_status[env_id] = {
+                    "status": "unknown",
+                    "last_check": datetime.now().isoformat(),
+                    "details": {"error": f"Environment {env_id} not found"},
+                }
+
+        # 统计结果
+        healthy_count = sum(
+            1 for status in health_status.values() if status.get("status") == "healthy"
+        )
+
+        self.logger.info(
+            f"Health check completed: {healthy_count}/{len(env_ids)} healthy"
+        )
+
+        return health_status
+
+    def collect_environment_metrics(
+        self, env_ids: Optional[List[str]] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """收集环境指标
+
+        Args:
+            env_ids: 环境ID列表，如果为None则收集所有环境
+
+        Returns:
+            {env_id: {
+                "resource_usage": {...},
+                "performance": {...},
+                "status": {...}
+            }}
+        """
+        from datetime import datetime
+
+        # 如果没有指定env_ids，则收集所有环境
+        if env_ids is None:
+            env_ids = list(self.active_environments.keys())
+
+        if not env_ids:
+            self.logger.warning("No environments to collect metrics")
+            return {}
+
+        metrics = {}
+        self.logger.info(f"Starting metrics collection for {len(env_ids)} environments")
+
+        for env_id in env_ids:
+            env = self.active_environments.get(env_id)
+            if env:
+                try:
+                    # 基础指标：磁盘使用
+                    disk_usage = 0
+                    if env.path.exists():
+                        disk_usage = sum(
+                            f.stat().st_size for f in env.path.rglob("*") if f.is_file()
+                        )
+
+                    # 引擎特定指标
+                    engine_metrics = env.isolation_engine.get_environment_metrics(env)
+
+                    metrics[env_id] = {
+                        "resource_usage": {
+                            "disk_bytes": disk_usage,
+                            "disk_mb": disk_usage / (1024 * 1024),
+                            "disk_gb": disk_usage / (1024 * 1024 * 1024),
+                        },
+                        "performance": engine_metrics.get("performance", {}),
+                        "status": {
+                            "state": env.status.value,
+                            "env_type": env.__class__.__name__,
+                            "isolation_level": env.isolation_engine.isolation_level.value,
+                            "collected_at": datetime.now().isoformat(),
+                        },
+                    }
+                except Exception as e:
+                    metrics[env_id] = {
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "collection_failed": True,
+                        "collected_at": datetime.now().isoformat(),
+                    }
+            else:
+                metrics[env_id] = {
+                    "error": f"Environment {env_id} not found",
+                    "collection_failed": True,
+                    "collected_at": datetime.now().isoformat(),
+                }
+
+        self.logger.info(
+            f"Metrics collection completed for {len(metrics)}/{len(env_ids)} environments"
+        )
+
+        return metrics

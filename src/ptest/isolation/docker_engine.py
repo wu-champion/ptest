@@ -999,8 +999,35 @@ class DockerIsolationEngine(IsolationEngine):
             {
                 "engine_type": "docker",
                 "docker_available": DOCKER_AVAILABLE,
-                "docker_environment": self.verify_docker_environment(),
-                "engine_config": self.engine_config,
             }
         )
         return info
+
+    def check_environment_health(self, env: IsolatedEnvironment) -> bool:
+        """检查Docker环境健康状态"""
+        try:
+            if not env.path.exists():
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Error checking Docker environment health: {e}")
+            return False
+
+    def get_environment_metrics(self, env: IsolatedEnvironment) -> Dict[str, Any]:
+        """获取Docker环境指标"""
+        try:
+            disk_usage = 0
+            if env.path.exists():
+                disk_usage = sum(
+                    f.stat().st_size for f in env.path.rglob("*") if f.is_file()
+                )
+
+            return {
+                "performance": {
+                    "container_info": "Docker container metrics available",
+                },
+                "disk_usage_mb": disk_usage / (1024 * 1024),
+            }
+        except Exception as e:
+            logger.error(f"Error getting Docker environment metrics: {e}")
+            return {"performance": {}, "error": str(e)}

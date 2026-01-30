@@ -340,3 +340,30 @@ class BasicIsolationEngine(IsolationEngine):
     def get_supported_features(self) -> List[str]:
         """获取支持的功能列表"""
         return self.supported_features.copy()
+
+    def check_environment_health(self, env: IsolatedEnvironment) -> bool:
+        """检查Basic环境健康状态"""
+        try:
+            if not env.path.exists():
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Error checking Basic environment health: {e}")
+            return False
+
+    def get_environment_metrics(self, env: IsolatedEnvironment) -> Dict[str, Any]:
+        """获取Basic环境指标"""
+        try:
+            disk_usage = 0
+            if env.path.exists():
+                disk_usage = sum(
+                    f.stat().st_size for f in env.path.rglob("*") if f.is_file()
+                )
+
+            return {
+                "performance": {},
+                "disk_usage_mb": disk_usage / (1024 * 1024),
+            }
+        except Exception as e:
+            logger.error(f"Error getting Basic environment metrics: {e}")
+            return {"performance": {}, "error": str(e)}

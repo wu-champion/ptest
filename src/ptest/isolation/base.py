@@ -346,6 +346,16 @@ class IsolationEngine(ABC):
         """获取支持的功能列表"""
         pass
 
+    @abstractmethod
+    def check_environment_health(self, env: IsolatedEnvironment) -> bool:
+        """检查环境健康状态"""
+        pass
+
+    @abstractmethod
+    def get_environment_metrics(self, env: IsolatedEnvironment) -> Dict[str, Any]:
+        """获取环境指标"""
+        pass
+
     def get_engine_info(self) -> Dict[str, Any]:
         """获取引擎信息"""
         return {
