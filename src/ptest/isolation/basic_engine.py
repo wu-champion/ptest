@@ -25,7 +25,7 @@ class BasicEnvironment(IsolatedEnvironment):
         env_id: str,
         path: Path,
         isolation_engine: "BasicIsolationEngine",
-        config: Dict[str, Any] = None,
+        config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(env_id, path, isolation_engine, config or {})
         self._create_directory_structure()
@@ -100,7 +100,7 @@ class BasicEnvironment(IsolatedEnvironment):
         self,
         cmd: List[str],
         timeout: Optional[float] = None,
-        env_vars: Dict[str, str] = None,
+        env_vars: Optional[Dict[str, str]] = None,
         cwd: Optional[Path] = None,
     ) -> ProcessResult:
         """在隔离环境中执行命令"""
@@ -269,6 +269,51 @@ class BasicEnvironment(IsolatedEnvironment):
                 return False
         return True
 
+    def create_snapshot(self, snapshot_id: Optional[str] = None) -> Dict[str, Any]:
+        """创建Basic环境快照（基础实现，不支持实际快照持久化）"""
+        if snapshot_id is None:
+            import time
+
+            timestamp = int(time.time())
+            snapshot_id = f"snapshot_{timestamp}"
+        return {
+            "snapshot_id": snapshot_id,
+            "env_id": self.env_id,
+            "created_at": datetime.now().isoformat(),
+            "env_type": self.__class__.__name__,
+            "status": self.status.value,
+            "config": self.config,
+            "note": "Basic engine snapshots are not persisted",
+        }
+
+    def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
+        """从快照恢复Basic环境（基础实现）"""
+        try:
+            logger.info(
+                f"Basic environment snapshot restore for {self.env_id}: "
+                f"snapshot {snapshot.get('snapshot_id')}"
+            )
+            logger.warning(
+                "Basic environment does not support actual snapshot restoration"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to restore from snapshot: {e}")
+            return False
+
+    def delete_snapshot(self, snapshot_id: str) -> bool:
+        """删除快照（Basic环境基础实现）"""
+        try:
+            logger.info(
+                f"Deleting snapshot {snapshot_id} for basic environment {self.env_id}"
+            )
+            logger.warning("Basic environment snapshots are not persisted by default")
+            self._emit_event(IsolationEvent.SNAPSHOT_DELETED, snapshot_id=snapshot_id)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete snapshot {snapshot_id}: {e}")
+            return False
+
 
 class BasicIsolationEngine(IsolationEngine):
     """基础隔离引擎实现"""
@@ -352,17 +397,26 @@ class BasicIsolationEngine(IsolationEngine):
             return False
 
     def get_environment_metrics(self, env: IsolatedEnvironment) -> Dict[str, Any]:
-        """获取Basic环境指标"""
         try:
+            import os
+
             disk_usage = 0
             if env.path.exists():
-                disk_usage = sum(
-                    f.stat().st_size for f in env.path.rglob("*") if f.is_file()
-                )
+                for root, dirs, files in os.walk(env.path):
+                    for file in files:
+                        try:
+                            disk_usage += os.path.getsize(os.path.join(root, file))
+                        except (OSError, FileNotFoundError):
+                            pass
 
             return {
-                "performance": {},
-                "disk_usage_mb": disk_usage / (1024 * 1024),
+                "performance": {
+                    "disk_bytes": disk_usage,
+                    "disk_mb": disk_usage / (1024 * 1024),
+                    "disk_gb": disk_usage / (1024 * 1024 * 1024),
+                },
+                "process_count": len(env.processes),
+                "port_count": len(env.allocated_ports),
             }
         except Exception as e:
             logger.error(f"Error getting Basic environment metrics: {e}")

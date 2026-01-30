@@ -261,6 +261,14 @@ class IsolationManager:
 
         return count_by_engine
 
+    def _get_isolation_level_from_engine(
+        self, engine: IsolationEngine
+    ) -> Optional[str]:
+        for level, eng in self.engines.items():
+            if eng == engine:
+                return level
+        return None
+
     def _generate_env_id(self) -> str:
         """生成环境ID"""
         timestamp = int(time.time())
@@ -996,7 +1004,7 @@ class IsolationManager:
             env = self.active_environments.get(env_id)
             if env:
                 try:
-                    success = self.cleanup_environment(env, force=force)
+                    success = self.cleanup_environment(env_id, force=force)
                     results[env_id] = success
                     status = "✓" if success else "✗"
                     self.logger.info(
@@ -1065,7 +1073,10 @@ class IsolationManager:
                             "path_exists": path_exists,
                             "engine_healthy": engine_health,
                             "env_type": env.__class__.__name__,
-                            "isolation_level": env.isolation_engine.isolation_level.value,
+                            "isolation_level": self._get_isolation_level_from_engine(
+                                env.isolation_engine
+                            )
+                            or "unknown",
                         },
                     }
                 except Exception as e:
@@ -1144,7 +1155,10 @@ class IsolationManager:
                         "status": {
                             "state": env.status.value,
                             "env_type": env.__class__.__name__,
-                            "isolation_level": env.isolation_engine.isolation_level.value,
+                            "isolation_level": self._get_isolation_level_from_engine(
+                                env.isolation_engine
+                            )
+                            or "unknown",
                             "collected_at": datetime.now().isoformat(),
                         },
                     }
