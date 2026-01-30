@@ -8,7 +8,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 import time
-from typing import Dict, Any, Optional, List, Union, Callable
+from typing import Dict, Any, Optional, List, Union, Callable, TYPE_CHECKING, TypedDict
 from pathlib import Path
 import logging
 from .enums import (
@@ -21,7 +21,53 @@ from .enums import (
     CleanupPolicy,
 )
 
+# 前向引用，避免循环导入
+if TYPE_CHECKING:
+    pass
+
 logger = logging.getLogger(__name__)
+
+
+# TypedDict定义，提供更好的类型安全性
+class EnvironmentConfig(TypedDict):
+    """环境配置类型定义"""
+
+    default_isolation_level: str
+    max_environments: int
+    cleanup_policy: str
+    auto_cleanup_enabled: bool
+    resource_limits: Dict[str, Any]
+    isolation_config: Dict[str, Any]
+
+
+class EngineConfig(TypedDict):
+    """引擎配置类型定义"""
+
+    engine_type: str
+    enabled: bool
+    priority: int
+    capabilities: List[str]
+
+
+class EnvironmentSnapshot(TypedDict):
+    """环境快照类型定义"""
+
+    snapshot_id: str
+    env_id: str
+    snapshot_time: str
+    status: str
+    config: Dict[str, Any]
+    packages: Dict[str, str]
+    custom_scripts: Dict[str, str]
+
+
+class EnvironmentMetrics(TypedDict):
+    """环境指标类型定义"""
+
+    resource_usage: Dict[str, Any]
+    performance: Dict[str, Any]
+    status: Dict[str, Any]
+    collected_at: str
 
 
 class ProcessResult:
@@ -192,32 +238,20 @@ class IsolatedEnvironment(ABC):
 
     # 快照功能作为抽象方法，由具体引擎实现
 
+    @abstractmethod
     def create_snapshot(self, snapshot_id: Optional[str] = None) -> Dict[str, Any]:
-        """创建环境快照 - 子类可重写"""
-        if snapshot_id is None:
-            timestamp = int(time.time())
-            snapshot_id = f"snapshot_{timestamp}"
+        """创建环境快照 - 必须由子类实现"""
+        raise NotImplementedError
 
-        return {
-            "snapshot_id": snapshot_id,
-            "env_id": self.env_id,
-            "created_at": datetime.now().isoformat(),
-            "env_type": self.__class__.__name__,
-            "status": self.status.value,
-            "config": self.config,
-        }
-
+    @abstractmethod
     def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
-        """从快照恢复环境 - 子类可重写"""
-        self.logger.info(
-            f"Restoring environment {self.env_id} from snapshot {snapshot.get('snapshot_id')}"
-        )
-        return True
+        """从快照恢复环境 - 必须由子类实现"""
+        raise NotImplementedError
 
+    @abstractmethod
     def delete_snapshot(self, snapshot_id: str) -> bool:
-        """删除快照 - 子类可重写"""
-        self.logger.info(f"Deleting snapshot {snapshot_id}")
-        return True
+        """删除快照 - 必须由子类实现"""
+        raise NotImplementedError
 
     def list_snapshots(self) -> List[Dict[str, Any]]:
         """列出快照 - 由管理器处理"""

@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import time
 import uuid
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING
 from pathlib import Path
 import json
 from datetime import datetime
@@ -327,6 +327,94 @@ class VirtualenvEnvironment(IsolatedEnvironment):
                 self.status = EnvironmentStatus.ERROR
                 return False
             return True  # 强制清理时即使出错也返回True
+
+    def create_snapshot(self, snapshot_id: Optional[str] = None) -> Dict[str, Any]:
+        """创建Virtualenv环境快照"""
+        try:
+            if snapshot_id is None:
+                timestamp = int(time.time())
+                snapshot_id = f"snapshot_{timestamp}"
+
+            # 获取已安装的包列表
+            packages = self.get_installed_packages()
+
+            # 备份自定义脚本（如果有）
+            custom_scripts = {}
+            scripts_path = self.path / "scripts"
+            if scripts_path.exists():
+                for script_file in scripts_path.glob("*.py"):
+                    with open(script_file, "r") as f:
+                        custom_scripts[script_file.name] = f.read()
+
+            return {
+                "snapshot_id": snapshot_id,
+                "env_id": self.env_id,
+                "created_at": datetime.now().isoformat(),
+                "env_type": self.__class__.__name__,
+                "status": self.status.value,
+                "config": self.config,
+                "packages": packages,
+                "custom_scripts": custom_scripts,
+                "venv_path": str(self.venv_path),
+            }
+        except Exception as e:
+            logger.error(f"Failed to create snapshot {snapshot_id}: {e}")
+            raise
+
+    def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
+        """从快照恢复Virtualenv环境"""
+        try:
+            logger.info(
+                f"Restoring environment {self.env_id} from snapshot {snapshot.get('snapshot_id')}"
+            )
+
+            # 重新创建虚拟环境
+            if self.venv_path.exists():
+                shutil.rmtree(str(self.venv_path))
+
+            builder = venv.EnvBuilder(
+                system_site_packages=self.config.get("system_site_packages", False),
+                symlinks=True,
+                with_pip=True,
+            )
+            builder.create(str(self.venv_path))
+
+            # 恢复包
+            packages = snapshot.get("packages", {})
+            for package, version in packages.items():
+                version_str = f"=={version}" if version else ""
+                self.install_package(package, version)
+
+            # 恢复自定义脚本
+            custom_scripts = snapshot.get("custom_scripts", {})
+            scripts_path = self.path / "scripts"
+            scripts_path.mkdir(parents=True, exist_ok=True)
+            for script_name, script_content in custom_scripts.items():
+                with open(scripts_path / script_name, "w") as f:
+                    f.write(script_content)
+
+            logger.info(
+                f"Successfully restored from snapshot {snapshot.get('snapshot_id')}"
+            )
+            self._emit_event(
+                IsolationEvent.SNAPSHOT_RESTORED,
+                snapshot_id=snapshot.get("snapshot_id"),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to restore from snapshot: {e}")
+            return False
+
+    def delete_snapshot(self, snapshot_id: str) -> bool:
+        """删除快照（Virtualenv没有持久化快照，此方法为接口兼容）"""
+        try:
+            logger.info(f"Deleting snapshot {snapshot_id}")
+            logger.warning("Virtualenv snapshots are not persisted by default")
+            self._emit_event(IsolationEvent.SNAPSHOT_DELETED, snapshot_id=snapshot_id)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete snapshot {snapshot_id}: {e}")
+            return False
 
 
 class VirtualenvIsolationEngine(IsolationEngine):
