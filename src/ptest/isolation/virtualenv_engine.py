@@ -96,85 +96,10 @@ class VirtualenvEnvironment(IsolatedEnvironment):
             logger.error(f"Error validating isolation: {e}")
             return False
 
-class VirtualenvIsolationEngine(IsolationEngine):
-    """Virtualenv隔离引擎实现"""
-
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-        self.supported_features = [
-            "filesystem_isolation",
-            "python_package_isolation",
-            "process_execution",
-            "port_allocation",
-        ]
-
-        self.default_config = {
-            "python_path": sys.executable,
-            "system_site_packages": False,
-            "clear": False,
-            "symlinks": True,
-            "upgrade": False,
-        }
-        self.engine_config = {**self.default_config, **config}
-
-    def create_isolation(
-        self, path: Path, env_id: str, isolation_config: Dict[str, Any]
-    ) -> IsolatedEnvironment:
-        final_config = {**self.engine_config, **isolation_config}
-        env = VirtualenvEnvironment(env_id, path, self, final_config)
-        if not env.create_virtualenv():
-            raise RuntimeError(f"Virtual environment creation failed for {env_id}")
-        self.created_environments[env_id] = env
-        logger.info(f"Created virtual environment: {env_id} at {path}")
-        return env
-
-    def cleanup_isolation(self, env: IsolatedEnvironment) -> bool:
-        if isinstance(env, VirtualenvEnvironment):
-            success = env.cleanup(force=True)
-            if success and env.env_id in self.created_environments:
-                del self.created_environments[env.env_id]
-            return success
-        else:
-            logger.error(f"Invalid environment type for Virtualenv engine: {type(env)}")
-            return False
-
-    def get_isolation_status(self, env_id: str) -> Dict[str, Any]:
-        if env_id not in self.created_environments:
-            return {"status": "not_found", "isolation_type": "virtualenv"}
-        env = self.created_environments[env_id]
-        status = env.get_status()
-        status.update({
-            "isolation_type": "virtualenv",
-            "supported_features": self.supported_features,
-            "engine_config": self.engine_config,
-        })
-        return status
-
-    def validate_isolation(self, env: IsolatedEnvironment) -> bool:
-        if isinstance(env, VirtualenvEnvironment):
-            return env.validate_isolation()
-        else:
-            logger.error(f"Invalid environment type for Virtualenv engine: {type(env)}")
-            return False
-
-    def get_supported_features(self) -> List[str]:
-        return self.supported_features.copy()
-
-    def get_engine_info(self) -> Dict[str, Any]:
-        info = super().get_engine_info()
-        info.update({
-            "engine_type": "virtualenv",
-            "python_version": sys.version,
-            "python_executable": sys.executable,
-            "engine_config": self.engine_config,
-            "venv_module_available": hasattr(venv, "EnvBuilder"),
-        })
-        return info
-
     def activate(self) -> bool:
         """激活虚拟环境"""
-        # 设置环境变量
         try:
+            # 设置环境变量
             env = os.environ.copy()
             env["PATH"] = f"{self.venv_path / 'bin'}:{env.get('PATH', '')}"
             env["VIRTUAL_ENV"] = str(self.venv_path)
@@ -403,15 +328,82 @@ class VirtualenvIsolationEngine(IsolationEngine):
                 return False
             return True  # 强制清理时即使出错也返回True
 
-    def validate_isolation(self) -> bool:
-        try:
-            if not self.venv_path.exists():
-                return False
-            if not self.python_path.exists():
-                return False
-            if not self._is_active:
-                return False
-            return True
-        except Exception as e:
-            logger.error(f"Error validating isolation: {e}")
+
+class VirtualenvIsolationEngine(IsolationEngine):
+    """Virtualenv隔离引擎实现"""
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self.supported_features = [
+            "filesystem_isolation",
+            "python_package_isolation",
+            "process_execution",
+            "port_allocation",
+        ]
+
+        self.default_config = {
+            "python_path": sys.executable,
+            "system_site_packages": False,
+            "clear": False,
+            "symlinks": True,
+            "upgrade": False,
+        }
+        self.engine_config = {**self.default_config, **config}
+
+    def create_isolation(
+        self, path: Path, env_id: str, isolation_config: Dict[str, Any]
+    ) -> IsolatedEnvironment:
+        final_config = {**self.engine_config, **isolation_config}
+        env = VirtualenvEnvironment(env_id, path, self, final_config)
+        if not env.create_virtualenv():
+            raise RuntimeError(f"Virtual environment creation failed for {env_id}")
+        self.created_environments[env_id] = env
+        logger.info(f"Created virtual environment: {env_id} at {path}")
+        return env
+
+    def cleanup_isolation(self, env: IsolatedEnvironment) -> bool:
+        if isinstance(env, VirtualenvEnvironment):
+            success = env.cleanup(force=True)
+            if success and env.env_id in self.created_environments:
+                del self.created_environments[env.env_id]
+            return success
+        else:
+            logger.error(f"Invalid environment type for Virtualenv engine: {type(env)}")
             return False
+
+    def get_isolation_status(self, env_id: str) -> Dict[str, Any]:
+        if env_id not in self.created_environments:
+            return {"status": "not_found", "isolation_type": "virtualenv"}
+        env = self.created_environments[env_id]
+        status = env.get_status()
+        status.update(
+            {
+                "isolation_type": "virtualenv",
+                "supported_features": self.supported_features,
+                "engine_config": self.engine_config,
+            }
+        )
+        return status
+
+    def validate_isolation(self, env: IsolatedEnvironment) -> bool:
+        if isinstance(env, VirtualenvEnvironment):
+            return env.validate_isolation()
+        else:
+            logger.error(f"Invalid environment type for Virtualenv engine: {type(env)}")
+            return False
+
+    def get_supported_features(self) -> List[str]:
+        return self.supported_features.copy()
+
+    def get_engine_info(self) -> Dict[str, Any]:
+        info = super().get_engine_info()
+        info.update(
+            {
+                "engine_type": "virtualenv",
+                "python_version": sys.version,
+                "python_executable": sys.executable,
+                "engine_config": self.engine_config,
+                "venv_module_available": hasattr(venv, "EnvBuilder"),
+            }
+        )
+        return info
