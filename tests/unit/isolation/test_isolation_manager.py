@@ -16,15 +16,15 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 try:
-    from isolation.manager import IsolationManager
-    from isolation.enums import IsolationLevel, EnvironmentStatus
+    from ptest.isolation.manager import IsolationManager
+    from ptest.isolation.enums import IsolationLevel, EnvironmentStatus
 except ImportError:
     try:
         from pypj.ptest.isolation.manager import IsolationManager
         from pypj.ptest.isolation.enums import IsolationLevel, EnvironmentStatus
     except ImportError:
         sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-        from isolation.manager import IsolationManager
+        from ptest.isolation.manager import IsolationManager
         from isolation.enums import IsolationLevel, EnvironmentStatus
 
 

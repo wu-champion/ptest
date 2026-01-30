@@ -22,7 +22,7 @@ from .base import IsolationEngine, IsolatedEnvironment, ProcessResult
 from .enums import EnvironmentStatus, ProcessStatus, IsolationEvent
 
 # 使用框架的日志管理器
-from core import get_logger, execute_command
+from ptest.core import get_logger, execute_command
 
 # 使用框架的日志管理器
 logger = get_logger("virtualenv_engine")
@@ -81,7 +81,7 @@ class VirtualenvEnvironment(IsolatedEnvironment):
         except Exception as e:
             logger.error(f"Failed to create virtual environment: {e}")
             self.status = EnvironmentStatus.ERROR
-return False
+            return False
 
     def validate_isolation(self) -> bool:
         try:
@@ -171,7 +171,10 @@ class VirtualenvIsolationEngine(IsolationEngine):
         })
         return info
 
-            # 设置环境变量
+    def activate(self) -> bool:
+        """激活虚拟环境"""
+        # 设置环境变量
+        try:
             env = os.environ.copy()
             env["PATH"] = f"{self.venv_path / 'bin'}:{env.get('PATH', '')}"
             env["VIRTUAL_ENV"] = str(self.venv_path)

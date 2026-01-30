@@ -731,7 +731,6 @@ class DockerIsolationEngine(IsolationEngine):
             except Exception as e:
                 logger.error(f"Failed to initialize Docker client: {e}")
                 return False
-                return False
 
     def verify_docker_environment(self) -> Dict[str, Any]:
         """验证Docker环境"""
