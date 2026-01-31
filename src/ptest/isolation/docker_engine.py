@@ -234,6 +234,88 @@ class DockerEnvironment(IsolatedEnvironment):
             self.status = EnvironmentStatus.ERROR
             return False
 
+    def restart_container(self) -> bool:
+        """重启Docker容器"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating container restart")
+                return True
+
+            if not self._container:
+                logger.warning("No container to restart")
+                return False
+
+            # 重启容器
+            self._container.restart()
+            self._container.reload()
+
+            logger.info(f"Restarted Docker container: {self.container_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to restart container: {e}")
+            return False
+
+    def pause_container(self) -> bool:
+        """暂停Docker容器"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating container pause")
+                return True
+
+            if not self._container:
+                logger.warning("No container to pause")
+                return False
+
+            # 暂停容器
+            self._container.pause()
+            logger.info(f"Paused Docker container: {self.container_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to pause container: {e}")
+            return False
+
+    def unpause_container(self) -> bool:
+        """恢复暂停的Docker容器"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating container unpause")
+                return True
+
+            if not self._container:
+                logger.warning("No container to unpause")
+                return False
+
+            # 恢复容器
+            self._container.unpause()
+            logger.info(f"Unpaused Docker container: {self.container_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to unpause container: {e}")
+            return False
+
+    def wait_container(self, timeout: int = None) -> int:
+        """等待容器退出"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating container wait")
+                return 0
+
+            if not self._container:
+                logger.warning("No container to wait for")
+                return -1
+
+            # 等待容器退出
+            exit_code = self._container.wait(timeout=timeout)
+            logger.info(f"Container {self.container_id} exited with code: {exit_code}")
+            return exit_code
+
+        except Exception as e:
+            logger.error(f"Failed to wait for container: {e}")
+            return -1
+
     def remove_container(self) -> bool:
         """删除Docker容器"""
         try:
@@ -734,20 +816,6 @@ class DockerIsolationEngine(IsolationEngine):
 
     def verify_docker_environment(self) -> Dict[str, Any]:
         """验证Docker环境"""
-        if not DOCKER_AVAILABLE:
-            return {
-                "available": False,
-                "reason": "Docker SDK not installed",
-                "simulation_mode": True,
-            }
-
-        if not self.initialize_client():
-            return {
-                "available": False,
-                "reason": "Failed to connect to Docker daemon",
-                "simulation_mode": False,
-            }
-
         try:
             # 获取Docker信息
             if self.docker_client:
@@ -781,6 +849,74 @@ class DockerIsolationEngine(IsolationEngine):
                 "available": False,
                 "reason": str(e),
                 "simulation_mode": False,
+            }
+
+    def list_available_images(self) -> List[Dict[str, Any]]:
+        """列出所有可用的Docker镜像"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, returning empty list")
+                return []
+
+            if not self.docker_client:
+                return []
+
+            images = self.docker_client.images.list(all=True)
+            result = []
+
+            for img in images:
+                tags = img.tags
+                result.append(
+                    {
+                        "id": img.id,
+                        "tags": tags,
+                        "short_id": img.short_id,
+                        "created": img.attrs.get("Created"),
+                        "size": img.attrs.get("Size"),
+                    }
+                )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to list images: {e}")
+            return []
+
+    def cleanup_unused_resources(self) -> Dict[str, Any]:
+        """清理未使用的Docker资源"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating cleanup")
+                return {"cleaned": False, "details": "simulation_mode"}
+
+            if not self.docker_client:
+                return {"cleaned": False, "details": "no_docker_client"}
+
+            # 清理未使用的镜像
+            images_pruned = self.docker_client.images.prune()
+            # 清理未使用的卷
+            volumes_pruned = self.docker_client.volumes.prune()
+
+            cleaned_count = len(images_pruned.get("ImagesDeleted", [])) + len(
+                volumes_pruned.get("VolumesDeleted", [])
+            )
+
+            logger.info(f"Cleaned up {cleaned_count} unused resources")
+            return {
+                "cleaned": True,
+                "details": {
+                    "images_removed": images_pruned.get("ImagesDeleted", []),
+                    "volumes_removed": volumes_pruned.get("VolumesDeleted", []),
+                    "total_cleaned": cleaned_count,
+                    "containers_count": 0,  # 不清理容器
+                },
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to cleanup resources: {e}")
+            return {
+                "cleaned": False,
+                "error": str(e),
             }
 
     def pull_image(self, image_name: str, tag: str = "latest") -> bool:
@@ -818,6 +954,143 @@ class DockerIsolationEngine(IsolationEngine):
 
         except Exception as e:
             logger.error(f"Failed to pull image {image_name}:{tag}: {e}")
+            return False
+
+    def push_image(
+        self,
+        image_name: str,
+        tag: str = "latest",
+        registry: str = None,
+        username: str = None,
+        password: str = None,
+    ) -> bool:
+        """推送Docker镜像到仓库"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning(
+                    f"Docker SDK not available, simulating image push: {image_name}:{tag}"
+                )
+                return True
+
+            if not self.initialize_client():
+                return False
+
+            if not self.docker_client:
+                return False
+
+            full_image_name = f"{image_name}:{tag}"
+            logger.info(f"Pushing Docker image: {full_image_name}")
+
+            # 如果指定了registry，先标记镜像
+            if registry:
+                registry_image_name = f"{registry}/{full_image_name}"
+                self.docker_client.images.tag(full_image_name, registry_image_name)
+                full_image_name = registry_image_name
+
+            # 推送镜像
+            for line in self.docker_client.images.push(
+                full_image_name, stream=True, decode=True
+            ):
+                if "status" in line:
+                    logger.debug(f"Push status: {line['status']}")
+                if "error" in line:
+                    logger.error(f"Push error: {line['error']}")
+                    return False
+
+            logger.info(f"Successfully pushed image: {full_image_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to push image {image_name}:{tag}: {e}")
+            return False
+
+    def tag_image(self, source: str, target: str) -> bool:
+        """给Docker镜像打标签"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning(
+                    f"Docker SDK not available, simulating image tag: {source} -> {target}"
+                )
+                return True
+
+            if not self.initialize_client():
+                return False
+
+            if not self.docker_client:
+                return False
+
+            logger.info(f"Tagging image: {source} -> {target}")
+            self.docker_client.images.tag(source, target)
+            logger.info(f"Successfully tagged image: {target}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to tag image {source}: {e}")
+            return False
+
+    def save_image(self, image_name: str, output_path: Path) -> bool:
+        """导出Docker镜像到文件"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning(
+                    f"Docker SDK not available, simulating image save: {image_name}"
+                )
+                return True
+
+            if not self.initialize_client():
+                return False
+
+            if not self.docker_client:
+                return False
+
+            logger.info(f"Saving image: {image_name} to {output_path}")
+
+            # 确保输出目录存在
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # 获取镜像
+            image = self.docker_client.images.get(image_name)
+
+            # 保存镜像
+            with open(output_path, "wb") as f:
+                for chunk in image.save():
+                    f.write(chunk)
+
+            logger.info(f"Successfully saved image: {image_name} to {output_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save image {image_name}: {e}")
+            return False
+
+    def load_image(self, input_path: Path) -> bool:
+        """从文件加载Docker镜像"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning(
+                    f"Docker SDK not available, simulating image load: {input_path}"
+                )
+                return True
+
+            if not self.initialize_client():
+                return False
+
+            if not self.docker_client:
+                return False
+
+            logger.info(f"Loading image from: {input_path}")
+
+            # 读取镜像文件
+            with open(input_path, "rb") as f:
+                image_data = f.read()
+
+            # 加载镜像
+            self.docker_client.images.load(image_data)
+            logger.info(f"Successfully loaded image from: {input_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load image from {input_path}: {e}")
             return False
 
     def create_network(self, network_name: str, subnet: str = None) -> Optional[Any]:
@@ -870,7 +1143,12 @@ class DockerIsolationEngine(IsolationEngine):
             logger.error(f"Failed to create network {network_name}: {e}")
             return None
 
-    def create_volume(self, volume_name: str) -> Optional[Any]:
+    def create_volume(
+        self,
+        volume_name: str,
+        driver: str = "local",
+        driver_opts: Dict[str, str] = None,
+    ) -> Optional[Any]:
         """创建Docker卷"""
         try:
             if not DOCKER_AVAILABLE:
@@ -896,9 +1174,12 @@ class DockerIsolationEngine(IsolationEngine):
             # 创建新卷
             volume_config = {
                 "Name": volume_name,
-                "Driver": "local",
+                "Driver": driver,
                 "Labels": {"created_by": "ptest", "purpose": "test_isolation"},
             }
+
+            if driver_opts:
+                volume_config["DriverOpts"] = driver_opts
 
             volume = self.docker_client.volumes.create(volume_config)
             logger.info(f"Created Docker volume: {volume_name}")
@@ -907,6 +1188,210 @@ class DockerIsolationEngine(IsolationEngine):
         except Exception as e:
             logger.error(f"Failed to create volume {volume_name}: {e}")
             return None
+
+    def connect_container_to_network(
+        self,
+        container_id: str,
+        network_name: str,
+        aliases: List[str] = None,
+        ipv4_address: str = None,
+    ) -> bool:
+        """将容器连接到网络"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning(
+                    "Docker SDK not available, simulating network connection"
+                )
+                return True
+
+            if not self.docker_client:
+                return False
+
+            network = self.docker_client.networks.get(network_name)
+            if not network:
+                logger.error(f"Network {network_name} not found")
+                return False
+
+            network_config = {}
+            if aliases:
+                network_config["aliases"] = aliases
+            if ipv4_address:
+                network_config["ipv4_address"] = ipv4_address
+
+            network.connect(container_id, **network_config)
+            logger.info(f"Connected container {container_id} to network {network_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to connect container to network: {e}")
+            return False
+
+    def disconnect_container_from_network(
+        self, container_id: str, network_name: str
+    ) -> bool:
+        """将容器从网络断开"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning(
+                    "Docker SDK not available, simulating network disconnection"
+                )
+                return True
+
+            if not self.docker_client:
+                return False
+
+            network = self.docker_client.networks.get(network_name)
+            if not network:
+                logger.error(f"Network {network_name} not found")
+                return False
+
+            network.disconnect(container_id)
+            logger.info(
+                f"Disconnected container {container_id} from network {network_name}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to disconnect container from network: {e}")
+            return False
+
+    def remove_network(self, network_name: str) -> bool:
+        """删除Docker网络"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating network removal")
+                return True
+
+            if not self.docker_client:
+                return False
+
+            network = self.docker_client.networks.get(network_name)
+            if network:
+                network.remove()
+                logger.info(f"Removed network: {network_name}")
+                return True
+
+            logger.info(f"Network {network_name} not found, nothing to remove")
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to remove network {network_name}: {e}")
+            return False
+
+    def remove_volume(self, volume_name: str, force: bool = False) -> bool:
+        """删除Docker卷"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating volume removal")
+                return True
+
+            if not self.docker_client:
+                return False
+
+            volume = self.docker_client.volumes.get(volume_name)
+            if volume:
+                volume.remove(force=force)
+                logger.info(f"Removed volume: {volume_name}")
+                return True
+
+            logger.info(f"Volume {volume_name} not found, nothing to remove")
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to remove volume {volume_name}: {e}")
+            return False
+
+    def list_networks(self) -> List[Dict[str, Any]]:
+        """列出所有Docker网络"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return []
+
+            if not self.docker_client:
+                return []
+
+            networks = self.docker_client.networks.list()
+            return [
+                {
+                    "id": net.id,
+                    "name": net.name,
+                    "driver": net.attrs.get("Driver"),
+                    "scope": net.attrs.get("Scope"),
+                }
+                for net in networks
+            ]
+
+        except Exception as e:
+            logger.error(f"Failed to list networks: {e}")
+            return []
+
+    def list_volumes(self) -> List[Dict[str, Any]]:
+        """列出所有Docker卷"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return []
+
+            if not self.docker_client:
+                return []
+
+            volumes = self.docker_client.volumes.list()
+            result = []
+
+            # 处理Docker SDK返回的不同格式
+            volumes_data = volumes.get("Volumes", volumes)
+            volumes_list = volumes_data if isinstance(volumes_data, list) else [volumes]
+
+            for vol in volumes_list:
+                attrs = vol.attrs if hasattr(vol, "attrs") else {}
+                result.append(
+                    {
+                        "name": vol.name,
+                        "driver": attrs.get("Driver"),
+                        "mountpoint": attrs.get("Mountpoint"),
+                        "created": attrs.get("CreatedAt"),
+                        "labels": attrs.get("Labels", {}),
+                    }
+                )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to list volumes: {e}")
+            return []
+
+    def prune_images(self, dangling_only: bool = True) -> Dict[str, Any]:
+        """清理未使用的Docker镜像"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return {"ImagesDeleted": [], "SpaceReclaimed": 0}
+
+            if not self.docker_client:
+                return {"ImagesDeleted": [], "SpaceReclaimed": 0}
+
+            result = self.docker_client.images.prune(dangling=dangling_only)
+            logger.info(f"Pruned {len(result.get('ImagesDeleted', []))} images")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to prune images: {e}")
+            return {"ImagesDeleted": [], "SpaceReclaimed": 0}
+
+    def prune_volumes(self) -> Dict[str, Any]:
+        """清理未使用的Docker卷"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return {"VolumesDeleted": [], "SpaceReclaimed": 0}
+
+            if not self.docker_client:
+                return {"VolumesDeleted": [], "SpaceReclaimed": 0}
+
+            result = self.docker_client.volumes.prune()
+            logger.info(f"Pruned {len(result.get('VolumesDeleted', []))} volumes")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to prune volumes: {e}")
+            return {"VolumesDeleted": [], "SpaceReclaimed": 0}
 
     def create_isolation(
         self, path: Path, env_id: str, isolation_config: Dict[str, Any]

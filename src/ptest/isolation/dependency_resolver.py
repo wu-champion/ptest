@@ -19,7 +19,7 @@ from core import get_logger
 logger = get_logger("dependency_resolver")
 
 
-@dataclass
+@dataclass  
 class DependencyNode:
     """依赖节点"""
 

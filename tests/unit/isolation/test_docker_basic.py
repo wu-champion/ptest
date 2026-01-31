@@ -11,24 +11,8 @@ from pathlib import Path
 import sys
 import os
 
-# 添加项目根目录到Python路径
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-try:
-    from isolation.docker_engine import DockerIsolationEngine, DockerEnvironment
-    from isolation.enums import EnvironmentStatus, IsolationEvent
-except ImportError:
-    try:
-        from pypj.ptest.isolation.docker_engine import (
-            DockerIsolationEngine,
-            DockerEnvironment,
-        )
-        from pypj.ptest.isolation.enums import EnvironmentStatus, IsolationEvent
-    except ImportError:
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-        from isolation.docker_engine import DockerIsolationEngine, DockerEnvironment
-        from isolation.enums import EnvironmentStatus, IsolationEvent
+from ptest.isolation.docker_engine import DockerIsolationEngine, DockerEnvironment
+from ptest.isolation.enums import EnvironmentStatus, IsolationEvent
 
 
 class TestDockerBasic(unittest.TestCase):

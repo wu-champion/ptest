@@ -13,42 +13,12 @@ import os
 import time
 from unittest.mock import Mock, patch, MagicMock
 
-# 添加项目根目录到Python路径
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-# 尝试不同的导入方式
-try:
-    from isolation.docker_engine import (
-        DockerEnvironment,
-        DockerIsolationEngine,
-    )
-    from isolation.enums import EnvironmentStatus, IsolationEvent
-    from core import get_logger
-except ImportError:
-    try:
-        from pypj.ptest.isolation.docker_engine import (
-            DockerEnvironment,
-            DockerIsolationEngine,
-        )
-        from pypj.ptest.isolation.enums import EnvironmentStatus, IsolationEvent
-        from pypj.ptest.core import get_logger
-    except ImportError:
-        import sys
-        import os
-
-        # 添加当前目录到路径
-        current_dir = Path(__file__).parent
-        while current_dir.name != "ptest":
-            current_dir = current_dir.parent
-        sys.path.insert(0, str(current_dir))
-
-        from isolation.docker_engine import (
-            DockerEnvironment,
-            DockerIsolationEngine,
-        )
-        from isolation.enums import EnvironmentStatus, IsolationEvent
-        from core import get_logger
+from ptest.isolation.docker_engine import (
+    DockerEnvironment,
+    DockerIsolationEngine,
+)
+from ptest.isolation.enums import EnvironmentStatus, IsolationEvent
+from ptest.core import get_logger
 
 
 class TestDockerIsolationEngine(unittest.TestCase):
