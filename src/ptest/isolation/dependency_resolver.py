@@ -14,12 +14,12 @@ from packaging import version
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 
-from core import get_logger
+from ptest.core import get_logger
 
 logger = get_logger("dependency_resolver")
 
 
-@dataclass  
+@dataclass
 class DependencyNode:
     """依赖节点"""
 
@@ -249,7 +249,11 @@ class DependencyResolver:
             else:
                 # 从单个包解析
                 self._resolve_package_dependencies(
-                    root_package, version_spec or "", tree, required_by=root_package, depth=0
+                    root_package,
+                    version_spec or "",
+                    tree,
+                    required_by=root_package,
+                    depth=0,
                 )
 
             # 检测冲突

@@ -16,7 +16,7 @@ from packaging import version
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 
-from core import get_logger
+from ptest.core import get_logger
 
 logger = get_logger("version_manager")
 

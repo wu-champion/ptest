@@ -30,7 +30,7 @@ from .base import IsolatedEnvironment
 from .enums import IsolationEvent, EnvironmentStatus
 from .dependency_resolver import DependencyResolver
 from .conflict_detector import ConflictDetector
-from core import get_logger
+from ptest.core import get_logger
 
 logger = get_logger("parallel_installer")
 
@@ -74,7 +74,7 @@ class InstallationTask:
     force_reinstall: bool = False
     ignore_deps: bool = False
     editable: bool = False
-    callback: Optional[Callable[[str, 'InstallationResult'], None]] = None
+    callback: Optional[Callable[[str, "InstallationResult"], None]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -128,13 +128,13 @@ class InstallationResult:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'InstallationResult':
+    def from_dict(cls, data: Dict[str, Any]) -> "InstallationResult":
         """从字典创建实例"""
         # 处理时间字段
         start_time = None
         if data.get("start_time"):
             start_time = datetime.fromisoformat(data["start_time"])
-        
+
         end_time = None
         if data.get("end_time"):
             end_time = datetime.fromisoformat(data["end_time"])
@@ -163,7 +163,12 @@ class InstallationResult:
 class ResourceMonitor:
     """资源监控器"""
 
-    def __init__(self, max_cpu_percent: float = 80.0, max_memory_mb: float = 1024.0, max_workers: int = 4):
+    def __init__(
+        self,
+        max_cpu_percent: float = 80.0,
+        max_memory_mb: float = 1024.0,
+        max_workers: int = 4,
+    ):
         self.max_cpu_percent = max_cpu_percent
         self.max_memory_mb = max_memory_mb
         self.max_workers = max_workers
@@ -302,7 +307,9 @@ class ParallelInstaller:
         # 启动工作线程
         for i in range(self.max_workers):
             threading.Thread(
-                target=self._worker_loop, daemon=True, name=f"ParallelInstaller-Worker-{i}"
+                target=self._worker_loop,
+                daemon=True,
+                name=f"ParallelInstaller-Worker-{i}",
             ).start()
 
         logger.info(f"ParallelInstaller started with {self.max_workers} workers")
@@ -352,7 +359,7 @@ class ParallelInstaller:
 
         Returns:
             任务ID
-            
+
         Raises:
             RuntimeError: 当安装器未运行时
             ValueError: 当包列表为空时
@@ -360,14 +367,14 @@ class ParallelInstaller:
         """
         if not self.is_running:
             raise RuntimeError("ParallelInstaller is not running")
-            
+
         # 验证输入参数
         if not environment:
             raise ValueError("Environment cannot be None")
-            
+
         if not packages:
             raise ValueError("Packages cannot be empty")
-            
+
         if not isinstance(environment, IsolatedEnvironment):
             raise TypeError(f"Expected IsolatedEnvironment, got {type(environment)}")
 
@@ -519,7 +526,7 @@ class ParallelInstaller:
         """工作线程主循环"""
         logger.info(f"Worker loop started with {self.max_workers} workers")
         worker_id = threading.current_thread().name
-        
+
         consecutive_errors = 0
         max_consecutive_errors = 5
 
@@ -546,7 +553,7 @@ class ParallelInstaller:
                     continue
 
                 logger.debug(f"Worker {worker_id} picked up task {task_id}")
-                
+
                 # 提交任务到线程池
                 try:
                     future = self.executor.submit(self._execute_task, task)
@@ -561,12 +568,16 @@ class ParallelInstaller:
                     logger.debug(f"Submitted task {task_id} to executor")
 
                 except Exception as submit_error:
-                    logger.error(f"Failed to submit task {task_id} to executor: {submit_error}")
+                    logger.error(
+                        f"Failed to submit task {task_id} to executor: {submit_error}"
+                    )
                     # 将任务放回队列
                     try:
                         self.task_queue.put((priority, task_id, task), timeout=1.0)
                     except queue.Full:
-                        logger.error(f"Failed to re-queue task {task_id}, queue is full")
+                        logger.error(
+                            f"Failed to re-queue task {task_id}, queue is full"
+                        )
                     continue
 
                 # 重置错误计数
@@ -574,12 +585,16 @@ class ParallelInstaller:
 
             except Exception as e:
                 consecutive_errors += 1
-                logger.error(f"Error in worker loop {worker_id} (consecutive errors: {consecutive_errors}): {e}")
-                
+                logger.error(
+                    f"Error in worker loop {worker_id} (consecutive errors: {consecutive_errors}): {e}"
+                )
+
                 if consecutive_errors >= max_consecutive_errors:
-                    logger.critical(f"Too many consecutive errors in worker {worker_id}, stopping loop")
+                    logger.critical(
+                        f"Too many consecutive errors in worker {worker_id}, stopping loop"
+                    )
                     break
-                    
+
                 time.sleep(min(0.1 * consecutive_errors, 1.0))  # Exponential backoff
 
         logger.info(f"Worker loop {worker_id} finished")
@@ -699,9 +714,7 @@ class ParallelInstaller:
                 self.resource_monitor.unregister_installation()
 
             if result:
-                logger.info(
-                    f"Completed task {task.task_id} in {result.duration:.2f}s"
-                )
+                logger.info(f"Completed task {task.task_id} in {result.duration:.2f}s")
 
     def _get_package_manager(
         self, environment: IsolatedEnvironment
@@ -797,7 +810,9 @@ class ParallelInstaller:
 
                     # 获取结果
                     if "result" in status:
-                        results[task_id] = InstallationResult.from_dict(status["result"])
+                        results[task_id] = InstallationResult.from_dict(
+                            status["result"]
+                        )
 
                     # 调用进度回调
                     if progress_callback:

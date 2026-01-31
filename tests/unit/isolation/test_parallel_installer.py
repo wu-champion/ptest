@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 # 导入被测试的模块
-from isolation.parallel_installer import (
+from ptest.isolation.parallel_installer import (
     ParallelInstaller,
     InstallationTask,
     InstallationResult,
@@ -22,9 +22,9 @@ from isolation.parallel_installer import (
     InstallationStatus,
     ResourceMonitor,
 )
-from isolation.package_manager import InstallResult, PackageInfo
-from isolation.base import IsolatedEnvironment, ProcessResult
-from isolation.enums import EnvironmentStatus
+from ptest.isolation.package_manager import InstallResult, PackageInfo
+from ptest.isolation.base import IsolatedEnvironment, ProcessResult
+from ptest.isolation.enums import EnvironmentStatus
 
 
 class MockIsolatedEnvironment(IsolatedEnvironment):
@@ -221,6 +221,7 @@ class TestInstallationResult:
     def test_result_to_dict(self):
         """测试结果转换为字典"""
         from datetime import datetime
+
         start_time = datetime.now()
         result = InstallationResult(
             task_id="test_task",

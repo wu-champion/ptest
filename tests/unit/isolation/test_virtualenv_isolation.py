@@ -17,36 +17,28 @@ sys.path.insert(0, str(project_root))
 
 # 尝试不同的导入方式
 try:
-    from isolation.virtualenv_engine import (
+    from ptest.isolation.virtualenv_engine import (
         VirtualenvEnvironment,
         VirtualenvIsolationEngine,
     )
-    from isolation.enums import EnvironmentStatus, IsolationEvent
-    from core import get_logger
+    from ptest.isolation.enums import EnvironmentStatus, IsolationEvent
+    from ptest.core import get_logger
 except ImportError:
-    try:
-        from pypj.ptest.isolation.virtualenv_engine import (
-            VirtualenvEnvironment,
-            VirtualenvIsolationEngine,
-        )
-        from pypj.ptest.isolation.enums import EnvironmentStatus, IsolationEvent
-        from pypj.ptest.core import get_logger
-    except ImportError:
-        import sys
-        import os
+    import sys
+    import os
 
-        # 添加当前目录到路径
-        current_dir = Path(__file__).parent
-        while current_dir.name != "ptest":
-            current_dir = current_dir.parent
-        sys.path.insert(0, str(current_dir))
+    # 添加当前目录到路径
+    current_dir = Path(__file__).parent
+    while current_dir.name != "ptest":
+        current_dir = current_dir.parent
+    sys.path.insert(0, str(current_dir))
 
-        from isolation.virtualenv_engine import (
-            VirtualenvEnvironment,
-            VirtualenvIsolationEngine,
-        )
-        from isolation.enums import EnvironmentStatus, IsolationEvent
-        from core import get_logger
+    from ptest.isolation.virtualenv_engine import (
+        VirtualenvEnvironment,
+        VirtualenvIsolationEngine,
+    )
+    from ptest.isolation.enums import EnvironmentStatus, IsolationEvent
+    from ptest.core import get_logger
 
 logger = get_logger("test_virtualenv")
 

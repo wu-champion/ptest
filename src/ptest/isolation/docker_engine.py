@@ -91,6 +91,8 @@ from .base import IsolationEngine, IsolatedEnvironment, ProcessResult
 from .enums import EnvironmentStatus, ProcessStatus, IsolationEvent
 from ..core import get_logger, execute_command
 
+from .managers import ImageManager, NetworkManager, VolumeManager
+
 # 使用框架的日志管理器
 logger = get_logger("docker_engine")
 
@@ -122,10 +124,27 @@ class DockerEnvironment(IsolatedEnvironment):
         self.environment_vars: Dict[str, str] = {}
         self.resource_limits: Dict[str, Any] = {}
 
-        # 状态跟踪
         self.status = EnvironmentStatus.CREATED
-        self._container: Optional[DockerContainer] = None
-        self._network: Optional[DockerNetwork] = None
+        self._is_active = False
+
+    def _parse_memory(self, memory_str: str) -> int:
+        """解析内存限制字符串为字节数"""
+        try:
+            memory_str = memory_str.lower().strip()
+
+            if memory_str.endswith("b"):
+                return int(memory_str[:-1]) * 1024 * 1024 * 1024
+            elif memory_str.endswith("k") or memory_str.endswith("kb"):
+                return int(memory_str[:-2]) * 1024 * 1024
+            elif memory_str.endswith("m") or memory_str.endswith("mb"):
+                return int(memory_str[:-2]) * 1024 * 1024
+            elif memory_str.endswith("g"):
+                return int(memory_str[:-1]) * 1024 * 1024 * 1024
+            else:
+                return int(memory_str)
+        except (ValueError, AttributeError):
+            logger.warning(f"Invalid memory limit format: {memory_str}, using default")
+            return 512 * 1024 * 1024
 
     def create_container(self) -> bool:
         """创建Docker容器"""
@@ -143,7 +162,7 @@ class DockerEnvironment(IsolatedEnvironment):
                 logger.error("Failed to initialize Docker client")
                 return False
 
-            # 简化的容器配置（避免复杂的API调用）
+            # 容器配置（包含资源限制）
             container_config = {
                 "image": self.image_name,
                 "name": self.container_name,
@@ -156,6 +175,50 @@ class DockerEnvironment(IsolatedEnvironment):
                 "environment": self.environment_vars,
                 "working_dir": str(self.path),
             }
+
+            if self.resource_limits:
+                limits = self.resource_limits
+                host_config = container_config.get("host_config", {})
+
+                if limits.get("cpus"):
+                    host_config["cpu_quota"] = int(float(limits["cpus"]) * 100000)
+                    host_config["cpu_period"] = 100000
+
+                if limits.get("memory"):
+                    host_config["mem_limit"] = self._parse_memory(limits["memory"])
+
+                if limits.get("memory_swap"):
+                    host_config["memswap_limit"] = self._parse_memory(
+                        limits["memory_swap"]
+                    )
+
+                if limits.get("memory_reservation"):
+                    host_config["mem_reservation"] = self._parse_memory(
+                        limits["memory_reservation"]
+                    )
+
+                if limits.get("oom_kill_disable"):
+                    host_config["oom_kill_disable"] = limits["oom_kill_disable"]
+
+                if limits.get("pids_limit"):
+                    host_config["pids_limit"] = limits["pids_limit"]
+
+                if limits.get("blkio_weight"):
+                    host_config["blkio_weight"] = limits["blkio_weight"]
+
+                if limits.get("blkio_read_bps"):
+                    host_config["blkio_device_read_bps"] = limits["blkio_read_bps"]
+
+                if limits.get("blkio_write_bps"):
+                    host_config["blkio_device_write_bps"] = limits["blkio_write_bps"]
+
+                if limits.get("blkio_read_iops"):
+                    host_config["blkio_device_read_iops"] = limits["blkio_read_iops"]
+
+                if limits.get("blkio_write_iops"):
+                    host_config["blkio_device_write_iops"] = limits["blkio_write_iops"]
+
+                container_config["host_config"] = host_config
 
             # 创建容器
             if hasattr(engine, "docker_client") and engine.docker_client:
@@ -324,384 +387,266 @@ class DockerEnvironment(IsolatedEnvironment):
                 self.status = EnvironmentStatus.CLEANUP_COMPLETE
                 self._emit_event(IsolationEvent.ENVIRONMENT_CLEANUP_COMPLETE)
                 return True
-
-            if not self._container:
-                logger.warning("No container to remove")
-                return False
-
-            # 删除容器
-            self._container.remove(force=True)
-            self._container = None
-
-            logger.info(f"Removed Docker container: {self.container_id}")
-            self.status = EnvironmentStatus.CLEANUP_COMPLETE
-            self._emit_event(IsolationEvent.ENVIRONMENT_CLEANUP_COMPLETE)
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to remove container: {e}")
-            self.status = EnvironmentStatus.ERROR
-            return False
-
-    def execute_command(
-        self,
-        cmd: List[str],
-        timeout: Optional[float] = None,
-        env_vars: Optional[Dict[str, str]] = None,
-        cwd: Optional[Path] = None,
-    ) -> ProcessResult:
-        """在Docker容器中执行命令"""
-        start_time = datetime.now()
-
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning(
-                    f"Docker SDK not available, simulating command: {' '.join(cmd)}"
-                )
-                return ProcessResult(
-                    returncode=0,
-                    stdout="",
-                    stderr="",
-                    command=cmd,
-                    timeout=timeout,
-                    start_time=start_time,
-                    end_time=datetime.now(),
-                )
-
-            if not self._container:
-                if not self.start_container():
-                    return ProcessResult(
-                        returncode=1,
-                        stderr="Container not available",
-                        command=cmd,
-                        timeout=timeout,
-                        start_time=start_time,
-                        end_time=datetime.now(),
-                    )
-
-            # 准备执行环境
-            exec_env = self.environment_vars.copy()
-            if env_vars:
-                exec_env.update(env_vars)
-
-            # 执行命令
-            exit_code, output = self._container.exec_run(
-                cmd,
-                environment=exec_env,
-                workdir=str(cwd or self.path),
-                demux=False,
-            )
-
-            result = ProcessResult(
-                returncode=exit_code,
-                stdout=output,
-                stderr="",
-                command=cmd,
-                timeout=timeout,
-                start_time=start_time,
-                end_time=datetime.now(),
-            )
-
-            if result.success:
-                logger.info(f"Command executed successfully: {' '.join(cmd)}")
-            else:
-                logger.error(f"Command failed: {' '.join(cmd)}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"Failed to execute command: {e}")
-            return ProcessResult(
-                returncode=1,
-                stderr=str(e),
-                command=cmd,
-                timeout=timeout,
-                start_time=start_time,
-                end_time=datetime.now(),
-            )
-
-    def install_package(
-        self, package: str, version: Optional[str] = None, upgrade: bool = False
-    ) -> bool:
-        """在Docker容器中安装包"""
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning(
-                    f"Docker SDK not available, simulating package installation: {package}"
-                )
-                return True
-
-            # 构建安装命令
-            package_spec = f"{package}{f'=={version}' if version else ''}"
-            install_cmd = ["pip", "install"]
-            if upgrade:
-                install_cmd.append("--upgrade")
-            install_cmd.append(package_spec)
-
-            # 执行安装命令
-            result = self.execute_command(install_cmd, timeout=300)
-            self._emit_event(IsolationEvent.PACKAGE_INSTALLED, package=package_spec)
-
-            return result.success
-
-        except Exception as e:
-            logger.error(f"Failed to install package {package}: {e}")
-            return False
-
-    def uninstall_package(self, package: str) -> bool:
-        """在Docker容器中卸载包"""
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning(
-                    f"Docker SDK not available, simulating package uninstallation: {package}"
-                )
-                return True
-
-            # 执行卸载命令
-            uninstall_cmd = ["pip", "uninstall", "-y", package]
-            result = self.execute_command(uninstall_cmd, timeout=120)
-            self._emit_event(IsolationEvent.PACKAGE_INSTALLED, package=package)
-
-            return result.success
-
-        except Exception as e:
-            logger.error(f"Failed to uninstall package {package}: {e}")
-            return False
-
-    def get_installed_packages(self) -> Dict[str, str]:
-        """获取已安装的包列表"""
-        try:
-            if not DOCKER_AVAILABLE:
-                return {}
-
-            if not self._container:
-                return {}
-
-            # 执行pip list命令
-            result = self.execute_command(["pip", "list", "--format=json"], timeout=30)
-
-            if result.success:
-                packages = {}
-                import json
-
-                try:
-                    package_list = json.loads(result.stdout)
-                    for pkg in package_list:
-                        packages[pkg["name"]] = pkg["version"]
-                    return packages
-                except:
-                    logger.warning("Failed to parse package list output")
-                    return {}
-            else:
-                logger.error("Failed to get package list")
-                return {}
-
-        except Exception as e:
-            logger.error(f"Error getting package list: {e}")
-            return {}
-
-    def get_package_version(self, package: str) -> Optional[str]:
-        """获取特定包的版本"""
-        packages = self.get_installed_packages()
-        return packages.get(package)
-
-    def allocate_port(self) -> int:
-        """分配端口"""
-        # 在模拟模式下，使用简单的端口分配策略
-        if not DOCKER_AVAILABLE:
-            import socket
-
-            with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-                s.bind(("", 0))
-                s.listen(1)
-                port = s.getsockname()[1]
-            self.allocated_ports.append(port)
-            return port
-
-    def release_port(self, port: int) -> bool:
-        """释放端口"""
-        if port in self.allocated_ports:
-            self.allocated_ports.remove(port)
-            return True
-        return False
-
-    def activate(self) -> bool:
-        """激活环境（启动容器）"""
-        return self.start_container()
-
-    def deactivate(self) -> bool:
-        """停用环境（停止容器）"""
-        return self.stop_container()
-
-    def cleanup(self, force: bool = False) -> bool:
-        """清理Docker环境"""
-        try:
-            # 先停止容器
-            if self._container:
-                self.stop_container()
-
-            # 删除容器
-            self.remove_container()
-
-            # 清理网络和卷（如果需要）
-            if self.network_name:
-                try:
-                    if (
-                        hasattr(self.isolation_engine, "docker_client")
-                        and self.isolation_engine.docker_client
-                    ):
-                        networks = self.isolation_engine.docker_client.networks.list(
-                            names=[self.network_name]
-                        )
-                        for network in networks:
-                            try:
-                                network.remove()
-                                logger.info(f"Removed Docker network: {network.name}")
-                            except:
-                                pass
-                except Exception as e:
-                    logger.error(f"Error cleaning up network {self.network_name}: {e}")
-
-            for volume_name in self.volumes.keys():
-                try:
-                    if (
-                        hasattr(self.isolation_engine, "docker_client")
-                        and self.isolation_engine.docker_client
-                    ):
-                        volumes = self.isolation_engine.docker_client.volumes.list(
-                            filters={"name": volume_name}
-                        )
-                        for volume in volumes:
-                            try:
-                                volume.remove()
-                                logger.info(f"Removed Docker volume: {volume_name}")
-                            except:
-                                pass
-                except Exception as e:
-                    logger.error(f"Error cleaning up volume {volume_name}: {e}")
-
-            self.status = EnvironmentStatus.CLEANUP_COMPLETE
-            self._emit_event(IsolationEvent.ENVIRONMENT_CLEANUP_COMPLETE)
-            return True
-
         except Exception as e:
             logger.error(f"Error cleaning up Docker environment: {e}")
             if not force:
                 self.status = EnvironmentStatus.ERROR
-                return False
-            return True
+                return True
+            else:
+                logger.warning(f"Unknown cleanup command: {command}")
 
-    def validate_isolation(self) -> bool:
-        """验证隔离有效性"""
+    def configure_healthcheck(self, healthcheck_config: Dict[str, Any]) -> bool:
+        """配置容器健康检查"""
         try:
             if not DOCKER_AVAILABLE:
-                return False
+                logger.warning(
+                    "Docker SDK not available, simulating healthcheck configuration"
+                )
+                self.healthcheck_config = healthcheck_config
+                return True
+
+            self.healthcheck_config = healthcheck_config
+            logger.info(f"Configured healthcheck: {healthcheck_config}")
+
+            if self._container:
+                healthcheck = {
+                    "test": healthcheck_config.get("test", ["CMD", "exit", "0"]),
+                    "interval": healthcheck_config.get("interval", 30),
+                    "timeout": healthcheck_config.get("timeout", 5),
+                    "retries": healthcheck_config.get("retries", 3),
+                    "start_period": healthcheck_config.get("start_period", 0),
+                }
+                logger.debug(f"Healthcheck configuration: {healthcheck}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to configure healthcheck: {e}")
+            return False
+
+    def get_health_status(self) -> Dict[str, Any]:
+        """获取容器健康状态"""
+        try:
+            if not DOCKER_AVAILABLE or not self._container:
+                return {"status": "unknown", "message": "Docker not available"}
+
+            self._container.reload()
+            health_status = self._container.attrs.get("State", {}).get("Health", {})
+            health_status_data = (
+                health_status if isinstance(health_status, dict) else {}
+            )
+
+            return {
+                "status": health_status_data.get("Status", "none"),
+                "failing_streak": health_status_data.get("FailingStreak", 0),
+                "log": health_status_data.get("Log", []),
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting health status: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def wait_for_healthy(self, timeout: int = 300) -> bool:
+        """等待容器变为健康状态"""
+        try:
+            import time
+
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                health_status = self.get_health_status()
+                status = health_status.get("status")
+
+                if status == "healthy":
+                    logger.info("Container is healthy")
+                    return True
+                elif status in ["unhealthy", "error"]:
+                    logger.error(f"Container is {status}")
+                    return False
+
+                time.sleep(2)
+
+            logger.error("Timeout waiting for container to be healthy")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error waiting for container to be healthy: {e}")
+            return False
+
+    def get_container_logs(
+        self,
+        tail: int = 100,
+        since: str = None,
+        timestamps: bool = False,
+        follow: bool = False,
+    ) -> str:
+        """获取容器日志"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return ""
 
             if not self._container:
-                return False
+                logger.warning("No container to get logs from")
+                return ""
 
-            # 检查容器状态
+            logs = self._container.logs(
+                tail=tail,
+                timestamps=timestamps,
+                follow=follow,
+                stdout=True,
+                stderr=True,
+            )
+
+            return logs.decode("utf-8") if isinstance(logs, bytes) else logs
+
+        except Exception as e:
+            logger.error(f"Failed to get container logs: {e}")
+            return ""
+
+    def follow_container_logs(self, timeout: int = 0) -> str:
+        """实时跟踪容器日志"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return ""
+
+            if not self._container:
+                logger.warning("No container to follow logs")
+                return ""
+
+            for log_line in self._container.logs(
+                stream=True, follow=True, stdout=True, stderr=True
+            ):
+                if isinstance(log_line, bytes):
+                    print(log_line.decode("utf-8").strip())
+                else:
+                    print(log_line.strip())
+
+        except Exception as e:
+            logger.error(f"Failed to follow container logs: {e}")
+            return ""
+
+    def search_container_logs(self, pattern: str) -> List[str]:
+        """在容器日志中搜索匹配内容"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return []
+
+            if not self._container:
+                logger.warning("No container to search logs")
+                return []
+
+            logs = self._container.logs(stdout=True, stderr=True)
+            full_logs = ""
+            for line in logs:
+                if isinstance(line, bytes):
+                    full_logs += line.decode("utf-8")
+                else:
+                    full_logs += line
+
+            results = []
+            for log_line in full_logs.split("\n"):
+                if pattern.lower() in log_line.lower():
+                    results.append(log_line.strip())
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Failed to search container logs: {e}")
+            return []
+
+    def export_container_logs(
+        self,
+        output_path: Path,
+        tail: int = 0,
+        since: str = None,
+        timestamps: bool = False,
+    ) -> bool:
+        """导出容器日志到文件"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return True
+
+            if not self._container:
+                logger.warning("No container to export logs")
+                return True
+
+            logs = self._container.logs(
+                tail=tail, since=since, timestamps=timestamps, stdout=True, stderr=True
+            )
+
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(output_path, "wb") as f:
+                if isinstance(logs, bytes):
+                    f.write(logs)
+                else:
+                    f.write(logs.encode("utf-8"))
+
+            logger.info(f"Exported container logs to: {output_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to export container logs: {e}")
+            return False
+
+    def get_container_stats(self) -> Dict[str, Any]:
+        """获取容器资源使用统计"""
+        try:
+            if not DOCKER_AVAILABLE or not self._container:
+                return {}
+
             self._container.reload()
-            status = self._container.status
-            return status in ("running", "exited")
+            stats = self._container.stats(stream=False)
 
-        except Exception as e:
-            logger.error(f"Error validating Docker isolation: {e}")
-            return False
+            cpu_delta = stats.get("cpu_stats", {}).get("cpu_usage", {}).get(
+                "total_usage", 0
+            ) - stats.get("precpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0)
 
-    def create_snapshot(self, snapshot_id: Optional[str] = None) -> Dict[str, Any]:
-        """创建Docker环境快照"""
-        try:
-            if snapshot_id is None:
-                timestamp = int(time.time())
-                snapshot_id = f"docker_snapshot_{timestamp}_{uuid.uuid4().hex[:8]}"
+            system_delta = stats.get("cpu_stats", {}).get("system_cpu_usage", 0)
 
-            self.logger.info(f"Creating Docker snapshot {snapshot_id}")
+            cpu_percent = 0.0
+            if system_delta > 0:
+                cpu_percent = (cpu_delta / system_delta) * 100.0
 
-            # 收集Docker特有状态
-            docker_info = {
-                "container_id": self.container_id,
-                "container_name": self.container_name,
-                "image_name": self.image_name,
-                "network_name": self.network_name,
-                "volumes": dict(self.volumes),
-                "port_mappings": dict(self.port_mappings),
-                "environment_vars": dict(self.environment_vars),
-                "resource_limits": dict(self.resource_limits),
-                "created_at": self.activated_at.isoformat()
-                if self.activated_at
-                else None,
-                "container_status": self._container.status if self._container else None,
+            memory_usage = stats.get("memory_stats", {}).get("usage", 0)
+            memory_limit = stats.get("memory_stats", {}).get("limit", 0)
+            memory_percent = 0.0
+            if memory_limit > 0:
+                memory_percent = (memory_usage / memory_limit) * 100.0
+
+            networks = stats.get("networks", {})
+            network_rx = 0
+            network_tx = 0
+
+            for net_name, net_stats in networks.items():
+                network_rx += net_stats.get("rx_bytes", 0)
+                network_tx += net_stats.get("tx_bytes", 0)
+
+            blkio_stats = stats.get("blkio_stats", {})
+            disk_read = blkio_stats.get("io_service_bytes_recursive", {}).get("read", 0)
+            disk_write = blkio_stats.get("io_service_bytes_recursive", {}).get(
+                "write", 0
+            )
+
+            pids_current = stats.get("pids_stats", {}).get("current", 0)
+            pids_limit = stats.get("pids_stats", {}).get("limit", 0)
+
+            return {
+                "cpu_percent": round(cpu_percent, 2),
+                "memory_usage": memory_usage,
+                "memory_limit": memory_limit,
+                "memory_percent": round(memory_percent, 2),
+                "network_rx": network_rx,
+                "network_tx": network_tx,
+                "disk_read": disk_read,
+                "disk_write": disk_write,
+                "pids_current": pids_current,
+                "pids_limit": pids_limit,
+                "timestamp": stats.get("read", None),
             }
 
-            snapshot_data = {
-                "snapshot_id": snapshot_id,
-                "env_id": self.env_id,
-                "created_at": datetime.now().isoformat(),
-                "env_type": "docker",
-                "docker_info": docker_info,
-            }
-
-            self._emit_event(IsolationEvent.SNAPSHOT_CREATED, snapshot_id=snapshot_id)
-            self.logger.info(f"Successfully created Docker snapshot {snapshot_id}")
-            return snapshot_data
-
         except Exception as e:
-            self.logger.error(f"Failed to create Docker snapshot: {e}")
-            raise
-
-    def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
-        """从快照恢复Docker环境"""
-        try:
-            snapshot_id = snapshot.get("snapshot_id")
-            self.logger.info(
-                f"Restoring Docker environment {self.env_id} from snapshot {snapshot_id}"
-            )
-
-            docker_info = snapshot.get("docker_info", {})
-
-            # 恢复Docker特有配置
-            self.image_name = docker_info.get("image_name", self.image_name)
-            self.network_name = docker_info.get("network_name", "")
-            self.volumes = docker_info.get("volumes", {})
-            self.port_mappings = docker_info.get("port_mappings", {})
-            self.environment_vars = docker_info.get("environment_vars", {})
-            self.resource_limits = docker_info.get("resource_limits", {})
-
-            # 创建并配置容器
-            if not self.create_container():
-                return False
-
-            # 启动容器
-            if not self.start_container():
-                return False
-
-            self._emit_event(IsolationEvent.SNAPSHOT_RESTORED, snapshot_id=snapshot_id)
-            self.logger.info(
-                f"Successfully restored Docker environment from snapshot {snapshot_id}"
-            )
-            return True
-
-        except Exception as e:
-            self.logger.error(
-                f"Failed to restore from Docker snapshot {snapshot_id}: {e}"
-            )
-            return False
-
-    def delete_snapshot(self, snapshot_id: str) -> bool:
-        """删除Docker快照"""
-        # Docker快照主要是内存中的配置，不需要特殊清理
-        try:
-            self.logger.info(f"Deleting Docker snapshot {snapshot_id}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to delete Docker snapshot {snapshot_id}: {e}")
-            return False
-
-    def list_snapshots(self) -> List[Dict[str, Any]]:
-        """列出所有快照"""
-        # Docker环境的快照由管理器管理
-        return []
+            logger.error(f"Failed to get container stats: {e}")
+            return {}
 
     def get_container_info(self) -> Dict[str, Any]:
         """获取容器信息"""
@@ -783,6 +728,10 @@ class DockerIsolationEngine(IsolationEngine):
         self.api_client: Optional[Any] = None
         self._client_lock = threading.Lock()
 
+        self.image_manager = None
+        self.network_manager = None
+        self.volume_manager = None
+
     def initialize_client(self) -> bool:
         """初始化Docker客户端"""
         if not DOCKER_AVAILABLE:
@@ -801,12 +750,21 @@ class DockerIsolationEngine(IsolationEngine):
                 if "docker_host" in self.engine_config:
                     os.environ["DOCKER_HOST"] = self.engine_config["docker_host"]
 
-                self.docker_client = docker.from_env()
-                self.api_client = docker.APIClient()
+                self.docker_client = docker.from_env(**client_kwargs)
+                self.api_client = docker.APIClient(**client_kwargs)
 
-                # 验证连接
-                if self.docker_client:
-                    self.docker_client.ping()
+                from .managers import ImageManager, NetworkManager, VolumeManager
+
+                self.image_manager = ImageManager(
+                    self.docker_client, self.engine_config
+                )
+                self.network_manager = NetworkManager(
+                    self.docker_client, self.network_prefix
+                )
+                self.volume_manager = VolumeManager(
+                    self.docker_client, self.volume_prefix
+                )
+
                 logger.info("Docker client initialized successfully")
                 return True
 
@@ -1477,16 +1435,17 @@ class DockerIsolationEngine(IsolationEngine):
         """获取支持的功能列表"""
         return self.supported_features.copy()
 
-    def get_engine_info(self) -> Dict[str, Any]:
-        """获取引擎信息"""
-        info = super().get_engine_info()
-        info.update(
-            {
-                "engine_type": "docker",
-                "docker_available": DOCKER_AVAILABLE,
-            }
-        )
-        return info
+    def manage_images(self) -> Optional["ImageManager"]:
+        """获取镜像管理器"""
+        return self.image_manager
+
+    def manage_networks(self) -> Optional["NetworkManager"]:
+        """获取网络管理器"""
+        return self.network_manager
+
+    def manage_volumes(self) -> Optional["VolumeManager"]:
+        """获取卷管理器"""
+        return self.volume_manager
 
     def check_environment_health(self, env: IsolatedEnvironment) -> bool:
         """检查Docker环境健康状态"""

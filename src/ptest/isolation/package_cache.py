@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 import requests
 
-from core import get_logger
+from ptest.core import get_logger
 
 logger = get_logger("package_cache")
 

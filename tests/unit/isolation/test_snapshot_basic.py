@@ -13,16 +13,12 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 try:
-    from isolation.manager import IsolationManager
-    from isolation.enums import IsolationLevel
+    from ptest.isolation.manager import IsolationManager
+    from ptest.isolation.enums import IsolationLevel
 except ImportError:
-    try:
-        from pypj.ptest.isolation.manager import IsolationManager
-        from pypj.ptest.isolation.enums import IsolationLevel
-    except ImportError:
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-        from isolation.manager import IsolationManager
-        from isolation.enums import IsolationLevel
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+    from ptest.isolation.manager import IsolationManager
+    from ptest.isolation.enums import IsolationLevel
 
 
 class TestBasicSnapshot(unittest.TestCase):
@@ -80,7 +76,7 @@ class TestBasicSnapshot(unittest.TestCase):
 
     def test_enumeration_extensions(self):
         """测试快照相关枚举扩展"""
-        from isolation.enums import IsolationEvent
+        from ptest.isolation.enums import IsolationEvent
 
         # 检查快照事件类型
         self.assertTrue(hasattr(IsolationEvent, "SNAPSHOT_CREATING"))

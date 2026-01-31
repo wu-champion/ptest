@@ -17,16 +17,12 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 try:
-    from isolation.manager import IsolationManager
-    from isolation.enums import IsolationLevel, IsolationEvent
+    from ptest.isolation.manager import IsolationManager
+    from ptest.isolation.enums import IsolationLevel, IsolationEvent
 except ImportError:
-    try:
-        from pypj.ptest.isolation.manager import IsolationManager
-        from pypj.ptest.isolation.enums import IsolationLevel, IsolationEvent
-    except ImportError:
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-        from isolation.manager import IsolationManager
-        from isolation.enums import IsolationLevel, IsolationEvent
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+    from ptest.isolation.manager import IsolationManager
+    from ptest.isolation.enums import IsolationLevel, IsolationEvent
 
 
 class TestSnapshotFunctionality(unittest.TestCase):

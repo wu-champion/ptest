@@ -15,9 +15,9 @@ import os
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # 直接导入模块
-from isolation.manager import IsolationManager
-from isolation.enums import IsolationLevel, EnvironmentStatus
-from isolation.basic_engine import BasicIsolationEngine
+from ptest.isolation.manager import IsolationManager
+from ptest.isolation.enums import IsolationLevel, EnvironmentStatus
+from ptest.isolation.basic_engine import BasicIsolationEngine
 
 
 class TestIsolationManager(unittest.TestCase):
