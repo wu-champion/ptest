@@ -7,23 +7,19 @@ import sys
 import os
 from pathlib import Path
 
-# 添加当前目录到Python路径
-current_dir = Path(__file__).parent
-sys.path.insert(0, str(current_dir))
-
-# 临时修改模块导入以避免相对导入问题
-import importlib.util
+# 添加项目根目录到Python路径
+current_dir = Path(__file__).parent.parent.parent
+src_dir = current_dir / "src"
+sys.path.insert(0, str(src_dir))
 
 # 直接导入所需的模块
 print("测试Python API功能...")
 
 try:
-    # 直接导入环境管理器
-    sys.path.insert(0, str(current_dir))
-    import environment
-    import objects.manager
-    import cases.manager
-    import reports.generator
+    from ptest.isolation.manager import IsolationManager
+    from ptest.objects.manager import ObjectManager
+    from ptest.cases.manager import CaseManager
+    from ptest.reports.generator import ReportGenerator
 
     # 创建一个简化版本的API类用于测试
     class TestFramework:

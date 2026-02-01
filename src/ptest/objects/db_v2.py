@@ -8,7 +8,6 @@ from .service_base import ServiceComponent
 from .db_server import DatabaseServerComponent
 from .db_client import DatabaseClientComponent
 from typing import Dict, Any, Optional, Tuple
-import logging
 
 
 try:

@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 
 # 框架版本和元信息
 __version__ = "1.0.1"
-__author__ = "ptest team"
-__email__ = "ptest@example.com"
+__author__ = "pcp"
+__email__ = "wu_champion@foxmail.com"
 __description__ = "A comprehensive testing framework"
 
 

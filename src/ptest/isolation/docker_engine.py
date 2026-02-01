@@ -7,7 +7,6 @@ import time
 import uuid
 from typing import Dict, Any, List, Optional, Union, Callable, TYPE_CHECKING
 from pathlib import Path
-import logging
 import threading
 from contextlib import contextmanager
 from datetime import datetime
@@ -111,6 +110,7 @@ class DockerEnvironment(IsolatedEnvironment):
 
         # Docker特有属性
         self.container_id: Optional[str] = None
+        self._container: Optional[Any] = None
         self.container_name: str = f"ptest_{env_id}_{uuid.uuid4().hex[:8]}"
         self.image_name: str = config.get(
             "image",
@@ -123,6 +123,9 @@ class DockerEnvironment(IsolatedEnvironment):
         self.port_mappings: Dict[int, int] = {}
         self.environment_vars: Dict[str, str] = {}
         self.resource_limits: Dict[str, Any] = {}
+        self.restart_policy: str = ""
+        self.healthcheck_config: Dict[str, Any] = {}
+        self.allocated_ports: List[int] = []  # 跟踪已分配的端口
 
         self.status = EnvironmentStatus.CREATED
         self._is_active = False
@@ -218,204 +221,8 @@ class DockerEnvironment(IsolatedEnvironment):
                 if limits.get("blkio_write_iops"):
                     host_config["blkio_device_write_iops"] = limits["blkio_write_iops"]
 
-                container_config["host_config"] = host_config
-
-            # 创建容器
-            if hasattr(engine, "docker_client") and engine.docker_client:
-                self._container = engine.docker_client.containers.create(
-                    **container_config
-                )
-            self.container_id = self._container.id if self._container else None
-
-            logger.info(f"Created Docker container: {self.container_id}")
-            self._emit_event(IsolationEvent.ENVIRONMENT_CREATED)
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to create container: {e}")
-            self.status = EnvironmentStatus.ERROR
-            self._emit_event(IsolationEvent.ERROR_OCCURRED, error=str(e))
-            return False
-
-    def start_container(self) -> bool:
-        """启动Docker容器"""
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning("Docker SDK not available, simulating container start")
-                self.status = EnvironmentStatus.ACTIVE
-                self.activated_at = datetime.now()
-                self._emit_event(IsolationEvent.ENVIRONMENT_ACTIVATED)
-                return True
-
-            if not self._container:
-                if not self.create_container():
-                    return False
-
-            # 启动容器
-            self._container.start()
-
-            # 等待容器就绪
-            self._container.reload()
-
-            logger.info(f"Started Docker container: {self.container_id}")
-            self.status = EnvironmentStatus.ACTIVE
-            self.activated_at = datetime.now()
-            self._emit_event(IsolationEvent.ENVIRONMENT_ACTIVATED)
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to start container: {e}")
-            self.status = EnvironmentStatus.ERROR
-            return False
-
-    def stop_container(self) -> bool:
-        """停止Docker容器"""
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning("Docker SDK not available, simulating container stop")
-                self.status = EnvironmentStatus.INACTIVE
-                self.deactivated_at = datetime.now()
-                self._emit_event(IsolationEvent.ENVIRONMENT_DEACTIVATED)
-                return True
-
-            if not self._container:
-                logger.warning("No container to stop")
-                return False
-
-            # 停止容器
-            self._container.stop()
-            self._container.reload()
-
-            logger.info(f"Stopped Docker container: {self.container_id}")
-            self.status = EnvironmentStatus.INACTIVE
-            self.deactivated_at = datetime.now()
-            self._emit_event(IsolationEvent.ENVIRONMENT_DEACTIVATED)
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to stop container: {e}")
-            self.status = EnvironmentStatus.ERROR
-            return False
-
-    def restart_container(self) -> bool:
-        """重启Docker容器"""
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning("Docker SDK not available, simulating container restart")
-                return True
-
-            if not self._container:
-                logger.warning("No container to restart")
-                return False
-
-            # 重启容器
-            self._container.restart()
-            self._container.reload()
-
-            logger.info(f"Restarted Docker container: {self.container_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to restart container: {e}")
-            return False
-
-    def pause_container(self) -> bool:
-        """暂停Docker容器"""
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning("Docker SDK not available, simulating container pause")
-                return True
-
-            if not self._container:
-                logger.warning("No container to pause")
-                return False
-
-            # 暂停容器
-            self._container.pause()
-            logger.info(f"Paused Docker container: {self.container_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to pause container: {e}")
-            return False
-
-    def unpause_container(self) -> bool:
-        """恢复暂停的Docker容器"""
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning("Docker SDK not available, simulating container unpause")
-                return True
-
-            if not self._container:
-                logger.warning("No container to unpause")
-                return False
-
-            # 恢复容器
-            self._container.unpause()
-            logger.info(f"Unpaused Docker container: {self.container_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to unpause container: {e}")
-            return False
-
-    def wait_container(self, timeout: int = None) -> int:
-        """等待容器退出"""
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning("Docker SDK not available, simulating container wait")
-                return 0
-
-            if not self._container:
-                logger.warning("No container to wait for")
-                return -1
-
-            # 等待容器退出
-            exit_code = self._container.wait(timeout=timeout)
-            logger.info(f"Container {self.container_id} exited with code: {exit_code}")
-            return exit_code
-
-        except Exception as e:
-            logger.error(f"Failed to wait for container: {e}")
-            return -1
-
-    def remove_container(self) -> bool:
-        """删除Docker容器"""
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning("Docker SDK not available, simulating container removal")
-                self.status = EnvironmentStatus.CLEANUP_COMPLETE
-                self._emit_event(IsolationEvent.ENVIRONMENT_CLEANUP_COMPLETE)
-                return True
-        except Exception as e:
-            logger.error(f"Error cleaning up Docker environment: {e}")
-            if not force:
-                self.status = EnvironmentStatus.ERROR
-                return True
-            else:
-                logger.warning(f"Unknown cleanup command: {command}")
-
-    def configure_healthcheck(self, healthcheck_config: Dict[str, Any]) -> bool:
-        """配置容器健康检查"""
-        try:
-            if not DOCKER_AVAILABLE:
-                logger.warning(
-                    "Docker SDK not available, simulating healthcheck configuration"
-                )
-                self.healthcheck_config = healthcheck_config
-                return True
-
-            self.healthcheck_config = healthcheck_config
-            logger.info(f"Configured healthcheck: {healthcheck_config}")
-
-            if self._container:
-                healthcheck = {
-                    "test": healthcheck_config.get("test", ["CMD", "exit", "0"]),
-                    "interval": healthcheck_config.get("interval", 30),
-                    "timeout": healthcheck_config.get("timeout", 5),
-                    "retries": healthcheck_config.get("retries", 3),
-                    "start_period": healthcheck_config.get("start_period", 0),
-                }
+                if host_config:
+                    container_config["host_config"] = host_config
                 logger.debug(f"Healthcheck configuration: {healthcheck}")
 
             return True
@@ -653,6 +460,7 @@ class DockerEnvironment(IsolatedEnvironment):
         try:
             if not self._container:
                 return {
+                    "name": self.container_name,
                     "container_id": None,
                     "container_name": self.container_name,
                     "status": "not_created",
@@ -662,7 +470,40 @@ class DockerEnvironment(IsolatedEnvironment):
             self._container.reload()
 
             return {
+                "name": self.container_name,
                 "container_id": self.container_id,
+                "container_name": self.container_name,
+                "status": self._container.status,
+                "image": self.image_name,
+                "ip_address": self._container.attrs["NetworkSettings"]["IPAddress"]
+                if self._container.attrs.get("NetworkSettings")
+                and self._container.attrs["NetworkSettings"].get("IPAddress")
+                else None,
+                "ports": self._container.attrs.get("NetworkSettings", {}).get(
+                    "Ports", {}
+                ),
+                "created": self._container.attrs.get("Created"),
+                "started": self._container.attrs.get("Started"),
+                "labels": self._container.attrs.get("Labels", {}),
+                "mounts": self._container.attrs.get("Mounts", []),
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting container info: {e}")
+            return {
+                "name": self.container_name,
+                "container_id": self.container_id,
+                "container_name": self.container_name,
+                "status": "error",
+                "error": str(e),
+                "image": self.image_name,
+            }
+
+            self._container.reload()
+
+            return {
+                "container_id": self.container_id,
+                "name": self.container_name,
                 "container_name": self.container_name,
                 "status": self._container.status,
                 "image": self.image_name,
@@ -688,6 +529,535 @@ class DockerEnvironment(IsolatedEnvironment):
                 "error": str(e),
                 "image": self.image_name,
             }
+
+    def activate(self) -> bool:
+        """激活Docker环境"""
+        try:
+            return self.start_container()
+        except Exception as e:
+            logger.error(f"Failed to activate Docker environment: {e}")
+            return False
+
+    def deactivate(self) -> bool:
+        """停用Docker环境"""
+        try:
+            return self.stop_container()
+        except Exception as e:
+            logger.error(f"Failed to deactivate Docker environment: {e}")
+            return False
+
+    def execute_command(
+        self,
+        cmd: List[str],
+        timeout: Optional[float] = None,
+        env_vars: Optional[Dict[str, str]] = None,
+        cwd: Optional[Path] = None,
+    ) -> ProcessResult:
+        """在隔离环境中执行命令 (实现抽象方法)"""
+        # 调用Docker特定的exec_command方法
+        return self.exec_command(
+            cmd=cmd,
+            timeout=timeout,
+            env_vars=env_vars,
+            cwd=cwd,
+            tty=False,
+            interactive=False,
+        )
+
+    def exec_command(
+        self,
+        cmd: List[str],
+        timeout: Optional[float] = None,
+        env_vars: Optional[Dict[str, str]] = None,
+        cwd: Optional[Path] = None,
+        tty: bool = False,
+        interactive: bool = False,
+    ) -> ProcessResult:
+        """在Docker容器中执行命令 (Docker特定方法)"""
+        try:
+            from datetime import datetime
+
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating command execution")
+                return ProcessResult(returncode=0, stdout="", stderr="", command=cmd)
+
+            if not self._container:
+                logger.warning("Container not created, cannot execute command")
+                return ProcessResult(
+                    returncode=-1,
+                    stdout="",
+                    stderr="Container not created",
+                    command=cmd,
+                )
+
+            exec_config = {"detach": not interactive and not tty}
+            if tty:
+                exec_config["tty"] = True
+            if cwd:
+                exec_config["workdir"] = str(cwd)
+
+            if env_vars:
+                exec_config["environment"] = env_vars
+
+            if interactive:
+                exit_code, output = self._container.exec_run(cmd, **exec_config)
+                stdout = output.decode("utf-8") if isinstance(output, bytes) else output
+
+                return ProcessResult(
+                    returncode=exit_code,
+                    stdout=stdout,
+                    stderr="",
+                    command=cmd,
+                    timeout=timeout,
+                    start_time=datetime.now(),
+                    end_time=datetime.now(),
+                )
+            else:
+                exit_code, output = self._container.exec_run(cmd, **exec_config)
+                stdout = output.decode("utf-8") if isinstance(output, bytes) else output
+
+                return ProcessResult(
+                    returncode=exit_code,
+                    stdout=stdout,
+                    stderr="",
+                    command=cmd,
+                    timeout=timeout,
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to execute command in Docker container: {e}")
+            return ProcessResult(
+                returncode=-1,
+                stdout="",
+                stderr=str(e),
+                command=cmd,
+                timeout=timeout,
+            )
+
+    def install_package(
+        self, package: str, version: Optional[str] = None, upgrade: bool = False
+    ) -> bool:
+        """在Docker环境中安装包"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning(
+                    f"Docker SDK not available, simulating package installation: {package}"
+                )
+                return True
+
+            if not self._container:
+                logger.warning("Container not created, cannot install package")
+                return False
+
+            if version:
+                cmd = ["pip", "install", f"{package}=={version}"]
+            else:
+                cmd = ["pip", "install", package]
+
+            result = self.execute_command(cmd, timeout=600)
+            success = result.returncode == 0
+
+            if success:
+                logger.info(f"Successfully installed package: {package}")
+                self._emit_event(IsolationEvent.PACKAGE_INSTALLED, package=package)
+            else:
+                logger.error(f"Failed to install package {package}: {result.stderr}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Failed to install package {package}: {e}")
+            return False
+
+    def uninstall_package(self, package: str) -> bool:
+        """在Docker环境中卸载包"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning(
+                    f"Docker SDK not available, simulating package uninstallation: {package}"
+                )
+                return True
+
+            if not self._container:
+                logger.warning("Container not created, cannot uninstall package")
+                return False
+
+            cmd = ["pip", "uninstall", "-y", package]
+            result = self.execute_command(cmd, timeout=300)
+            success = result.returncode == 0
+
+            if success:
+                logger.info(f"Successfully uninstalled package: {package}")
+            else:
+                logger.error(f"Failed to uninstall package {package}: {result.stderr}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Failed to uninstall package {package}: {e}")
+            return False
+
+    def get_installed_packages(self) -> Dict[str, str]:
+        """获取Docker环境中已安装的包列表"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return {}
+
+            if not self._container:
+                return {}
+
+            result = self.execute_command(
+                ["pip", "list", "--format=freeze"], timeout=30
+            )
+            if result.returncode == 0:
+                packages = {}
+                for line in result.stdout.split("\n"):
+                    if line and "==" in line:
+                        name, version = line.split("==")
+                        packages[name] = version
+                return packages
+            else:
+                logger.error(f"Failed to get installed packages: {result.stderr}")
+                return {}
+
+        except Exception as e:
+            logger.error(f"Failed to get installed packages: {e}")
+            return {}
+
+    def get_package_version(self, package: str) -> Optional[str]:
+        """获取Docker环境中指定包的版本"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return None
+
+            if not self._container:
+                return None
+
+            result = self.execute_command(["pip", "show", package], timeout=30)
+
+            if result.returncode == 0:
+                for line in result.stdout.split("\n"):
+                    if line.startswith("Version:"):
+                        return line.split(":")[1].strip()
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to get package version for {package}: {e}")
+            return None
+
+    def allocate_port(self) -> int:
+        """分配端口"""
+        try:
+            import socket
+            from contextlib import closing
+
+            with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+                s.bind(("", 0))
+                s.listen(1)
+                port = s.getsockname()[1]
+
+            self.allocated_ports.append(port)
+            self.port_mappings[port] = port
+            logger.debug(f"Allocated port: {port}")
+            return port
+
+        except Exception as e:
+            logger.error(f"Failed to allocate port: {e}")
+            return -1
+
+    def release_port(self, port: int) -> bool:
+        """释放端口"""
+        try:
+            if port in self.port_mappings:
+                del self.port_mappings[port]
+
+            if port in self.allocated_ports:
+                self.allocated_ports.remove(port)
+                logger.debug(f"Released port: {port}")
+                return True
+            else:
+                logger.warning(f"Port {port} not found in allocated ports")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to release port {port}: {e}")
+            return False
+
+    def cleanup(self, force: bool = False) -> bool:
+        """清理Docker环境"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating cleanup")
+                self.status = EnvironmentStatus.CLEANUP_COMPLETE
+                self._emit_event(IsolationEvent.ENVIRONMENT_CLEANUP_COMPLETE)
+                return True
+
+            # 停止容器
+            if self._container and self.status == EnvironmentStatus.ACTIVE:
+                self.stop_container()
+
+            # 删除容器
+            if self._container:
+                try:
+                    self._container.remove(force=force)
+                    logger.info(f"Removed container: {self.container_id}")
+                except Exception as e:
+                    logger.error(f"Failed to remove container: {e}")
+                    if not force:
+                        return False
+
+            self._container = None
+            self.container_id = None
+            self.status = EnvironmentStatus.CLEANUP_COMPLETE
+            self._emit_event(IsolationEvent.ENVIRONMENT_CLEANUP_COMPLETE)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to cleanup Docker environment: {e}")
+            if not force:
+                self.status = EnvironmentStatus.ERROR
+            else:
+                self.status = EnvironmentStatus.CLEANUP_COMPLETE
+            return False
+
+    def validate_isolation(self) -> bool:
+        """验证Docker隔离有效性"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return True
+
+            # 检查容器是否存在
+            if not self._container:
+                logger.warning("Container not created, cannot validate isolation")
+                return False
+
+            # 检查容器状态
+            self._container.reload()
+            status = self._container.status
+
+            is_valid = status in ["running", "created"]
+
+            if is_valid:
+                logger.debug(f"Docker isolation validation passed: {status}")
+            else:
+                logger.warning(f"Docker isolation validation failed: {status}")
+
+            return is_valid
+
+        except Exception as e:
+            logger.error(f"Failed to validate Docker isolation: {e}")
+            return False
+
+    def create_snapshot(self, snapshot_id: Optional[str] = None) -> Dict[str, Any]:
+        """创建Docker环境快照"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating snapshot creation")
+                snapshot_id = snapshot_id or f"snapshot_{uuid.uuid4().hex}"
+                return {
+                    "snapshot_id": snapshot_id,
+                    "env_id": self.env_id,
+                    "snapshot_time": datetime.now().isoformat(),
+                    "status": "simulated",
+                    "config": self.config,
+                }
+
+            if not self._container:
+                logger.warning("Container not created, cannot create snapshot")
+                return {}
+
+            if not snapshot_id:
+                snapshot_id = f"{self.env_id}_snapshot_{uuid.uuid4().hex[:8]}"
+
+            snapshot_image = self._container.commit(repository=snapshot_id)
+
+            logger.info(f"Created snapshot: {snapshot_id}")
+            self._emit_event(
+                IsolationEvent.SNAPSHOT_CREATED,
+                snapshot_id=snapshot_id,
+                snapshot_image=snapshot_image.id,
+            )
+
+            return {
+                "snapshot_id": snapshot_id,
+                "env_id": self.env_id,
+                "snapshot_time": datetime.now().isoformat(),
+                "status": "created",
+                "config": self.config,
+                "image_id": snapshot_image.id,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to create snapshot: {e}")
+            return {"error": str(e)}
+
+    def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
+        """从快照恢复Docker环境"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning(
+                    "Docker SDK not available, simulating snapshot restoration"
+                )
+                return True
+
+            if not self._container:
+                logger.warning("Container not created, cannot restore snapshot")
+                return False
+
+            snapshot_id = snapshot.get("snapshot_id")
+            if not snapshot_id:
+                logger.error("Invalid snapshot data: missing snapshot_id")
+                return False
+
+            try:
+                snapshot_image = self.isolation_engine.docker_client.images.get(
+                    snapshot_id
+                )
+            except Exception:
+                logger.error(f"Snapshot image not found: {snapshot_id}")
+                return False
+
+            if self.status == EnvironmentStatus.ACTIVE:
+                self.stop_container()
+
+            if self._container:
+                self._container.remove(force=True)
+
+            self.image_name = snapshot_id
+            success = self.create_container()
+
+            if success:
+                logger.info(f"Restored from snapshot: {snapshot_id}")
+                self._emit_event(
+                    IsolationEvent.SNAPSHOT_RESTORED, snapshot_id=snapshot_id
+                )
+            else:
+                logger.error(f"Failed to create container from snapshot: {snapshot_id}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Failed to restore from snapshot {snapshot_id}: {e}")
+            return False
+
+    def export_container(self, output_path: Path) -> bool:
+        """导出容器为tar文件"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating container export")
+                return True
+
+            if not self._container:
+                logger.warning("Container not created, cannot export")
+                return False
+
+            logger.info(f"Exporting container to: {output_path}")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(output_path, "wb") as f:
+                for chunk in self._container.get():
+                    f.write(chunk)
+
+            logger.info(f"Successfully exported container to: {output_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to export container: {e}")
+            return False
+
+    def import_container(self, input_path: Path, image_name: str) -> bool:
+        """从tar文件导入容器"""
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating container import")
+                return True
+
+            logger.info(f"Importing container from: {input_path}")
+
+            with open(input_path, "rb") as f:
+                self.isolation_engine.docker_client.images.load(f.read())
+
+            logger.info(f"Successfully imported container image: {image_name}")
+            self.image_name = image_name
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to import container: {e}")
+            return False
+
+    def create_snapshot_from_container(
+        self, snapshot_id: Optional[str] = None, include_data: bool = False
+    ) -> Dict[str, Any]:
+        """从运行中的容器创建快照镜像
+
+        Args:
+            snapshot_id: 快照ID
+            include_data: 是否包含数据卷数据
+
+        Returns:
+            快照信息字典
+        """
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning("Docker SDK not available, simulating snapshot creation")
+                snapshot_id = snapshot_id or f"snapshot_{uuid.uuid4().hex}"
+                return {
+                    "snapshot_id": snapshot_id,
+                    "env_id": self.env_id,
+                    "snapshot_time": datetime.now().isoformat(),
+                    "status": "simulated",
+                    "config": self.config,
+                }
+
+            if not self._container:
+                logger.warning("Container not created, cannot create snapshot")
+                return {}
+
+            if not snapshot_id:
+                snapshot_id = f"{self.env_id}_snapshot_{uuid.uuid4().hex[:8]}"
+
+            logger.info(f"Creating container snapshot: {snapshot_id}")
+            self._container.reload()
+
+            container_state = {
+                "config": self._container.attrs.get("Config", {}),
+                "status": self._container.status,
+                "image": self.image_name,
+                "restart_count": self._container.attrs.get("RestartCount", 0),
+                "labels": self._container.attrs.get("Labels", {}),
+                "env_vars": self.environment_vars,
+                "volumes": self.volumes,
+            }
+
+            snapshot_image = self._container.commit(
+                repository=snapshot_id,
+                message=f"Snapshot created at {datetime.now().isoformat()}",
+                config=container_state["config"],
+            )
+
+            logger.info(f"Created container snapshot: {snapshot_id}")
+            self._emit_event(
+                IsolationEvent.SNAPSHOT_CREATED,
+                snapshot_id=snapshot_id,
+                snapshot_image=snapshot_image.id,
+                container_state=container_state,
+            )
+
+            return {
+                "snapshot_id": snapshot_id,
+                "env_id": self.env_id,
+                "snapshot_time": datetime.now().isoformat(),
+                "status": "created",
+                "container_state": container_state,
+                "image_id": snapshot_image.id,
+                "config": self.config,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to create container snapshot: {e}")
+            return {"error": str(e)}
 
 
 class DockerIsolationEngine(IsolationEngine):
@@ -732,6 +1102,16 @@ class DockerIsolationEngine(IsolationEngine):
         self.network_manager = None
         self.volume_manager = None
 
+        # 前缀
+        self.network_prefix = "ptest_net_"
+        self.volume_prefix = "ptest_vol_"
+
+    def get_engine_info(self) -> Dict[str, Any]:
+        """获取引擎信息"""
+        info = super().get_engine_info()
+        info["engine_type"] = "docker"
+        return info
+
     def initialize_client(self) -> bool:
         """初始化Docker客户端"""
         if not DOCKER_AVAILABLE:
@@ -743,15 +1123,13 @@ class DockerIsolationEngine(IsolationEngine):
                 return True
 
             try:
-                # 初始化Docker客户端 - 修复参数问题
                 import docker
 
-                # 使用环境变量设置
                 if "docker_host" in self.engine_config:
                     os.environ["DOCKER_HOST"] = self.engine_config["docker_host"]
 
-                self.docker_client = docker.from_env(**client_kwargs)
-                self.api_client = docker.APIClient(**client_kwargs)
+                self.docker_client = docker.from_env()
+                self.api_client = docker.APIClient()
 
                 from .managers import ImageManager, NetworkManager, VolumeManager
 
@@ -845,28 +1223,29 @@ class DockerIsolationEngine(IsolationEngine):
         try:
             if not DOCKER_AVAILABLE:
                 logger.warning("Docker SDK not available, simulating cleanup")
-                return {"cleaned": False, "details": "simulation_mode"}
+                return {"cleaned": False, "containers": 0, "details": "simulation_mode"}
 
             if not self.docker_client:
-                return {"cleaned": False, "details": "no_docker_client"}
+                return {
+                    "cleaned": False,
+                    "containers": 0,
+                    "details": "no_docker_client",
+                }
 
-            # 清理未使用的镜像
             images_pruned = self.docker_client.images.prune()
-            # 清理未使用的卷
             volumes_pruned = self.docker_client.volumes.prune()
 
-            cleaned_count = len(images_pruned.get("ImagesDeleted", [])) + len(
-                volumes_pruned.get("VolumesDeleted", [])
-            )
+            images_count = len(images_pruned.get("ImagesDeleted", []))
+            volumes_count = len(volumes_pruned.get("VolumesDeleted", []))
 
-            logger.info(f"Cleaned up {cleaned_count} unused resources")
+            logger.info(f"Cleaned up {images_count} images and {volumes_count} volumes")
             return {
                 "cleaned": True,
                 "details": {
                     "images_removed": images_pruned.get("ImagesDeleted", []),
                     "volumes_removed": volumes_pruned.get("VolumesDeleted", []),
-                    "total_cleaned": cleaned_count,
-                    "containers_count": 0,  # 不清理容器
+                    "total_cleaned": images_count + volumes_count,
+                    "containers": 0,
                 },
             }
 
@@ -875,6 +1254,7 @@ class DockerIsolationEngine(IsolationEngine):
             return {
                 "cleaned": False,
                 "error": str(e),
+                "containers": 0,
             }
 
     def pull_image(self, image_name: str, tag: str = "latest") -> bool:

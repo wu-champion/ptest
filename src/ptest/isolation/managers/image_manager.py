@@ -4,7 +4,6 @@ Docker镜像管理器
 提供完整的Docker镜像管理功能，包括拉取、推送、构建、标签等
 """
 
-import logging
 from typing import Dict, Any, List, Optional, Callable
 from pathlib import Path
 
@@ -323,6 +322,94 @@ class ImageManager:
         try:
             if not DOCKER_AVAILABLE:
                 return None
+
+            if not self.client:
+                return None
+
+            image = self.client.images.get(image_name)
+            return image.attrs
+        except Exception as e:
+            logger.error(f"Failed to inspect image {image_name}: {e}")
+            return None
+
+    def cleanup_images(
+        self,
+        prune_dangling: bool = True,
+        prune_unused: bool = False,
+        min_age_hours: int = None,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """清理Docker镜像，支持定期清理策略"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return {"images_removed": 0, "space_reclaimed": 0}
+
+            if not self.client:
+                return {"images_removed": 0, "space_reclaimed": 0}
+
+            results = {
+                "dangling_removed": 0,
+                "unused_removed": 0,
+                "total_removed": 0,
+                "space_reclaimed": 0,
+                "images": [],
+            }
+
+            if prune_dangling:
+                dangling_result = self.client.images.prune(filters={"dangling": True})
+                results["dangling_removed"] = len(
+                    dangling_result.get("ImagesDeleted", [])
+                )
+                results["space_reclaimed"] += dangling_result.get("SpaceReclaimed", 0)
+                results["images"].extend(dangling_result.get("ImagesDeleted", []))
+
+            if prune_unused and min_age_hours:
+                all_images = self.client.images.list(all=True)
+                import time
+
+                cutoff_time = time.time() - (min_age_hours * 3600)
+
+                unused_images = []
+                for img in all_images:
+                    created_at = img.attrs.get("Created", "")
+                    if created_at and not any(img.tags):
+                        try:
+                            from datetime import datetime
+
+                            created_dt = datetime.fromisoformat(
+                                created_at.replace("Z", "+00:00").replace("+00:00", "")
+                            )
+                            if created_dt.timestamp() < cutoff_time:
+                                unused_images.append(img.id)
+                        except:
+                            pass
+
+                for img_id in unused_images:
+                    if not dry_run:
+                        self.client.images.remove(img_id)
+                        logger.debug(f"Removed unused image: {img_id}")
+
+                results["unused_removed"] = len(unused_images)
+                results["images"].extend(unused_images)
+
+            results["total_removed"] = (
+                results["dangling_removed"] + results["unused_removed"]
+            )
+
+            if dry_run:
+                logger.info(
+                    f"Cleanup dry run: would remove {results['total_removed']} images"
+                )
+            else:
+                logger.info(
+                    f"Cleaned up {results['total_removed']} images, reclaimed {results['space_reclaimed']} bytes"
+                )
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Failed to cleanup images: {e}")
+            return {"images_removed": 0, "space_reclaimed": 0, "error": str(e)}
 
             if not self.client:
                 return None

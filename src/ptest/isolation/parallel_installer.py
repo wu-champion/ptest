@@ -18,7 +18,6 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, Future, as_completed
 from enum import Enum
 import json
-import logging
 
 from .package_manager import (
     AdvancedPackageManager,

@@ -211,6 +211,110 @@ class NetworkManager:
             logger.error(f"Failed to disconnect container from network: {e}")
             return False
 
+    def apply_network_policy(
+        self,
+        network_name: str,
+        policy_type: str = "ingress",
+        action: str = "allow",
+        protocol: str = "tcp",
+        port: int = None,
+        source_cidr: str = None,
+    ) -> bool:
+        """应用网络安全策略（通过Docker标签和说明）
+
+        Args:
+            network_name: 网络名称
+            policy_type: 策略类型 ("ingress" 或 "egress")
+            action: 动作 ("allow" 或 "deny")
+            protocol: 协议 ("tcp", "udp", "all")
+            port: 端口号
+            source_cidr: 源CIDR
+
+        Returns:
+            是否成功应用
+        """
+        try:
+            if not DOCKER_AVAILABLE:
+                logger.warning(
+                    "Docker SDK not available, simulating network policy application"
+                )
+                return True
+
+            if not self.client:
+                logger.error("Docker client not initialized")
+                return False
+
+            network = self.client.networks.get(network_name)
+            if not network:
+                logger.error(f"Network {network_name} not found")
+                return False
+
+            labels = network.attrs.get("Labels", {})
+            policy_key = f"com.ptest.network.{policy_type}.{action}.{protocol}"
+            if port:
+                policy_key += f".{port}"
+            if source_cidr:
+                policy_key += f".from.{source_cidr.replace('/', '-')}"
+
+            labels[policy_key] = "true"
+
+            network.reload()
+            self.client.networks.set(network.id, labels=labels)
+
+            logger.info(f"Applied network policy: {policy_key}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to apply network policy: {e}")
+            return False
+
+    def get_network_policies(self, network_name: str) -> Dict[str, Any]:
+        """获取网络安全策略"""
+        try:
+            if not DOCKER_AVAILABLE:
+                return {}
+
+            if not self.client:
+                return {}
+
+            network = self.client.networks.get(network_name)
+            if not network:
+                return {}
+
+            labels = network.attrs.get("Labels", {})
+            policies = {}
+
+            for key, value in labels.items():
+                if key.startswith("com.ptest.network."):
+                    parts = key.split(".")
+                    if len(parts) >= 4:
+                        policy_type = parts[2]
+                        action = parts[3]
+                        details = parts[4:] if len(parts) > 4 else []
+
+                        policy_info = {
+                            "type": policy_type,
+                            "action": action,
+                            "protocol": details[0] if details else "all",
+                            "port": int(details[1])
+                            if len(details) > 1 and details[1].isdigit()
+                            else None,
+                        }
+
+                        if len(parts) > 5 and parts[4] == "from":
+                            policy_info["source_cidr"] = parts[5].replace("-", "/")
+
+                        policy_key = f"{policy_type}.{action}"
+                        if policy_key not in policies:
+                            policies[policy_key] = []
+                        policies[policy_key].append(policy_info)
+
+            return policies
+
+        except Exception as e:
+            logger.error(f"Failed to get network policies: {e}")
+            return {}
+
     def list_networks(self) -> List[Dict[str, Any]]:
         """列出所有Docker网络"""
         try:
