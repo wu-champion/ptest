@@ -104,7 +104,7 @@ class DockerEnvironment(IsolatedEnvironment):
         env_id: str,
         path: Path,
         isolation_engine: Any,  # 改为Any避免循环导入问题
-        config: Optional[Dict[str, Any]] = None,
+        config: Optional[Dict[str, Any]] | None = None,
     ):
         super().__init__(env_id, path, isolation_engine, config or {})
 
@@ -349,7 +349,7 @@ class DockerEnvironment(IsolatedEnvironment):
     def get_container_logs(
         self,
         tail: int = 100,
-        since: str = None,
+        since: str | None= None,
         timestamps: bool = False,
         follow: bool = False,
     ) -> str:
@@ -431,7 +431,7 @@ class DockerEnvironment(IsolatedEnvironment):
         self,
         output_path: Path,
         tail: int = 0,
-        since: str = None,
+        since: str | None= None,
         timestamps: bool = False,
     ) -> bool:
         """导出容器日志到文件"""
@@ -1359,9 +1359,9 @@ class DockerIsolationEngine(IsolationEngine):
         self,
         image_name: str,
         tag: str = "latest",
-        registry: str = None,
-        username: str = None,
-        password: str = None,
+        registry: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
     ) -> bool:
         """推送Docker镜像到仓库
 
@@ -1557,7 +1557,7 @@ class DockerIsolationEngine(IsolationEngine):
             logger.error(f"Failed to load image from {input_path}: {e}")
             return False
 
-    def create_network(self, network_name: str, subnet: str = None) -> Optional[Any]:
+    def create_network(self, network_name: str, subnet: str | None = None) -> Optional[Any]:
         """创建Docker网络"""
         try:
             if not DOCKER_AVAILABLE:
@@ -1611,7 +1611,7 @@ class DockerIsolationEngine(IsolationEngine):
         self,
         volume_name: str,
         driver: str = "local",
-        driver_opts: Dict[str, str] = None,
+        driver_opts: Dict[str, str] | None = None,
     ) -> Optional[Any]:
         """创建Docker卷"""
         try:
@@ -1657,8 +1657,8 @@ class DockerIsolationEngine(IsolationEngine):
         self,
         container_id: str,
         network_name: str,
-        aliases: List[str] = None,
-        ipv4_address: str = None,
+        aliases: List[str] | None = None,
+        ipv4_address: str | None = None,
     ) -> bool:
         """将容器连接到网络"""
         try:
