@@ -9,12 +9,12 @@ import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-import logging
 
 from .base import IsolationEngine, IsolatedEnvironment, ProcessResult, ProcessInfo
 from .enums import EnvironmentStatus, ProcessStatus, IsolationEvent
+from ..core import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("basic_engine")
 
 
 class BasicEnvironment(IsolatedEnvironment):

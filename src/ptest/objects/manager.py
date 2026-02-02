@@ -13,109 +13,46 @@ try:
 except ImportError as e:
     print(f"Warning: Could not import object classes: {e}")
 
-    # Fallback classes
-    class WebObject:
+    class _FallbackObject:
+        """Fallback对象基类"""
+
+        _object_type = "Unknown"
+
         def __init__(self, name, env_manager):
-            pass
+            self.name = name
+
+        def _not_configured_msg(self, operation):
+            return f"✗ {self._object_type} object '{self.name}' not properly configured for {operation}"
 
         def install(self, params=None):
-            return (
-                f"✗ Web object '{self.name}' not properly configured for installation"
-            )
+            return self._not_configured_msg("installation")
 
         def start(self):
-            return f"✗ Web object '{self.name}' not properly configured for starting"
+            return self._not_configured_msg("starting")
 
         def stop(self):
-            return f"✗ Web object '{self.name}' not properly configured for stopping"
+            return self._not_configured_msg("stopping")
 
         def restart(self):
-            return f"✗ Web object '{self.name}' not properly configured for restart"
+            return self._not_configured_msg("restart")
 
         def delete(self):
-            return f"✗ Web object '{self.name}' not properly configured for deletion"
+            return self._not_configured_msg("deletion")
 
-    class ServiceObject:
-        def __init__(self, name, env_manager):
-            pass
+    class WebObject(_FallbackObject):
+        _object_type = "Web"
 
-        def install(self, params=None):
-            return f"✗ Service object '{self.name}' not properly configured for installation"
+    class ServiceObject(_FallbackObject):
+        _object_type = "Service"
 
-        def start(self):
-            return (
-                f"✗ Service object '{self.name}' not properly configured for starting"
-            )
+    class DBObject(_FallbackObject):
+        _object_type = "DB"
 
-        def stop(self):
-            return (
-                f"✗ Service object '{self.name}' not properly configured for stopping"
-            )
+    class DatabaseServerObject(_FallbackObject):
+        _object_type = "Database Server"
 
-        def restart(self):
-            return f"✗ Service object '{self.name}' not properly configured for restart"
-
-        def delete(self):
-            return (
-                f"✗ Service object '{self.name}' not properly configured for deletion"
-            )
-
-    class DBObject:
-        def __init__(self, name, env_manager):
-            pass
-
-        def install(self, params=None):
-            return f"✗ DB object '{self.name}' not properly configured for installation"
-
-        def start(self):
-            return f"✗ DB object '{self.name}' not properly configured for starting"
-
-        def stop(self):
-            return f"✗ DB object '{self.name}' not properly configured for stopping"
-
-        def restart(self):
-            return f"✗ DB object '{self.name}' not properly configured for restart"
-
-        def delete(self):
-            return f"✗ DB object '{self.name}' not properly configured for deletion"
-
-    class DatabaseServerObject:
-        def __init__(self, name, env_manager):
-            pass
-
-        def install(self, params=None):
-            return f"✗ Database Server object '{self.name}' not properly configured for installation"
-
-        def start(self):
-            return f"✗ Database Server object '{self.name}' not properly configured for starting"
-
-        def stop(self):
-            return f"✗ Database Server object '{self.name}' not properly configured for stopping"
-
-        def restart(self):
-            return f"✗ Database Server object '{self.name}' not properly configured for restart"
-
-        def delete(self):
-            return f"✗ Database Server object '{self.name}' not properly configured for deletion"
-
-    class DatabaseClientObject:
-        def __init__(self, name, env_manager):
-            pass
-
-        def install(self, params=None):
-            return f"✗ Database Client object '{self.name}' not properly configured for installation"
-
-        def start(self):
-            return f"✗ Database Client object '{self.name}' not properly configured for starting"
-
-        def stop(self):
-            return f"✗ Database Client object '{self.name}' not properly configured for stopping"
-
-        def restart(self):
-            return f"✗ Database Client object '{self.name}' not properly configured for restart"
-
-        def delete(self):
-            return f"✗ Database Client object '{self.name}' not properly configured for deletion"
+    class DatabaseClientObject(_FallbackObject):
+        _object_type = "Database Client"
 
 
 from ..utils import get_colored_text
@@ -127,6 +64,10 @@ class ObjectManager:
     def __init__(self, env_manager):
         self.env_manager = env_manager
         self.objects = {}
+
+        from ..core import get_logger
+
+        self.logger = get_logger("object_manager")
 
         # 设置对象类型映射
         self.object_types = {

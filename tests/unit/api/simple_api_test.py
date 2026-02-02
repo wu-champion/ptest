@@ -6,6 +6,9 @@
 import sys
 import os
 from pathlib import Path
+import unittest
+import tempfile
+import shutil
 
 # 添加项目根目录到Python路径
 current_dir = Path(__file__).parent.parent.parent
@@ -15,91 +18,54 @@ sys.path.insert(0, str(src_dir))
 # 直接导入所需的模块
 print("测试Python API功能...")
 
-try:
-    from ptest.isolation.manager import IsolationManager
-    from ptest.objects.manager import ObjectManager
-    from ptest.cases.manager import CaseManager
-    from ptest.reports.generator import ReportGenerator
 
-    # 创建一个简化版本的API类用于测试
-    class TestFramework:
-        def __init__(self):
-            self.environments = {}
-            self.version = "1.0.1"
+class SimpleAPITest(unittest.TestCase):
+    """简单API测试类"""
 
-        def create_environment(self, path, isolation="basic"):
-            env = environment.EnvironmentManager()
-            env.init_environment(path)
-            self.environments[path] = env
-            return env
+    def setUp(self):
+        """测试前准备"""
+        from ptest.environment import EnvironmentManager
 
-        def get_status(self):
-            return {"version": self.version, "environments": len(self.environments)}
+        self.env_manager = EnvironmentManager()
+        self.test_dir = tempfile.mkdtemp(prefix="ptest_api_test_")
 
-        def cleanup(self):
-            self.environments.clear()
+    def tearDown(self):
+        """测试后清理"""
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
 
-    def create_test_framework():
-        return TestFramework()
+    def test_environment_creation(self):
+        """测试环境创建功能"""
+        # 测试环境初始化
+        result = self.env_manager.init_environment(self.test_dir)
+        self.assertIsNotNone(result)
+        self.assertTrue(os.path.exists(self.test_dir))
+        print(f"✓ 成功创建测试环境: {self.test_dir}")
 
-    print("✓ 成功导入主要API类")
+        # 测试环境状态获取
+        status = self.env_manager.get_env_status()
+        self.assertIsNotNone(status)
+        print(f"✓ 成功获取环境状态: {status}")
 
-    # 测试框架创建
-    framework = create_test_framework()
-    print("✓ 成功创建框架实例")
+    def test_framework_components_import(self):
+        """测试框架组件导入"""
+        try:
+            from ptest.isolation.manager import IsolationManager
+            from ptest.objects.manager import ObjectManager
+            from ptest.cases.manager import CaseManager
+            from ptest.reports.generator import ReportGenerator
+            from ptest.environment import EnvironmentManager
 
-    # 测试环境创建
-    import tempfile
+            print("✓ 成功导入主要API类")
+        except ImportError as e:
+            self.fail(f"导入失败: {e}")
 
-    test_dir = tempfile.mkdtemp(prefix="ptest_api_test_")
-    env = framework.create_environment(test_dir)
-    print(f"✓ 成功创建测试环境: {test_dir}")
+    def test_basic_functionality(self):
+        """测试基本功能"""
+        self.test_environment_creation()
+        self.test_framework_components_import()
 
-    # 测试测试用例添加
-    case = env.add_case(
-        "test_api",
-        {
-            "type": "api",
-            "method": "GET",
-            "url": "https://jsonplaceholder.typicode.com/users",
-            "expected_status": 200,
-        },
-    )
-    print("✓ 成功添加测试用例")
 
-    # 测试对象添加
-    obj = env.add_object("mysql", "test_mysql", version="8.0")
-    print("✓ 成功添加对象")
-
-    # 测试状态获取
-    framework_status = framework.get_status()
-    env_status = env.get_status()
-    case_status = case.get_status()
-    obj_status = obj.get_status()
-    print("✓ 成功获取状态信息")
-
-    # 测试上下文管理器
-    with TestFramework() as ctx_framework:
-        ctx_env = ctx_framework.create_environment(
-            tempfile.mkdtemp(prefix="ptest_ctx_test_")
-        )
-        ctx_obj = ctx_env.add_object("mysql", "ctx_test_mysql")
-        print("✓ 上下文管理器工作正常")
-
-    # 清理
-    framework.cleanup()
-
-    # 清理临时目录
-    import shutil
-
-    if os.path.exists(test_dir):
-        shutil.rmtree(test_dir)
-
-    print("🎉 所有基本API功能测试通过！")
-
-except Exception as e:
-    print(f"❌ API测试失败: {e}")
-    import traceback
-
-    traceback.print_exc()
-    sys.exit(1)
+if __name__ == "__main__":
+    print("🧪 运行简单API测试...")
+    unittest.main(verbosity=2)

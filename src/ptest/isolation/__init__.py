@@ -14,14 +14,63 @@
 - DockerIsolationEngine: Docker隔离实现
 """
 
-from .enums import IsolationLevel
-from .base import IsolationEngine, IsolatedEnvironment
+from .base import IsolationEngine, IsolatedEnvironment, ProcessResult, EnvironmentStatus
+from .enums import (
+    EnvironmentStatus,
+    ProcessStatus,
+    NetworkStatus,
+    IsolationEvent,
+    ResourceType,
+    SecurityLevel,
+    CleanupPolicy,
+    IsolationLevel,
+)
 from .manager import IsolationManager
+from .virtualenv_engine import VirtualenvIsolationEngine, VirtualenvEnvironment
+from .docker_engine import DockerIsolationEngine, DockerEnvironment
+from .managers import ImageManager, NetworkManager, VolumeManager
+from .engine_registry import (
+    EngineRegistry,
+    EngineCapabilities,
+    EngineInfo,
+    get_global_registry,
+    register_default_engines,
+)
+from .environment_migration import (
+    EnvironmentMigrator,
+    SnapshotCrossEngineConverter,
+    MigrationProgress,
+    migrate_environment,
+)
 
-__version__ = "1.0.0"
 __all__ = [
-    "IsolationLevel",
     "IsolationEngine",
     "IsolatedEnvironment",
+    "ProcessResult",
+    "EnvironmentStatus",
+    "ProcessStatus",
+    "NetworkStatus",
+    "IsolationEvent",
+    "ResourceType",
+    "SecurityLevel",
+    "CleanupPolicy",
+    "IsolationLevel",
     "IsolationManager",
+    "VirtualenvIsolationEngine",
+    "VirtualenvEnvironment",
+    "DockerIsolationEngine",
+    "DockerEnvironment",
+    "ImageManager",
+    "NetworkManager",
+    "VolumeManager",
+    "EngineRegistry",
+    "EngineCapabilities",
+    "EngineInfo",
+    "get_global_registry",
+    "register_default_engines",
+    "EnvironmentMigrator",
+    "SnapshotCrossEngineConverter",
+    "MigrationProgress",
+    "migrate_environment",
 ]
+__version__ = "1.1.0"

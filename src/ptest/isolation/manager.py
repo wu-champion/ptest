@@ -2,11 +2,11 @@
 隔离管理器
 
 负责管理所有隔离引擎和环境，提供统一的隔离管理接口
+使用统一的引擎注册表实现动态加载和插件化架构
 """
 
 import uuid
 import time
-import logging
 import threading
 from typing import Dict, Any, Optional, List, Type, Union
 from pathlib import Path
@@ -14,13 +14,18 @@ from pathlib import Path
 from .base import IsolationEngine, IsolatedEnvironment
 from .enums import IsolationLevel, EnvironmentStatus, IsolationEvent
 from ..core import get_logger
+from .registry import get_engine_registry
 
 # 使用框架的日志管理器
 logger = get_logger("isolation_manager")
 
 
 class IsolationManager:
-    """隔离管理器"""
+    """隔离管理器
+
+    使用统一的引擎注册表管理所有隔离引擎
+    支持动态加载、依赖管理和插件化架构
+    """
 
     def __init__(self, config: Dict[str, Any] = None):
         self.config = config or {}
@@ -33,53 +38,70 @@ class IsolationManager:
         )
         self.max_environments = self.config.get("max_environments", 100)
         self.cleanup_policy = self.config.get("cleanup_policy", "on_request")
-        self.logger = logging.getLogger(f"{__name__}.IsolationManager")
+        # 使用已有的logger，避免重复创建
+        self.logger = logger
 
-        # 注册内置引擎类
-        self._register_builtin_engines()
+        # 使用统一的引擎注册表
+        self.registry = get_engine_registry()
 
-        # 初始化引擎
+        # 初始化内置引擎
         self._initialize_engines()
-
-    def _register_builtin_engines(self):
-        """注册内置引擎类"""
-        # 这里先注册占位符，实际实现在后续文件中
-        from .basic_engine import BasicIsolationEngine
-        from .virtualenv_engine import VirtualenvIsolationEngine
-        from .docker_engine import DockerIsolationEngine
-
-        self.engine_classes[IsolationLevel.BASIC.value] = BasicIsolationEngine
-        self.engine_classes[IsolationLevel.VIRTUALENV.value] = VirtualenvIsolationEngine
-        self.engine_classes[IsolationLevel.DOCKER.value] = DockerIsolationEngine
 
     def _initialize_engines(self):
         """初始化隔离引擎"""
-        for level, engine_class in self.engine_classes.items():
-            try:
-                engine_config = self.config.get(level, {})
-                engine = engine_class(engine_config)
-                self.engines[level] = engine
-                self.logger.info(f"Initialized isolation engine: {level}")
-            except Exception as e:
-                self.logger.error(f"Failed to initialize isolation engine {level}: {e}")
+        # 通过注册表获取可用引擎
+        engines_info = self.registry.list_engines()
 
-    def register_engine(self, level: str, engine_class: Type[IsolationEngine]):
-        """注册自定义隔离引擎"""
-        self.engine_classes[level] = engine_class
-
-        # 如果配置存在，立即初始化
-        if level in self.config:
+        for engine_name in engines_info:
             try:
-                engine_config = self.config.get(level, {})
-                engine = engine_class(engine_config)
-                self.engines[level] = engine
-                self.logger.info(
-                    f"Registered and initialized custom isolation engine: {level}"
-                )
+                engine_config = self.config.get(engine_name, {})
+                engine = self.registry.create_engine(engine_name, engine_config)
+
+                if engine:
+                    self.engines[engine_name] = engine
+                    self.logger.info(f"Initialized isolation engine: {engine_name}")
+                else:
+                    self.logger.error(
+                        f"Failed to create isolation engine: {engine_name}"
+                    )
+
             except Exception as e:
                 self.logger.error(
-                    f"Failed to initialize custom isolation engine {level}: {e}"
+                    f"Failed to initialize isolation engine {engine_name}: {e}"
                 )
+
+    def register_engine(
+        self, level: str, engine_class: Type[IsolationEngine], **kwargs
+    ):
+        """注册自定义隔离引擎"""
+        # 通过注册表注册引擎
+        success = self.registry.register_engine(
+            name=level, engine_class=engine_class, **kwargs
+        )
+
+        if success:
+            # 如果配置存在，立即初始化
+            if level in self.config:
+                try:
+                    engine_config = self.config.get(level, {})
+                    engine = self.registry.create_engine(level, engine_config)
+
+                    if engine:
+                        self.engines[level] = engine
+                        self.logger.info(
+                            f"Registered and initialized custom isolation engine: {level}"
+                        )
+                    else:
+                        self.logger.error(
+                            f"Failed to create custom isolation engine: {level}"
+                        )
+
+                except Exception as e:
+                    self.logger.error(
+                        f"Failed to initialize custom isolation engine {level}: {e}"
+                    )
+
+        return success
 
     def create_environment(
         self, path: Path, isolation_level: str = None, env_config: Dict[str, Any] = None
@@ -92,10 +114,19 @@ class IsolationManager:
 
         # 检查隔离级别是否支持
         if isolation_level not in self.engines:
-            raise ValueError(
-                f"Unsupported isolation level: {isolation_level}. "
-                f"Supported levels: {list(self.engines.keys())}"
+            # 尝试通过注册表创建引擎
+            engine = self.registry.create_engine(
+                isolation_level, self.config.get(isolation_level, {})
             )
+            if engine:
+                self.engines[isolation_level] = engine
+                self.logger.info(f"Created engine on-demand: {isolation_level}")
+            else:
+                available_engines = list(self.registry.list_engines().keys())
+                raise ValueError(
+                    f"Unsupported isolation level: {isolation_level}. "
+                    f"Supported levels: {available_engines}"
+                )
 
         # 检查环境数量限制
         if len(self.active_environments) >= self.max_environments:
@@ -122,6 +153,10 @@ class IsolationManager:
 
             # 注册到管理器
             self.active_environments[env_id] = env
+
+            # 更新引擎的创建环境列表
+            if not hasattr(engine, "created_environments"):
+                engine.created_environments = {}
             engine.created_environments[env_id] = env
 
             self.logger.info(
@@ -228,14 +263,26 @@ class IsolationManager:
 
     def list_available_engines(self) -> Dict[str, Dict[str, Any]]:
         """列出可用的隔离引擎"""
-        engine_info = {}
+        # 使用注册表获取引擎信息
+        return self.registry.list_engines(include_instances=True)
 
-        for level, engine in self.engines.items():
-            engine_info[level] = {
-                "name": engine.engine_name,
-                "supported_features": engine.get_supported_features(),
-                "environment_count": len(engine.created_environments),
-            }
+    def get_engine_info(self, isolation_level: str) -> Dict[str, Any]:
+        """获取引擎信息"""
+        # 使用注册表获取引擎信息
+        engine_info = self.registry.get_engine_info(isolation_level)
+
+        if not engine_info:
+            return {"error": f"Engine {isolation_level} not found"}
+
+        # 添加实例信息
+        if isolation_level in self.engines:
+            engine_info["active_instance"] = True
+            engine_info["environment_count"] = len(
+                self.engines[isolation_level].created_environments
+            )
+        else:
+            engine_info["active_instance"] = False
+            engine_info["environment_count"] = 0
 
         return engine_info
 

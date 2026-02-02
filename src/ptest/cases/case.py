@@ -1,8 +1,8 @@
-from typing import Set, Dict, Any, Iterable, List       
+from typing import Set, Dict, Any, Iterable, List
 from .tag import Tag
 
+
 class Case:
-    # TODO case的基础属性与管理。包括case基础信息、执行方法、状态管理等
     def __init__(self, name: str):
         self.name: str = str(name)
         self.tags: Set["Tag"] = set()

@@ -26,12 +26,6 @@ class CaseManager:
         self.executor = TestExecutor(env_manager)
 
     def add_case(self, case_id: str, case_data: dict):
-        """
-        添加测试用例
-        TODO: 增加添加case后的检查与返回，
-        例如检查case_id是否重复等，检查case是否存在cases集合中，
-        TODO: 返回改为bool类型
-        """
         self.cases[case_id] = {
             "id": case_id,
             "data": case_data,
@@ -43,12 +37,6 @@ class CaseManager:
         return f"✓ Test case '{case_id}' added"
 
     def remove_case(self, case_id: str):
-        """
-        删除测试用例
-        TODO: 增加删除case后的检查与返回，
-        检查case是否存在cases集合中，
-        TODO: 返回改为bool类型
-        """
         if case_id in self.cases:
             del self.cases[case_id]
             if case_id in self.results:
@@ -62,7 +50,6 @@ class CaseManager:
         if not self.cases:
             return "No test cases found"
 
-        # TODO 将返回内容改为字典或者列表，方便后续处理
         result = f"{get_colored_text('Test Cases:', 95)}\n"
         for case_id, case_info in self.cases.items():
             status = case_info["status"].upper()
@@ -133,7 +120,6 @@ class CaseManager:
     def run_failed_cases(self):
         """运行失败的测试用例"""
         if not self.failed_cases:
-            # TODO: 返回内容改为更结构化的格式，或者直接raise Exception
             return "No failed test cases to run"
 
         self.env_manager.logger.info(

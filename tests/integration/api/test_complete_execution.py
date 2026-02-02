@@ -12,13 +12,14 @@ import shutil
 from pathlib import Path
 
 # 添加项目路径到Python路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+project_root = Path(__file__).parent.parent.parent
+src_dir = project_root / "src"
+sys.path.insert(0, str(src_dir))
 
 # 直接导入模块
-from cases.executor import TestExecutor
-from cases.result import TestCaseResult
-from cases.manager import CaseManager
+from ptest.cases.executor import TestExecutor
+from ptest.cases.result import TestCaseResult
+from ptest.cases.manager import CaseManager
 
 
 class MockEnvManager:

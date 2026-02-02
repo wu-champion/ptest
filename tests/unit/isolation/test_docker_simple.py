@@ -126,7 +126,10 @@ def test_docker_environment_methods():
     print("\n开始测试Docker环境方法...")
 
     try:
-        from isolation.docker_engine import DockerIsolationEngine, DockerEnvironment
+        from ptest.isolation.docker_engine import (
+            DockerIsolationEngine,
+            DockerEnvironment,
+        )
 
         # 创建引擎
         engine = DockerIsolationEngine({})
@@ -183,7 +186,7 @@ def test_docker_engine_advanced_features():
     print("\n开始测试Docker引擎高级功能...")
 
     try:
-        from isolation.docker_engine import DockerIsolationEngine
+        from ptest.isolation.docker_engine import DockerIsolationEngine
 
         # 创建引擎
         engine = DockerIsolationEngine({})

@@ -10,7 +10,6 @@ from datetime import datetime
 import time
 from typing import Dict, Any, Optional, List, Union, Callable, TYPE_CHECKING, TypedDict
 from pathlib import Path
-import logging
 from .enums import (
     EnvironmentStatus,
     ProcessStatus,
@@ -20,130 +19,40 @@ from .enums import (
     SecurityLevel,
     CleanupPolicy,
 )
+from ..core import get_logger
 
-# 前向引用，避免循环导入
-if TYPE_CHECKING:
-    pass
-
-logger = logging.getLogger(__name__)
+logger = get_logger("isolation.base")
 
 
-# TypedDict定义，提供更好的类型安全性
-class EnvironmentConfig(TypedDict):
-    """环境配置类型定义"""
+# 定义一些辅助类型
+class ProcessResult(TypedDict):
+    """进程执行结果"""
 
-    default_isolation_level: str
-    max_environments: int
-    cleanup_policy: str
-    auto_cleanup_enabled: bool
-    resource_limits: Dict[str, Any]
-    isolation_config: Dict[str, Any]
-
-
-class EngineConfig(TypedDict):
-    """引擎配置类型定义"""
-
-    engine_type: str
-    enabled: bool
-    priority: int
-    capabilities: List[str]
+    returncode: int
+    stdout: str
+    stderr: str
+    command: List[str]
+    timeout: Optional[float]
+    start_time: datetime
+    end_time: Optional[datetime]
 
 
 class EnvironmentSnapshot(TypedDict):
-    """环境快照类型定义"""
+    """环境快照数据结构"""
 
     snapshot_id: str
     env_id: str
-    snapshot_time: str
-    status: str
-    config: Dict[str, Any]
-    packages: Dict[str, str]
-    custom_scripts: Dict[str, str]
+    created_at: datetime
+    metadata: Dict[str, Any]
+    data: Dict[str, Any]
+    snapshot_type: str
 
 
-class EnvironmentMetrics(TypedDict):
-    """环境指标类型定义"""
-
-    resource_usage: Dict[str, Any]
-    performance: Dict[str, Any]
-    status: Dict[str, Any]
-    collected_at: str
-
-
-class ProcessResult:
-    """进程执行结果封装"""
-
-    def __init__(
-        self,
-        returncode: int = 0,
-        stdout: str = "",
-        stderr: str = "",
-        command: Optional[List[str]] = None,
-        timeout: Optional[float] = None,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-    ):
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
-        self.command = command or []
-        self.timeout = timeout
-        self.start_time = start_time or datetime.now()
-        self.end_time = end_time or datetime.now()
-
-    @property
-    def success(self) -> bool:
-        """是否执行成功"""
-        return self.returncode == 0
-
-    @property
-    def duration(self) -> float:
-        """执行时长（秒）"""
-        return (self.end_time - self.start_time).total_seconds()
-
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
-        return {
-            "returncode": self.returncode,
-            "stdout": self.stdout,
-            "stderr": self.stderr,
-            "command": self.command,
-            "success": self.success,
-            "duration": self.duration,
-            "timeout": self.timeout,
-            "start_time": self.start_time.isoformat(),
-            "end_time": self.end_time.isoformat(),
-        }
-
-
-class ResourceUsage:
-    """资源使用情况"""
-
-    def __init__(
-        self,
-        cpu_percent: float = 0.0,
-        memory_mb: float = 0.0,
-        disk_mb: float = 0.0,
-        network_kb: float = 0.0,
-        active_ports: Optional[List[int]] = None,
-    ):
-        self.cpu_percent = cpu_percent
-        self.memory_mb = memory_mb
-        self.disk_mb = disk_mb
-        self.network_kb = network_kb
-        self.active_ports = active_ports or []
-        self.timestamp = datetime.now()
-
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
-        return {
-            "cpu_percent": self.cpu_percent,
-            "memory_mb": self.memory_mb,
-            "disk_mb": self.disk_mb,
-            "network_kb": self.network_kb,
-            "active_ports": self.active_ports,
-            "timestamp": self.timestamp.isoformat(),
-        }
+# 前向引用，避免循环导入
+if TYPE_CHECKING:
+    from .basic_engine import BasicIsolationEngine
+    from .virtualenv_engine import VirtualenvIsolationEngine
+    from .docker_engine import DockerIsolationEngine
 
 
 class IsolatedEnvironment(ABC):
@@ -160,18 +69,20 @@ class IsolatedEnvironment(ABC):
         self.path = path
         self.isolation_engine = isolation_engine
         self.config = config or {}
-        self.status = EnvironmentStatus.INITIALIZING
+        self.status = EnvironmentStatus.CREATED
         self.created_at = datetime.now()
         self.activated_at: Optional[datetime] = None
         self.deactivated_at: Optional[datetime] = None
         self.last_activity = datetime.now()
-        self.processes: Dict[str, "ProcessInfo"] = {}
+        self.processes: Dict[str, ProcessInfo] = {}
         self.allocated_ports: List[int] = []
-        self.resource_usage = ResourceUsage()
-        self._event_listeners: Dict[
-            IsolationEvent, List[Callable[[Any, Any], None]]
-        ] = {}
-        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        self.resource_usage = {
+            "cpu": 0.0,
+            "memory": 0,
+            "disk": 0,
+            "network": 0.0,
+        }
+        self._event_listeners: Dict[IsolationEvent, List[Callable]] = {}
 
     @abstractmethod
     def activate(self) -> bool:
@@ -274,7 +185,7 @@ class IsolatedEnvironment(ABC):
             "isolation_type": self.__class__.__name__,
             "process_count": len(self.processes),
             "allocated_ports": len(self.allocated_ports),
-            "resource_usage": self.resource_usage.to_dict(),
+            "resource_usage": self.resource_usage,
             "config": self.config,
         }
 
@@ -315,7 +226,8 @@ class IsolationEngine(ABC):
         self.created_environments: Dict[str, IsolatedEnvironment] = {}
         self.engine_name = self.__class__.__name__
         self.supported_features: List[str] = []
-        self.logger = logging.getLogger(f"{__name__}.{self.engine_name}")
+        # 使用已有的logger，避免重复创建
+        self.logger = logger
         self.engine_config = config  # 添加engine_config属性
         self.docker_client: Optional[Any] = None  # Docker客户端属性
 

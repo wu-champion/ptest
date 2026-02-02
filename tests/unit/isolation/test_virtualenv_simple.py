@@ -19,11 +19,11 @@ def test_basic_functionality():
 
     try:
         # 导入模块
-        from isolation.virtualenv_engine import (
+        from ptest.isolation.virtualenv_engine import (
             VirtualenvIsolationEngine,
             VirtualenvEnvironment,
         )
-        from isolation.enums import EnvironmentStatus
+        from ptest.isolation.enums import EnvironmentStatus
 
         print("✓ 成功导入模块")
 
@@ -86,7 +86,7 @@ def test_engine_methods():
     print("\n开始测试引擎方法...")
 
     try:
-        from isolation.virtualenv_engine import VirtualenvIsolationEngine
+        from ptest.isolation.virtualenv_engine import VirtualenvIsolationEngine
 
         # 创建引擎
         engine = VirtualenvIsolationEngine({})
