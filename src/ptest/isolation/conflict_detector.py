@@ -5,6 +5,7 @@
 """
 
 import re
+import sys
 from typing import Dict, List, Set, Optional, Tuple, Any, Union
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -12,7 +13,7 @@ from packaging import version
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet, InvalidSpecifier
 
-from ptest.core import get_logger
+from ..core import get_logger
 
 logger = get_logger("conflict_detector")
 

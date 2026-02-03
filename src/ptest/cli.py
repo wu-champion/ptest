@@ -1,7 +1,7 @@
 # ptest/cli.py
 import argparse
-import ptest
 
+from . import __version__
 from .environment import EnvironmentManager
 from .objects.manager import ObjectManager
 from .tools.manager import ToolManager
@@ -29,8 +29,7 @@ def setup_cli():
 
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
-    parser.add_argument("--version", action="version", version=ptest.__version__)
-    # parser.add_argument('--version', action='version', version='ptest v1.0.0')
+    parser.add_argument("--version", action="version", version=__version__)
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -228,12 +227,24 @@ def _handle_tool_command(tool_manager, args):
     _handle_entity_command(tool_manager, args, args.tool_action, "tool")
 
 
+def _format_test_result(result) -> str:
+    """格式化测试结果为可读字符串"""
+    if hasattr(result, "status"):
+        if result.status == "passed":
+            return f"✓ Test case '{result.case_id}' {get_colored_text('PASSED', 92)} ({result.duration:.2f}s)"
+        elif result.status == "failed":
+            return f"✗ Test case '{result.case_id}' {get_colored_text('FAILED', 91)} ({result.duration:.2f}s): {result.error_message}"
+        else:
+            return f"✗ Test case '{result.case_id}' {get_colored_text('ERROR', 93)} ({result.duration:.2f}s): {result.error_message}"
+    return str(result)
+
+
 def _handle_case_command(case_manager, args):
     """处理case命令"""
     if args.case_action == "add":
-        try:
-            import json
+        import json
 
+        try:
             data = json.loads(args.data)
         except json.JSONDecodeError:
             print_colored("✗ Invalid JSON format for test case data", 91)
@@ -247,7 +258,8 @@ def _handle_case_command(case_manager, args):
         if args.id == "all":
             print(case_manager.run_all_cases())
         else:
-            print(case_manager.run_case(args.id))
+            result = case_manager.run_case(args.id)
+            print(_format_test_result(result))
 
 
 def _handle_run_command(case_manager, args):

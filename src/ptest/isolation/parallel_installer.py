@@ -29,7 +29,7 @@ from .base import IsolatedEnvironment
 from .enums import IsolationEvent, EnvironmentStatus
 from .dependency_resolver import DependencyResolver
 from .conflict_detector import ConflictDetector
-from ptest.core import get_logger
+from ..core import get_logger
 
 logger = get_logger("parallel_installer")
 

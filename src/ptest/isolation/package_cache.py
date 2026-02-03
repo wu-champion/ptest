@@ -5,6 +5,7 @@
 """
 
 import os
+import json
 import hashlib
 import shutil
 import tempfile
@@ -15,7 +16,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 import requests
 
-from ptest.core import get_logger
+from ..core import get_logger
 
 logger = get_logger("package_cache")
 
@@ -340,6 +341,7 @@ class PackageCache:
 
     def _download_file(self, url: str, package: str, version: str) -> Optional[Path]:
         """下载文件"""
+        temp_file = None
         try:
             # 创建临时文件
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".whl")
@@ -362,7 +364,7 @@ class PackageCache:
 
         except Exception as e:
             logger.error(f"Error downloading {package} {version}: {e}")
-            if "temp_file" in locals():
+            if temp_file:
                 Path(temp_file.name).unlink(missing_ok=True)
             return None
 

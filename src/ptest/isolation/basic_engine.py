@@ -318,6 +318,9 @@ class BasicEnvironment(IsolatedEnvironment):
 class BasicIsolationEngine(IsolationEngine):
     """基础隔离引擎实现"""
 
+    engine_name: str = "basic"
+    isolation_level: str = "basic"
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.supported_features = [

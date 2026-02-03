@@ -1,5 +1,6 @@
 # ptest/environment.py
 from pathlib import Path
+from typing import Union, Dict, Any
 from .config import load_config, DEFAULT_CONFIG
 from .core import get_logger
 
@@ -14,7 +15,7 @@ class EnvironmentManager:
         self.config = DEFAULT_CONFIG
         self.logger = None
 
-    def init_environment(self, path) -> object:
+    def init_environment(self, path: Union[str, Path]) -> Path:
         """初始化测试环境"""
         self.test_path = Path(path).resolve()
         if not self.test_path.exists():
@@ -45,9 +46,7 @@ class EnvironmentManager:
         self.logger.info(f"✓ Test environment initialized at: {self.test_path}")
         return self.test_path
 
-    def get_env_status(
-        self,
-    ):  # -> dict[str, Any] | Literal['Environment not initialized']:
+    def get_env_status(self) -> Union[Dict[str, Any], str]:
         """获取环境状态"""
         if not self.test_path:
             return "Environment not initialized"

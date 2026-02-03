@@ -77,6 +77,18 @@ class MockIsolatedEnvironment(IsolatedEnvironment):
     def validate_isolation(self) -> bool:
         return True
 
+    def create_snapshot(self, snapshot_id: str = None) -> Dict[str, Any]:
+        """创建快照"""
+        return {"snapshot_id": snapshot_id or "mock_snapshot", "status": "created"}
+
+    def delete_snapshot(self, snapshot_id: str) -> bool:
+        """删除快照"""
+        return True
+
+    def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
+        """从快照恢复"""
+        return True
+
 
 class TestResourceMonitor:
     """测试资源监控器"""

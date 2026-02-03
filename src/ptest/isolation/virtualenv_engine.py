@@ -22,9 +22,8 @@ from .base import IsolationEngine, IsolatedEnvironment, ProcessResult
 from .enums import EnvironmentStatus, ProcessStatus, IsolationEvent
 
 # 使用框架的日志管理器
-from ptest.core import get_logger, execute_command
+from ..core import get_logger, execute_command
 
-# 使用框架的日志管理器
 logger = get_logger("virtualenv_engine")
 
 
@@ -419,6 +418,9 @@ class VirtualenvEnvironment(IsolatedEnvironment):
 
 class VirtualenvIsolationEngine(IsolationEngine):
     """Virtualenv隔离引擎实现"""
+
+    engine_name: str = "virtualenv"
+    isolation_level: str = "virtualenv"
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)

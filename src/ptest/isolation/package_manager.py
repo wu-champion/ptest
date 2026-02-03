@@ -16,7 +16,7 @@ from datetime import datetime
 from packaging import version
 from packaging.requirements import Requirement
 
-from ptest.core import get_logger
+from ..core import get_logger
 
 logger = get_logger("package_manager")
 

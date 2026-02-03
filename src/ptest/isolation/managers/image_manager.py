@@ -17,7 +17,7 @@ except ImportError:
 if DOCKER_AVAILABLE:
     from docker.errors import DockerException, APIError, NotFound
 
-from ptest.core import get_logger
+from ...core import get_logger
 
 logger = get_logger("image_manager")
 

@@ -112,11 +112,16 @@ class DockerEnvironment(IsolatedEnvironment):
         self.container_id: Optional[str] = None
         self._container: Optional[Any] = None
         self.container_name: str = f"ptest_{env_id}_{uuid.uuid4().hex[:8]}"
-        self.image_name: str = config.get(
-            "image",
-            isolation_engine.engine_config["default_image"]
-            if hasattr(isolation_engine, "engine_config")
-            else "python:3.9-slim",
+        default_image = "python:3.9-slim"
+        if (
+            hasattr(isolation_engine, "engine_config")
+            and isolation_engine.engine_config
+        ):
+            default_image = isolation_engine.engine_config.get(
+                "default_image", "python:3.9-slim"
+            )
+        self.image_name: str = (
+            config.get("image", default_image) if config else default_image
         )
         self.network_name: str = ""
         self.volumes: Dict[str, Dict[str, str]] = {}
@@ -349,7 +354,7 @@ class DockerEnvironment(IsolatedEnvironment):
     def get_container_logs(
         self,
         tail: int = 100,
-        since: str | None= None,
+        since: str | None = None,
         timestamps: bool = False,
         follow: bool = False,
     ) -> str:
@@ -394,6 +399,8 @@ class DockerEnvironment(IsolatedEnvironment):
                 else:
                     print(log_line.strip())
 
+            return ""
+
         except Exception as e:
             logger.error(f"Failed to follow container logs: {e}")
             return ""
@@ -431,7 +438,7 @@ class DockerEnvironment(IsolatedEnvironment):
         self,
         output_path: Path,
         tail: int = 0,
-        since: str | None= None,
+        since: str | None = None,
         timestamps: bool = False,
     ) -> bool:
         """导出容器日志到文件"""
@@ -1124,6 +1131,9 @@ class DockerEnvironment(IsolatedEnvironment):
 class DockerIsolationEngine(IsolationEngine):
     """Docker隔离引擎实现"""
 
+    engine_name: str = "docker"
+    isolation_level: str = "docker"
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.supported_features = [
@@ -1557,7 +1567,9 @@ class DockerIsolationEngine(IsolationEngine):
             logger.error(f"Failed to load image from {input_path}: {e}")
             return False
 
-    def create_network(self, network_name: str, subnet: str | None = None) -> Optional[Any]:
+    def create_network(
+        self, network_name: str, subnet: str | None = None
+    ) -> Optional[Any]:
         """创建Docker网络"""
         try:
             if not DOCKER_AVAILABLE:

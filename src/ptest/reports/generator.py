@@ -173,6 +173,17 @@ class ReportGenerator:
 
     def _collect_test_data(self) -> dict:
         """收集测试数据"""
+        isolation_engine = "basic"
+        if hasattr(self.env_manager, "config") and self.env_manager.config:
+            config_isolation = getattr(
+                self.env_manager.config, "isolation_level", "basic"
+            )
+            isolation_engine = (
+                config_isolation.value
+                if hasattr(config_isolation, "value")
+                else str(config_isolation)
+            )
+
         return {
             "total_cases": len(self.case_manager.cases),
             "passed_count": len(self.case_manager.passed_cases),
@@ -180,7 +191,7 @@ class ReportGenerator:
             "success_rate": 0,
             "total_duration": 0,
             "test_environment": str(self.env_manager.test_path),
-            "isolation_engine": "virtualenv",  # TODO: 从env_manager获取实际引擎类型
+            "isolation_engine": isolation_engine,
             "python_version": "3.12",
         }
 

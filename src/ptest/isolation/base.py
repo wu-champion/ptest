@@ -8,6 +8,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 import time
+from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List, Union, Callable, TYPE_CHECKING, TypedDict
 from pathlib import Path
 from .enums import (
@@ -25,16 +26,23 @@ logger = get_logger("isolation.base")
 
 
 # 定义一些辅助类型
-class ProcessResult(TypedDict):
+@dataclass
+class ProcessResult:
     """进程执行结果"""
 
     returncode: int
     stdout: str
     stderr: str
-    command: List[str]
-    timeout: Optional[float]
-    start_time: datetime
-    end_time: Optional[datetime]
+    command: List[str] | None = None
+    timeout: Optional[float] = None
+    start_time: datetime | None= None
+    end_time: Optional[datetime] = None
+
+    def __post_init__(self):
+        if self.command is None:
+            self.command = []
+        if self.start_time is None:
+            self.start_time = datetime.now()
 
 
 class EnvironmentSnapshot(TypedDict):
@@ -220,6 +228,10 @@ class IsolatedEnvironment(ABC):
 
 class IsolationEngine(ABC):
     """隔离引擎抽象基类"""
+
+    # 类属性 - 必需的定义
+    engine_name: str = ""
+    isolation_level: str = ""
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config

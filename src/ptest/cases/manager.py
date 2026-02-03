@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 from datetime import datetime
 import time
+from typing import Dict, Any
 from .result import TestCaseResult
 from .executor import TestExecutor
 
@@ -57,13 +58,20 @@ class CaseManager:
             result += f"{get_colored_text(case_id, 94)} [{get_colored_text(status, color)}] - Created: {case_info['created_at']}\n"
         return result.rstrip()
 
-    def run_case(self, case_id: str):
+    def run_case(self, case_id: str) -> TestCaseResult:
         """
         运行指定测试用例
         使用真实的测试执行器执行测试
+
+        Returns:
+            TestCaseResult: 结构化的测试结果对象
         """
         if case_id not in self.cases:
-            return f"✗ Test case '{case_id}' does not exist"
+            result_obj = TestCaseResult(case_id=case_id)
+            result_obj.status = "error"
+            result_obj.error_message = f"Test case '{case_id}' does not exist"
+            result_obj.end_time = datetime.now()
+            return result_obj
 
         case_data = self.cases[case_id]["data"]
         self.env_manager.logger.info(f"Running test case: {case_id}")
@@ -83,7 +91,6 @@ class CaseManager:
             if case_id in self.failed_cases:
                 self.failed_cases.remove(case_id)
             self.env_manager.logger.info(f"Test case '{case_id}' PASSED")
-            result = f"✓ Test case '{case_id}' {get_colored_text('PASSED', 92)} ({result_obj.duration:.2f}s)"
         elif result_obj.status == "failed":
             if case_id not in self.failed_cases:
                 self.failed_cases.append(case_id)
@@ -92,7 +99,6 @@ class CaseManager:
             self.env_manager.logger.error(
                 f"Test case '{case_id}' FAILED: {result_obj.error_message}"
             )
-            result = f"✗ Test case '{case_id}' {get_colored_text('FAILED', 91)} ({result_obj.duration:.2f}s): {result_obj.error_message}"
         else:  # error
             if case_id not in self.failed_cases:
                 self.failed_cases.append(case_id)
@@ -101,21 +107,46 @@ class CaseManager:
             self.env_manager.logger.error(
                 f"Test case '{case_id}' ERROR: {result_obj.error_message}"
             )
-            result = f"✗ Test case '{case_id}' {get_colored_text('ERROR', 93)} ({result_obj.duration:.2f}s): {result_obj.error_message}"
 
-        return result
+        return result_obj
 
-    def run_all_cases(self):
-        """运行所有测试用例"""
+    def run_all_cases(self) -> Dict[str, Any]:
+        """运行所有测试用例
+
+        Returns:
+            Dict[str, Any]: 包含测试结果摘要和详细结果列表
+        """
         if not self.cases:
-            # TODO: 返回内容改为更结构化的格式，或者直接raise Exception
-            return "No test cases to run"
+            return {
+                "success": False,
+                "message": "No test cases to run",
+                "total": 0,
+                "passed": 0,
+                "failed": 0,
+                "results": [],
+            }
 
         self.env_manager.logger.info(f"Running all {len(self.cases)} test cases")
         results = []
+        passed_count = 0
+        failed_count = 0
+
         for case_id in self.cases:
-            results.append(self.run_case(case_id))
-        return "\n".join(results)
+            result = self.run_case(case_id)
+            results.append(result)
+            if result.status == "passed":
+                passed_count += 1
+            else:
+                failed_count += 1
+
+        return {
+            "success": failed_count == 0,
+            "message": f"Completed {len(results)} test cases",
+            "total": len(results),
+            "passed": passed_count,
+            "failed": failed_count,
+            "results": results,
+        }
 
     def run_failed_cases(self):
         """运行失败的测试用例"""

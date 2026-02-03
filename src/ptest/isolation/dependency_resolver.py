@@ -14,7 +14,7 @@ from packaging import version
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 
-from ptest.core import get_logger
+from ..core import get_logger
 
 logger = get_logger("dependency_resolver")
 

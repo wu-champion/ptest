@@ -274,17 +274,26 @@ class IsolationManager:
         if not engine_info:
             return {"error": f"Engine {isolation_level} not found"}
 
-        # 添加实例信息
+        # 将EngineInfo对象转换为字典并添加实例信息
+        result = {
+            "name": engine_info.name,
+            "description": engine_info.description,
+            "version": engine_info.version,
+            "author": engine_info.author,
+            "supported_features": engine_info.supported_features,
+            "dependencies": engine_info.dependencies,
+        }
+
         if isolation_level in self.engines:
-            engine_info["active_instance"] = True
-            engine_info["environment_count"] = len(
+            result["active_instance"] = True
+            result["environment_count"] = len(
                 self.engines[isolation_level].created_environments
             )
         else:
-            engine_info["active_instance"] = False
-            engine_info["environment_count"] = 0
+            result["active_instance"] = False
+            result["environment_count"] = 0
 
-        return engine_info
+        return result
 
     def get_manager_status(self) -> Dict[str, Any]:
         """获取管理器状态"""
