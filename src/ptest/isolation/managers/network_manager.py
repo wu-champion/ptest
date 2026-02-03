@@ -31,17 +31,17 @@ class NetworkManager:
     def create_network(
         self,
         network_name: str,
-        subnet: str = None,
+        subnet: str | None = None,
         driver: str = "bridge",
         internal: bool = False,
         enable_ipv6: bool = False,
-        gateway: str = None,
-        ip_range: str = None,
-        aux_addresses: Dict[str, str] = None,
-        dns_servers: List[str] = None,
-        dns_search: List[str] = None,
-        dns_options: List[str] = None,
-        labels: Dict[str, str] = None,
+        gateway: str | None = None,
+        ip_range: str | None = None,
+        aux_addresses: dict | None = None,
+        dns_servers: List[str] | None = None,
+        dns_search: List[str] | None = None,
+        dns_options: List[str] | None = None,
+        labels: Dict[str, str] | None = None,
     ) -> Optional[Any]:
         """创建Docker网络"""
         try:
@@ -137,10 +137,10 @@ class NetworkManager:
         self,
         network_name: str,
         container_id: str,
-        aliases: List[str] = None,
-        ipv4_address: str = None,
-        ipv6_address: str = None,
-        links: List[str] = None,
+        aliases: List[str] | None = None,
+        ipv4_address: str | None = None,
+        ipv6_address: str | None = None,
+        links: List[str] | None = None,
         link_local_ips: bool = False,
     ) -> bool:
         """将容器连接到网络"""
@@ -216,8 +216,8 @@ class NetworkManager:
         policy_type: str = "ingress",
         action: str = "allow",
         protocol: str = "tcp",
-        port: int = None,
-        source_cidr: str = None,
+        port: int | None = None,
+        source_cidr: str | None = None,
     ) -> bool:
         """应用网络安全策略（通过Docker标签和说明）
 

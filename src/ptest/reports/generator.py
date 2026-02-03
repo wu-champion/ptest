@@ -330,15 +330,3 @@ class ReportGenerator:
 
         self.env_manager.logger.info(f"JSON report generated: {report_file}")
         return str(report_file)
-
-    def generate_report(self, format_type: str = "html"):
-        """
-        生成测试报告
-        :param format_type: 报告格式，支持 "html" 和 "json"
-        """
-        if format_type.lower() == "html":
-            return self.generate_html_report()
-        elif format_type.lower() == "json":
-            return self.generate_json_report()
-        else:
-            raise ValueError(f"Unsupported report format: {format_type}")

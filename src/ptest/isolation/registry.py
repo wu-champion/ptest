@@ -27,9 +27,9 @@ class EngineInfo:
     description: str
     version: str = "1.0.0"
     author: str = "Unknown"
-    supported_features: List[str] = None
-    dependencies: List[str] = None
-    config_schema: Dict[str, Any] = None
+    supported_features: List[str] | None = None
+    dependencies: List[str] | None = None
+    config_schema: Dict[str, Any] | None = None
     priority: int = 100  # 优先级，数字越小优先级越高
 
     def __post_init__(self):

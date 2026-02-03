@@ -633,7 +633,7 @@ class DockerEnvironment(IsolatedEnvironment):
                     command=cmd,
                 )
 
-            exec_config = {"detach": not interactive and not tty}
+            exec_config : dict = {"detach": not interactive and not tty}
             if tty:
                 exec_config["tty"] = True
             if cwd:
@@ -937,6 +937,7 @@ class DockerEnvironment(IsolatedEnvironment):
 
     def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
         """从快照恢复Docker环境"""
+        snapshot_id = None
         try:
             if not DOCKER_AVAILABLE:
                 logger.warning(
@@ -953,11 +954,16 @@ class DockerEnvironment(IsolatedEnvironment):
                 logger.error("Invalid snapshot data: missing snapshot_id")
                 return False
 
+            # 检查 docker_client 是否可用
+            if not self.isolation_engine.docker_client:
+                logger.error("Docker client not available")
+                return False
+
             try:
                 snapshot_image = self.isolation_engine.docker_client.images.get(
                     snapshot_id
                 )
-            except Exception:
+            except (DockerAPIError, DockerNotFound):
                 logger.error(f"Snapshot image not found: {snapshot_id}")
                 return False
 
@@ -992,15 +998,15 @@ class DockerEnvironment(IsolatedEnvironment):
                 return True
 
             # 删除快照镜像
-            try:
-                self.isolation_engine.docker_client.images.remove(snapshot_id)
-                logger.info(f"Deleted snapshot image: {snapshot_id}")
-            except Exception as e:
-                logger.warning(
-                    f"Snapshot image not found or already deleted: {snapshot_id}"
-                )
-                # 如果镜像不存在或已删除，仍然返回成功
-                pass
+            if self.isolation_engine.docker_client:
+                try:
+                    self.isolation_engine.docker_client.images.remove(snapshot_id)
+                    logger.info(f"Deleted snapshot image: {snapshot_id}")
+                except (DockerAPIError, DockerNotFound):
+                    logger.warning(
+                        f"Snapshot image not found or already deleted: {snapshot_id}"
+                    )
+                    # 如果镜像不存在或已删除，仍然返回成功
 
             self._emit_event(IsolationEvent.SNAPSHOT_DELETED, snapshot_id=snapshot_id)
             return True
@@ -1043,10 +1049,14 @@ class DockerEnvironment(IsolatedEnvironment):
 
             logger.info(f"Importing container from: {input_path}")
 
-            with open(input_path, "rb") as f:
-                self.isolation_engine.docker_client.images.load(f.read())
+            if self.isolation_engine.docker_client:
+                with open(input_path, "rb") as f:
+                    self.isolation_engine.docker_client.images.load(f.read())
 
-            logger.info(f"Successfully imported container image: {image_name}")
+                logger.info(f"Successfully imported container image: {image_name}")
+            else:
+                logger.error("Docker client not available")
+                return False
             self.image_name = image_name
 
             return True
@@ -1351,7 +1361,7 @@ class DockerIsolationEngine(IsolationEngine):
                 self.docker_client.images.get(full_image_name)
                 logger.info(f"Image {full_image_name} already exists locally")
                 return True
-            except:
+            except (DockerAPIError, DockerNotFound):
                 logger.debug(
                     f"Image {full_image_name} not found locally, proceeding with pull"
                 )
@@ -1454,65 +1464,12 @@ class DockerIsolationEngine(IsolationEngine):
         try:
             if not DOCKER_AVAILABLE:
                 logger.warning(
-                    f"Docker SDK not available, simulating image push: {image_name}"
+                    f"Docker SDK not available, simulating image save: {image_name}"
                 )
                 return True
 
             if not self.initialize_client():
                 return False
-
-            full_image_name = f"{image_name}:{tag}"
-
-            # 构建认证配置
-            auth_config = {}
-            if username:
-                auth_config["username"] = username
-                if password:
-                    auth_config["password"] = password
-
-                # 支持令牌认证
-                if registry and any(key in registry for key in ["token", "bearer"]):
-                    # 如果registry包含token/bearer，将整个registry作为token
-                    auth_config["identitytoken"] = registry
-                elif password:
-                    auth_config["identitytoken"] = f"{username}:{password}"
-
-            # 如果指定了registry，先标记镜像
-            if registry:
-                registry_image_name = f"{registry}/{full_image_name}"
-                self.docker_client.images.tag(full_image_name, registry_image_name)
-                full_image_name = registry_image_name
-
-            logger.info(
-                f"Pushing Docker image: {full_image_name} to registry: {registry}"
-            )
-
-            # 推送镜像
-            for line in self.docker_client.images.push(
-                full_image_name, auth_config=auth_config, stream=True, decode=True
-            ):
-                if "status" in line:
-                    logger.debug(f"Push status: {line['status']}")
-                if "error" in line:
-                    # 解析错误信息
-                    error_msg = line.get("error", "").strip()
-                    if "unauthorized" in error_msg.lower():
-                        logger.error(f"Authentication failed: {error_msg}")
-                        return False
-                    elif "denied" in error_msg.lower():
-                        logger.error(f"Access denied: {error_msg}")
-                        return False
-                    logger.error(f"Push error: {error_msg}")
-                    return False
-                if "progressDetail" in line:
-                    logger.debug(f"Push progress: {line['progressDetail']}")
-
-            logger.info(f"Successfully pushed image: {full_image_name}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to push image {image_name}:{tag}: {e}")
-            return False
 
             if not self.docker_client:
                 return False
@@ -1589,11 +1546,11 @@ class DockerIsolationEngine(IsolationEngine):
                 existing_network = self.docker_client.networks.get(network_name)
                 logger.info(f"Network {network_name} already exists")
                 return existing_network
-            except:
+            except (DockerAPIError, DockerNotFound):
                 pass
 
             # 创建新网络 - 改进参数配置
-            network_config = {
+            network_config : dict = {
                 "Name": network_name,
                 "Driver": "bridge",
             }
@@ -1644,7 +1601,7 @@ class DockerIsolationEngine(IsolationEngine):
                 existing_volume = self.docker_client.volumes.get(volume_name)
                 logger.info(f"Volume {volume_name} already exists")
                 return existing_volume
-            except:
+            except (DockerAPIError, DockerNotFound):
                 pass
 
             # 创建新卷

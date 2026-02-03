@@ -25,12 +25,15 @@ logger = get_logger("image_manager")
 class ImageManager:
     """Docker镜像管理器"""
 
-    def __init__(self, docker_client, config: Dict[str, Any] = None):
+    def __init__(self, docker_client, config: Dict[str, Any] | None = None):
         self.client = docker_client
         self.config = config or {}
 
     def pull_image(
-        self, image_name: str, tag: str = "latest", auth_config: Dict[str, str] = None
+        self,
+        image_name: str,
+        tag: str = "latest",
+        auth_config: Dict[str, str] | None = None,
     ) -> bool:
         """拉取Docker镜像"""
         try:
@@ -56,7 +59,7 @@ class ImageManager:
                     f"Image {full_image_name} not found locally, proceeding with pull"
                 )
 
-            kwargs = {"tag": full_image_name}
+            kwargs: dict = {"tag": full_image_name}
             if auth_config:
                 kwargs["auth_config"] = auth_config
 
@@ -72,9 +75,9 @@ class ImageManager:
         self,
         image_name: str,
         tag: str = "latest",
-        registry: str = None,
-        username: str = None,
-        password: str = None,
+        registry: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
     ) -> bool:
         """推送Docker镜像到仓库"""
         try:
@@ -198,11 +201,11 @@ class ImageManager:
         self,
         dockerfile_path: Path,
         tag: str,
-        buildargs: Dict[str, str] = None,
-        build_context: Path = None,
+        buildargs: Dict[str, str] | None = None,
+        build_context: Path | None = None,
         cache: bool = True,
         timeout: int = 1800,
-        progress_callback: Callable[[Dict[str, Any]], None] = None,
+        progress_callback: Callable[[Dict[str, Any]], None] | None = None,
     ) -> bool:
         """构建Docker镜像"""
         try:
@@ -336,7 +339,7 @@ class ImageManager:
         self,
         prune_dangling: bool = True,
         prune_unused: bool = False,
-        min_age_hours: int = None,
+        min_age_hours: int | None = None,
         dry_run: bool = False,
     ) -> Dict[str, Any]:
         """清理Docker镜像，支持定期清理策略"""
@@ -410,13 +413,3 @@ class ImageManager:
         except Exception as e:
             logger.error(f"Failed to cleanup images: {e}")
             return {"images_removed": 0, "space_reclaimed": 0, "error": str(e)}
-
-            if not self.client:
-                return None
-
-            image = self.client.images.get(image_name)
-            return image.attrs
-
-        except Exception as e:
-            logger.error(f"Failed to inspect image {image_name}: {e}")
-            return None
