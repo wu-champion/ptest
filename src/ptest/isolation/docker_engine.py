@@ -633,7 +633,7 @@ class DockerEnvironment(IsolatedEnvironment):
                     command=cmd,
                 )
 
-            exec_config : dict = {"detach": not interactive and not tty}
+            exec_config: dict = {"detach": not interactive and not tty}
             if tty:
                 exec_config["tty"] = True
             if cwd:
@@ -1550,7 +1550,7 @@ class DockerIsolationEngine(IsolationEngine):
                 pass
 
             # 创建新网络 - 改进参数配置
-            network_config : dict = {
+            network_config: dict = {
                 "Name": network_name,
                 "Driver": "bridge",
             }

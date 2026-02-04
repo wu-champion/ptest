@@ -1,0 +1,150 @@
+name: CD - 发布到 PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本号'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  # ============ 发布构建 ============
+  build:
+    name: 构建发布包
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 同步依赖
+        run: uv sync
+
+      - name: 运行测试
+        run: uv run pytest tests/unit/ -v --tb=short
+
+      - name: 构建包
+        run: uv build
+
+      - name: 验证构建产物
+        run: |
+          ls -la dist/
+          uv run twine check dist/*
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+          retention-days: 5
+
+  # ============ 发布到 PyPI ============
+  publish-pypi:
+    name: 发布到 PyPI
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'release'
+    environment:
+      name: pypi
+      url: https://pypi.org/project/ptest/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: 发布到 PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+
+  # ============ 发布到 Test PyPI ============
+  publish-test-pypi:
+    name: 发布到 Test PyPI
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'workflow_dispatch'
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/ptest/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: 发布到 Test PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+          skip-existing: true
+
+  # ============ 创建 GitHub Release ============
+  create-release:
+    name: 创建 GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: 获取版本号
+        id: get_version
+        run: |
+          VERSION=$(grep -oP '(?<=version = ")[^"]+' pyproject.toml)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: Release v${{ steps.get_version.outputs.version }}
+          body: |
+            ## ptest v${{ steps.get_version.outputs.version }}
+            
+            ### 更新内容
+            - 自动化发布
+            
+            ### 安装
+            ```bash
+            pip install ptest==${{ steps.get_version.outputs.version }}
+            ```
+          files: dist/*
+          draft: false
+          prerelease: false

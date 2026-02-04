@@ -1,19 +1,20 @@
 # ptest/environment.py
 from pathlib import Path
-from typing import Union, Dict, Any
+from typing import Union, Dict, Any, Optional
 from .config import load_config, DEFAULT_CONFIG
 from .core import get_logger
+import logging
 
 
 class EnvironmentManager:
     """环境管理器"""
 
     def __init__(self) -> None:
-        self.test_path = None
-        self.log_dir = None
-        self.report_dir = None
+        self.test_path: Optional[Path] = None
+        self.log_dir: Optional[Path] = None
+        self.report_dir: Optional[Path] = None
         self.config = DEFAULT_CONFIG
-        self.logger = None
+        self.logger: Optional[logging.Logger] = None
 
     def init_environment(self, path: Union[str, Path]) -> Path:
         """初始化测试环境"""

@@ -513,6 +513,8 @@ COLOR_CODES = {
     "bold": "\033[1m",
 }
 
+# 向后兼容别名已完全移除 - 使用标准类名 PtestError
+
 
 def get_colored_text(text: str, color_code: int) -> str:
     """获取彩色文本"""
@@ -534,6 +536,6 @@ def print_colored(text: str, color_code: int):
     print(get_colored_text(text, color_code))
 
 
-# 向后兼容的别名（保持与旧代码的兼容性）
-PTestError = PtestError
-BaseManagedObject = object  # 空的基类，向后兼容
+# 向后兼容别名已移除
+# PTestError = PtestError  # 已移除 - 使用 PtestError
+# BaseManagedObject = object  # 已移除
