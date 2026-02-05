@@ -1,8 +1,6 @@
 # ptest/ptest/objects/manager.py - 修复版本
 
-import os
-from pathlib import Path
-from typing import Dict, Any, Optional, TYPE_CHECKING
+from typing import Any, Optional
 
 # 导入所有对象类型
 try:

@@ -1,6 +1,5 @@
 # ptest/objects/base.py
 from abc import ABC, abstractmethod
-from pathlib import Path
 # from ..environment import EnvironmentManager
 
 

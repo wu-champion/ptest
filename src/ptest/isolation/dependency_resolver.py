@@ -4,9 +4,8 @@
 提供Python包依赖解析、冲突检测和解决功能
 """
 
-import re
 import json
-from typing import Dict, List, Set, Optional, Tuple, Any, Union
+from typing import Dict, List, Set, Optional, Tuple, Any
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime

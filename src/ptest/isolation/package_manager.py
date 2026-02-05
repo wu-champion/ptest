@@ -4,17 +4,12 @@
 提供完整的Python包管理功能，包括安装、卸载、升级、依赖解析等
 """
 
-import os
-import sys
 import json
 import subprocess
-import re
-from typing import Dict, List, Optional, Set, Tuple, Any, Union
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
-from packaging import version
-from packaging.requirements import Requirement
 
 from ..core import get_logger
 

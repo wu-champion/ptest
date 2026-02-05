@@ -4,16 +4,14 @@
 提供Python包下载、存储和管理功能
 """
 
-import os
 import json
 import hashlib
 import shutil
 import tempfile
-from typing import Dict, List, Set, Optional, Tuple, Any, Union
+from typing import Dict, List, Optional, Tuple, Any
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from urllib.parse import urlparse
 import requests
 
 from ..core import get_logger

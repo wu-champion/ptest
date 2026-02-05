@@ -3,7 +3,6 @@ from pathlib import Path
 import json
 from datetime import datetime
 from typing import Optional
-from ..utils import get_colored_text
 from .templates import (
     TEST_SUMMARY_TEMPLATE,
     TEST_RESULTS_TABLE_TEMPLATE,

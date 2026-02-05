@@ -5,30 +5,23 @@
 包含冲突检测、依赖解析、资源管理等高级功能。
 """
 
-import os
-import sys
 import time
 import threading
 import queue
 import uuid
-from typing import Dict, List, Optional, Set, Tuple, Any, Union, Callable
+from typing import Dict, List, Optional, Any, Union, Callable
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, Future, as_completed
+from concurrent.futures import ThreadPoolExecutor, Future
 from enum import Enum
 import json
 
 from .package_manager import (
     AdvancedPackageManager,
     InstallResult,
-    UninstallResult,
-    PackageInfo,
 )
 from .base import IsolatedEnvironment
-from .enums import IsolationEvent, EnvironmentStatus
-from .dependency_resolver import DependencyResolver
-from .conflict_detector import ConflictDetector
 from ..core import get_logger
 
 logger = get_logger("parallel_installer")

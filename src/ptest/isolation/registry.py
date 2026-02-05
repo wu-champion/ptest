@@ -7,8 +7,7 @@
 
 import importlib
 import inspect
-from typing import Dict, Any, Optional, List, Type, Callable, Union
-from pathlib import Path
+from typing import Dict, Any, Optional, List, Type, Callable
 from dataclasses import dataclass
 
 from .base import IsolationEngine

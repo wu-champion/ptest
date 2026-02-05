@@ -1,7 +1,6 @@
 # ptest/objects/db.py
 from .base import BaseManagedObject
-from typing import Dict, Any, Optional, Tuple, List
-from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional, Tuple
 
 try:
     from ..utils import get_colored_text

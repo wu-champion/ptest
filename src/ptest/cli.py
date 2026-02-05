@@ -78,8 +78,9 @@ def setup_cli():
     )
     uninstall_obj_parser.add_argument("name", help="Object name")
 
-    status_obj_parser = obj_subparsers.add_parser("status", help="Show object status")
-    list_obj_parser = obj_subparsers.add_parser("list", help="List all objects")
+    # Subparsers defined for help display (used by argparse automatically)
+    obj_subparsers.add_parser("status", help="Show object status")
+    obj_subparsers.add_parser("list", help="List all objects")
 
     # tool commands - 中优先级
     tool_parser = subparsers.add_parser(
@@ -103,8 +104,8 @@ def setup_cli():
     )
     uninstall_tool_parser.add_argument("name", help="Tool name")
 
-    status_tool_parser = tool_subparsers.add_parser("status", help="Show tool status")
-    list_tool_parser = tool_subparsers.add_parser("list", help="List all tools")
+    tool_subparsers.add_parser("status", help="Show tool status")
+    tool_subparsers.add_parser("list", help="List all tools")
 
     # case commands - 中优先级
     case_parser = subparsers.add_parser(
@@ -121,7 +122,7 @@ def setup_cli():
     remove_case_parser = case_subparsers.add_parser("remove", help="Remove a test case")
     remove_case_parser.add_argument("id", help="Test case ID")
 
-    list_cases_parser = case_subparsers.add_parser("list", help="List all test cases")
+    case_subparsers.add_parser("list", help="List all test cases")
 
     run_case_parser = case_subparsers.add_parser("run", help="Run test cases")
     run_case_parser.add_argument(
@@ -147,9 +148,7 @@ def setup_cli():
     )
 
     # status command - 高优先级
-    status_parser = subparsers.add_parser(
-        "status", help=get_colored_text("Show overall status", 92)
-    )
+    subparsers.add_parser("status", help=get_colored_text("Show overall status", 92))
 
     return parser
 

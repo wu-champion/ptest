@@ -5,15 +5,11 @@
 """
 
 import sys
-import re
-import json
 import requests
-from typing import Dict, List, Set, Optional, Tuple, Any, Union
-from pathlib import Path
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from packaging import version
-from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 
 from ..core import get_logger
@@ -315,7 +311,6 @@ class VersionManager:
             # 检查版本是否存在
             if target_version not in version_info.available_versions:
                 conflicts.append(f"Version {target_version} is not available")
-                is_compatible = False
             else:
                 # 检查是否为已弃用版本
                 if target_version in version_info.deprecated_versions:

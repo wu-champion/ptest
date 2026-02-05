@@ -9,8 +9,7 @@ import sys
 import shutil
 import subprocess
 import time
-import uuid
-from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 import json
 from datetime import datetime
@@ -20,10 +19,10 @@ from contextlib import closing
 import virtualenv
 
 from .base import IsolationEngine, IsolatedEnvironment, ProcessResult
-from .enums import EnvironmentStatus, ProcessStatus, IsolationEvent
+from .enums import EnvironmentStatus, IsolationEvent
 
 # 使用框架的日志管理器
-from ..core import get_logger, execute_command
+from ..core import get_logger
 
 logger = get_logger("virtualenv_engine")
 
@@ -58,8 +57,7 @@ class VirtualenvEnvironment(IsolatedEnvironment):
             logger.info(f"Creating virtual environment at {self.venv_path}")
 
             # 使用 virtualenv 包创建虚拟环境
-            # virtualenv.cli_run 返回一个 session 对象
-            session = virtualenv.cli_run(
+            virtualenv.cli_run(
                 [
                     str(self.venv_path),
                     "--python",
@@ -400,7 +398,6 @@ class VirtualenvEnvironment(IsolatedEnvironment):
             # 恢复包
             packages = snapshot.get("packages", {})
             for package, version in packages.items():
-                version_str = f"=={version}" if version else ""
                 self.install_package(package, version)
 
             # 恢复自定义脚本

@@ -1,5 +1,4 @@
 # ptest/tools/manager.py
-from pathlib import Path
 from ..utils import get_colored_text
 
 

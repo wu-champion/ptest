@@ -251,7 +251,6 @@ class ConflictDetector:
 
         try:
             dependencies = package_details.get("requires", [])
-            package_version = installed_packages.get(package)
 
             for dep_spec in dependencies:
                 try:
@@ -316,8 +315,6 @@ class ConflictDetector:
             for pkg_name, pkg_deps in dependency_graph.items():
                 if pkg_name not in installed_packages:
                     continue
-
-                pkg_version = installed_packages[pkg_name]
 
                 for dep_spec, dep_source in pkg_deps:
                     try:

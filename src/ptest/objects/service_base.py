@@ -3,8 +3,7 @@
 服务基类 - 定义服务端和客户端的基础接口
 """
 
-from .base import BaseManagedObject
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Tuple
 from abc import ABC, abstractmethod
 
 

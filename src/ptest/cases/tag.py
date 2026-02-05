@@ -1,4 +1,4 @@
-from typing import Set, Dict, Any, Iterable, List
+from typing import Set, Dict, Any, List
 
 """
 Tag 类：用于管理测试用例的标签关系（级别 / 父 tag / 子 tag）及常用操作。

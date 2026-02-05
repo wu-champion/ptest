@@ -11,14 +11,14 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 try:
-    import docker
+    import docker  # noqa: F401
 
     DOCKER_AVAILABLE = True
 except ImportError:
     DOCKER_AVAILABLE = False
 
 if DOCKER_AVAILABLE:
-    from docker.errors import DockerException, APIError, NotFound
+    from docker.errors import NotFound
 
 from ...core import get_logger
 

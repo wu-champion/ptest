@@ -3,9 +3,9 @@
 数据库客户端组件
 """
 
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple
 from .service_base import ServiceClientComponent
-from .db import DatabaseRegistry, GenericDatabaseConnector
+from .db import DatabaseRegistry
 
 
 class DatabaseClientComponent(ServiceClientComponent):
@@ -302,7 +302,7 @@ class DatabaseClientComponent(ServiceClientComponent):
                     "uptime": server_status.get("uptime", 0),
                     "connections": server_status.get("connections", {}),
                 }
-        except:
+        except Exception:
             pass
         return {}
 
@@ -310,7 +310,7 @@ class DatabaseClientComponent(ServiceClientComponent):
         """获取MongoDB集合列表"""
         try:
             return db.list_collection_names()
-        except:
+        except Exception:
             return []
 
     def backup_database(self, backup_path: str) -> Tuple[bool, str]:

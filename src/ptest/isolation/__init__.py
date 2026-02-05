@@ -32,10 +32,6 @@ from .managers import ImageManager, NetworkManager, VolumeManager
 from .registry import (
     EngineRegistry,
     EngineInfo,
-    get_engine_registry,
-    create_engine,
-    list_available_engines,
-    register_engine,
 )
 from .environment_migration import (
     EnvironmentMigrator,

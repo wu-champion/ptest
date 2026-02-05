@@ -6,16 +6,12 @@
 
 from typing import Dict, Any, List, Optional, Callable
 from pathlib import Path
-import subprocess
-import json
 
 from .base import (
     IsolationEngine,
     IsolatedEnvironment,
-    ProcessResult,
     EnvironmentSnapshot,
 )
-from .enums import EnvironmentStatus, IsolationEvent
 from ..core import get_logger
 
 logger = get_logger("environment_migration")

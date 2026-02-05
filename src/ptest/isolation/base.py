@@ -7,18 +7,13 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-import time
-from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List, Union, Callable, TYPE_CHECKING, TypedDict
+from dataclasses import dataclass
+from typing import Dict, Any, Optional, List, Callable, TYPE_CHECKING, TypedDict
 from pathlib import Path
 from .enums import (
     EnvironmentStatus,
     ProcessStatus,
-    NetworkStatus,
     IsolationEvent,
-    ResourceType,
-    SecurityLevel,
-    CleanupPolicy,
 )
 from ..core import get_logger
 
@@ -58,9 +53,7 @@ class EnvironmentSnapshot(TypedDict):
 
 # 前向引用，避免循环导入
 if TYPE_CHECKING:
-    from .basic_engine import BasicIsolationEngine
-    from .virtualenv_engine import VirtualenvIsolationEngine
-    from .docker_engine import DockerIsolationEngine
+    pass
 
 
 class IsolatedEnvironment(ABC):

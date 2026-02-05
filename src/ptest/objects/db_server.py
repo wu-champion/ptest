@@ -8,7 +8,6 @@ import subprocess
 import time
 import os
 import signal
-from pathlib import Path
 from .service_base import ServiceServerComponent
 
 
@@ -345,6 +344,6 @@ with socketserver.TCPServer(("", PORT), Handler) as httpd:
                 stat_time = os.stat(self.pid_file).st_mtime
                 uptime_seconds = time.time() - stat_time
                 return f"{int(uptime_seconds)}s"
-        except:
+        except Exception:
             pass
         return "unknown"

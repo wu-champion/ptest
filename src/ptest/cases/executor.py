@@ -5,9 +5,8 @@
 """
 
 import json
-import time
 import sqlite3
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Tuple
 from datetime import datetime
 from .result import TestCaseResult
 

@@ -9,7 +9,7 @@ from datetime import datetime
 
 # Docker SDK imports (如果不可用，使用模拟接口)
 try:
-    import docker
+    import docker  # noqa: F401
 
     DOCKER_AVAILABLE = True
 except ImportError:
@@ -956,9 +956,7 @@ class DockerEnvironment(IsolatedEnvironment):
                 return False
 
             try:
-                snapshot_image = self.isolation_engine.docker_client.images.get(
-                    snapshot_id
-                )
+                self.isolation_engine.docker_client.images.get(snapshot_id)
             except (DockerAPIError, DockerNotFound):
                 logger.error(f"Snapshot image not found: {snapshot_id}")
                 return False
