@@ -701,7 +701,7 @@ class IsolationManager:
                                 exec_time
                             )
                             results[level]["benchmarks"]["command_exec_success"] = (
-                                result.success
+                                result.returncode == 0
                             )
 
                     # 清理测试环境

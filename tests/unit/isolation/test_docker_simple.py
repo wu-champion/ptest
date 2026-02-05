@@ -83,8 +83,8 @@ def test_docker_engine_basic_functionality():
                 if started:
                     # 模拟命令执行
                     result = env.execute_command(["python", "--version"])
-                    print(f"✓ 命令执行: {result.success}")
-                    if result.success:
+                    print(f"✓ 命令执行: {result.returncode == 0}")
+                    if result.returncode == 0:
                         print(f"  输出: {result.stdout.strip()}")
 
                     # 模拟容器停止

@@ -196,7 +196,7 @@ class TestBasicIsolationEngine(unittest.TestCase):
 
         # 执行简单命令
         result = env.execute_command(["echo", "hello"])
-        self.assertTrue(result.success)
+        self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "hello")
         self.assertEqual(result.returncode, 0)
 

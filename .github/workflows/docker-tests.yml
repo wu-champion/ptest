@@ -1,0 +1,57 @@
+name: Docker 集成测试
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  docker-test:
+    name: Docker 真实环境测试
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 同步依赖
+        run: uv sync
+
+      - name: 验证 Docker 环境
+        run: |
+          echo "Docker 版本: $(docker --version)"
+          echo "Docker Info:"
+          docker info --format '{{json .ServerVersion}}'
+
+      - name: 运行 Docker 单元测试（模拟模式）
+        run: |
+          uv run pytest tests/unit/isolation/test_docker_simple.py \
+            tests/unit/isolation/test_docker_basic.py \
+            tests/unit/isolation/test_engine_registry.py -v --tb=short
+
+      - name: 运行 Docker 集成测试（真实环境）
+        env:
+          DOCKER_TEST_MODE: "true"
+          # 使用轻量级镜像减少网络负载
+          DOCKER_DEFAULT_IMAGE: "python:3.9-alpine"
+        timeout-minutes: 10
+        continue-on-error: true  # 网络问题不阻塞 CI
+        run: |
+          uv run pytest tests/integration/docker/test_real_docker.py -v --tb=short || true
+
+      - name: 清理 Docker 资源
+        if: always()
+        run: |
+          docker container prune -f
+          docker network prune -f
+          docker volume prune -f

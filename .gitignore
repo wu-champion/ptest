@@ -24,6 +24,12 @@ session-*.md
 .coverage
 htmlcov/
 pytest.xml
+coverage.xml
+test-report.xml
+ptest_report_*.html
+ptest_report_*.json
+ptest_report_*.md
+test_reports/
 
 # IDE
 .vscode/

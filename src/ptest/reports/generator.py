@@ -51,6 +51,7 @@ class ReportGenerator:
             passed_count=test_data["passed_count"],
             failed_count=test_data["failed_count"],
             success_rate=test_data["success_rate"],
+            failure_rate=test_data["failure_rate"],
             total_duration=test_data["total_duration"],
         )
 
@@ -189,6 +190,7 @@ class ReportGenerator:
             "passed_count": len(self.case_manager.passed_cases),
             "failed_count": len(self.case_manager.failed_cases),
             "success_rate": 0,
+            "failure_rate": 0,
             "total_duration": 0,
             "test_environment": str(self.env_manager.test_path),
             "isolation_engine": isolation_engine,

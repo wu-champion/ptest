@@ -120,7 +120,7 @@ class TestVirtualenvEnvironment(unittest.TestCase):
 
         # 测试Python版本查询
         result = self.env.execute_command([str(self.env.python_path), "--version"])
-        self.assertTrue(result.success, "Python version command should succeed")
+        self.assertEqual(result.returncode, 0, "Python version command should succeed")
         self.assertIn("Python", result.stdout, "Output should contain Python version")
 
     def test_package_installation(self):
@@ -271,6 +271,9 @@ class TestVirtualenvIsolationEngine(unittest.TestCase):
         # 创建环境
         env = self.engine.create_isolation(self.temp_dir, env_id, {})
 
+        # 激活环境
+        env.activate()
+
         # 验证隔离
         is_valid = self.engine.validate_isolation(env)
         self.assertTrue(is_valid, "Isolation validation should succeed")
@@ -360,7 +363,7 @@ class TestIntegration(unittest.TestCase):
             result = env.execute_command(
                 [str(env.python_path), "-c", "import requests; print('OK')"]
             )
-            self.assertTrue(result.success, "Command execution should succeed")
+            self.assertEqual(result.returncode, 0, "Command execution should succeed")
             self.assertIn("OK", result.stdout, "Output should be correct")
 
             # 验证隔离
