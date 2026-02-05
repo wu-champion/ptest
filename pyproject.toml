@@ -14,6 +14,7 @@ dependencies = [
     "colorama>=0.4.6",
     "docker>=7.1.0",
     "packaging>=26.0",
+    "virtualenv>=20.0.0",
 ]
 
 [project.scripts]
@@ -29,5 +30,11 @@ dev = [
 dev = [
     "mypy>=1.19.1",
     "pytest>=9.0.2",
+    "pytest-cov>=4.1.0",
     "types-docker>=7.1.0.20260109",
+    "ruff>=0.1.0",
+    "pip-audit>=2.6.0",
+    "bandit>=1.7.5",
+    "twine>=4.0.0",
+    "build>=1.0.0",
 ]

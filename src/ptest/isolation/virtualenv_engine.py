@@ -6,7 +6,6 @@ Virtualenv隔离引擎实现
 
 import os
 import sys
-import venv
 import shutil
 import subprocess
 import time
@@ -17,6 +16,8 @@ import json
 from datetime import datetime
 import socket
 from contextlib import closing
+
+import virtualenv
 
 from .base import IsolationEngine, IsolatedEnvironment, ProcessResult
 from .enums import EnvironmentStatus, ProcessStatus, IsolationEvent
@@ -54,17 +55,23 @@ class VirtualenvEnvironment(IsolatedEnvironment):
             # 获取Python解释器路径
             python_exe = self.config.get("python_path", sys.executable)
 
-            # 创建虚拟环境
-            builder = venv.EnvBuilder(
-                system_site_packages=self.config.get("system_site_packages", False),
-                clear=self.config.get("clear", False),
-                symlinks=self.config.get("symlinks", True),
-                upgrade=self.config.get("upgrade", False),
-                with_pip=True,
-            )
-
             logger.info(f"Creating virtual environment at {self.venv_path}")
-            builder.create(str(self.venv_path))
+
+            # 使用 virtualenv 包创建虚拟环境
+            # virtualenv.cli_run 返回一个 session 对象
+            session = virtualenv.cli_run(
+                [
+                    str(self.venv_path),
+                    "--python",
+                    python_exe,
+                    "--pip",
+                    "embed",
+                    "--setuptools",
+                    "embed",
+                    "--wheel",
+                    "embed",
+                ]
+            )
 
             # 验证创建结果
             if not self.python_path.exists():
@@ -151,6 +158,7 @@ class VirtualenvEnvironment(IsolatedEnvironment):
                 if not self.activate():
                     return ProcessResult(
                         returncode=1,
+                        stdout="",
                         stderr="Virtual environment not active",
                         command=cmd,
                         start_time=start_time,
@@ -189,6 +197,7 @@ class VirtualenvEnvironment(IsolatedEnvironment):
         except subprocess.TimeoutExpired:
             return ProcessResult(
                 returncode=-1,
+                stdout="",
                 stderr=f"Command timed out after {timeout} seconds",
                 command=cmd,
                 timeout=timeout,
@@ -198,6 +207,7 @@ class VirtualenvEnvironment(IsolatedEnvironment):
         except Exception as e:
             return ProcessResult(
                 returncode=1,
+                stdout="",
                 stderr=str(e),
                 command=cmd,
                 timeout=timeout,
@@ -224,7 +234,7 @@ class VirtualenvEnvironment(IsolatedEnvironment):
 
             result = self.execute_command(cmd, timeout=timeout)
 
-            if result.success:
+            if result.returncode == 0:
                 logger.info(f"Successfully installed package: {package_spec}")
                 self._emit_event(IsolationEvent.PACKAGE_INSTALLED, package=package_spec)
                 return True
@@ -247,7 +257,7 @@ class VirtualenvEnvironment(IsolatedEnvironment):
                 cmd, timeout=self.config.get("pip_timeout", 300)
             )
 
-            if result.success:
+            if result.returncode == 0:
                 logger.info(f"Successfully uninstalled package: {package}")
                 self._emit_event(IsolationEvent.PACKAGE_INSTALLED, package=package)
                 return True
@@ -265,7 +275,7 @@ class VirtualenvEnvironment(IsolatedEnvironment):
             cmd = [str(self.pip_path), "list", "--format=json"]
             result = self.execute_command(cmd, timeout=30)
 
-            if result.success:
+            if result.returncode == 0:
                 packages = json.loads(result.stdout)
                 return {pkg["name"]: pkg["version"] for pkg in packages}
             else:
@@ -371,12 +381,21 @@ class VirtualenvEnvironment(IsolatedEnvironment):
             if self.venv_path.exists():
                 shutil.rmtree(str(self.venv_path))
 
-            builder = venv.EnvBuilder(
-                system_site_packages=self.config.get("system_site_packages", False),
-                symlinks=True,
-                with_pip=True,
+            # 使用 virtualenv 重新创建虚拟环境
+            python_exe = self.config.get("python_path", sys.executable)
+            virtualenv.cli_run(
+                [
+                    str(self.venv_path),
+                    "--python",
+                    python_exe,
+                    "--pip",
+                    "embed",
+                    "--setuptools",
+                    "embed",
+                    "--wheel",
+                    "embed",
+                ]
             )
-            builder.create(str(self.venv_path))
 
             # 恢复包
             packages = snapshot.get("packages", {})
@@ -493,7 +512,7 @@ class VirtualenvIsolationEngine(IsolationEngine):
                 "python_version": sys.version,
                 "python_executable": sys.executable,
                 "engine_config": self.engine_config,
-                "venv_module_available": hasattr(venv, "EnvBuilder"),
+                "virtualenv_available": True,
             }
         )
         return info
