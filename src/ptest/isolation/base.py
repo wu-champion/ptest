@@ -35,7 +35,7 @@ class ProcessResult:
     stderr: str
     command: List[str] | None = None
     timeout: Optional[float] = None
-    start_time: datetime | None= None
+    start_time: datetime | None = None
     end_time: Optional[datetime] = None
 
     def __post_init__(self):

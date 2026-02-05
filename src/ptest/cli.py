@@ -189,24 +189,30 @@ def _handle_entity_command(entity_manager, args, action: str, entity_type: str):
     """
     # 定义通用的操作映射
     action_map = {
-        "install": lambda: entity_manager.install(
-            args.name,
-            {"version": args.version}
-            if hasattr(args, "version") and args.version
-            else {},
-        )
-        if hasattr(args, "version")
-        else entity_manager.install(args.name),
+        "install": lambda: (
+            entity_manager.install(
+                args.name,
+                {"version": args.version}
+                if hasattr(args, "version") and args.version
+                else {},
+            )
+            if hasattr(args, "version")
+            else entity_manager.install(args.name)
+        ),
         "start": lambda: entity_manager.start(args.name),
         "stop": lambda: entity_manager.stop(args.name),
         "restart": lambda: entity_manager.restart(args.name),
         "uninstall": lambda: entity_manager.uninstall(args.name),
-        "list": lambda: entity_manager.list_tools()
-        if entity_type == "tool"
-        else entity_manager.list_objects(),
-        "status": lambda: entity_manager.list_tools()
-        if entity_type == "tool"
-        else entity_manager.list_objects(),
+        "list": lambda: (
+            entity_manager.list_tools()
+            if entity_type == "tool"
+            else entity_manager.list_objects()
+        ),
+        "status": lambda: (
+            entity_manager.list_tools()
+            if entity_type == "tool"
+            else entity_manager.list_objects()
+        ),
     }
 
     action_func = action_map.get(action)

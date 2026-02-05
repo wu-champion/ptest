@@ -7,12 +7,11 @@
 
 import uuid
 import time
-import threading
-from typing import Dict, Any, Optional, List, Type, Union
+from typing import Dict, Any, Optional, List, Type
 from pathlib import Path
 
 from .base import IsolationEngine, IsolatedEnvironment
-from .enums import IsolationLevel, EnvironmentStatus, IsolationEvent
+from .enums import IsolationLevel, EnvironmentStatus
 from ..core import get_logger
 from .registry import get_engine_registry
 
@@ -343,6 +342,14 @@ class IsolationManager:
         """更新配置"""
         self.config.update(new_config)
 
+        # 更新 max_environments 如果在配置中
+        if "max_environments" in new_config:
+            self.max_environments = new_config["max_environments"]
+
+        # 更新 cleanup_policy 如果在配置中
+        if "cleanup_policy" in new_config:
+            self.cleanup_policy = new_config["cleanup_policy"]
+
         # 重新初始化受影响的引擎
         for level in new_config:
             if level in self.engine_classes and level in new_config:
@@ -375,7 +382,7 @@ class IsolationManager:
 
         env = self.active_environments[env_id]
         env.update_resource_usage()
-        return env.resource_usage.to_dict()
+        return env.resource_usage
 
     def __enter__(self):
         """上下文管理器入口"""
@@ -495,7 +502,7 @@ class IsolationManager:
             # 清理失败的迁移
             try:
                 self.cleanup_environment(new_env_id, force=True)
-            except:
+            except Exception:
                 pass
             raise
 
@@ -616,7 +623,7 @@ class IsolationManager:
 
         # 添加性能建议
         if hasattr(env, "resource_usage"):
-            usage = env.resource_usage.to_dict()
+            usage = env.resource_usage
             if usage.get("cpu_percent", 0) > 80:
                 recommendations["optimization_tips"].append(
                     "High CPU usage detected, consider resource limits"
@@ -924,10 +931,14 @@ class IsolationManager:
                 snapshot = json.load(f)
 
             # 验证快照格式
-            required_fields = ["snapshot_id", "env_id", "path", "created_at"]
+            required_fields = ["snapshot_id", "env_id", "created_at"]
             for field in required_fields:
                 if field not in snapshot:
                     raise ValueError(f"Invalid snapshot format: missing {field}")
+
+            # 如果缺少path字段，提供默认值
+            if "path" not in snapshot:
+                snapshot["path"] = f"/tmp/ptest/snapshots/{snapshot['env_id']}"
 
             # 检查是否已存在
             snapshot_id = snapshot["snapshot_id"]
@@ -948,7 +959,6 @@ class IsolationManager:
 
     def cleanup_old_snapshots(self, days_old: int = 30) -> int:
         """清理旧快照"""
-        import time
         from datetime import datetime, timedelta
 
         cutoff_time = datetime.now() - timedelta(days=days_old)
@@ -965,7 +975,7 @@ class IsolationManager:
                     )
                     if created_time.timestamp() < cutoff_timestamp:
                         old_snapshots.append(snapshot_id)
-                except:
+                except (ValueError, TypeError):
                     pass
 
         # 删除旧快照

@@ -276,7 +276,8 @@ class BasicEnvironment(IsolatedEnvironment):
 
             timestamp = int(time.time())
             snapshot_id = f"snapshot_{timestamp}"
-        return {
+
+        snapshot = {
             "snapshot_id": snapshot_id,
             "env_id": self.env_id,
             "created_at": datetime.now().isoformat(),
@@ -285,6 +286,11 @@ class BasicEnvironment(IsolatedEnvironment):
             "config": self.config,
             "note": "Basic engine snapshots are not persisted",
         }
+
+        # 触发快照创建事件
+        self._emit_event(IsolationEvent.SNAPSHOT_CREATED, snapshot=snapshot)
+
+        return snapshot
 
     def restore_from_snapshot(self, snapshot: Dict[str, Any]) -> bool:
         """从快照恢复Basic环境（基础实现）"""

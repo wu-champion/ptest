@@ -92,7 +92,7 @@ class TestExecutor:
             self.env_manager.logger.info(f"Executing API test: {method} {url}")
 
             # 发送HTTP请求
-            response = requests.request( # type: ignore
+            response = requests.request(  # type: ignore
                 method=method,
                 url=url,
                 headers=headers,
@@ -124,9 +124,9 @@ class TestExecutor:
                 "content-type", ""
             ).startswith("application/json") else response.text
 
-        except requests.exceptions.Timeout: # type: ignore
+        except requests.exceptions.Timeout:  # type: ignore
             return False, f"Request timeout after {case_data.get('timeout', 30)}s"
-        except requests.exceptions.ConnectionError: # type: ignore
+        except requests.exceptions.ConnectionError:  # type: ignore
             return (
                 False,
                 f"Connection error: Unable to connect to {case_data.get('url', 'unknown')}",
@@ -175,7 +175,7 @@ class TestExecutor:
             return False, "pymysql module not installed. Run: pip install pymysql"
 
         try:
-            connection = pymysql.connect( # type: ignore
+            connection = pymysql.connect(  # type: ignore
                 host=host,
                 port=port,
                 user=username,
@@ -287,7 +287,7 @@ class TestExecutor:
             self.env_manager.logger.info(f"Executing web test: {url}")
 
             # 使用requests获取页面内容
-            response = requests.get(url, timeout=timeout) # type: ignore
+            response = requests.get(url, timeout=timeout)  # type: ignore
 
             if response.status_code != 200:
                 return False, f"Expected status 200, got {response.status_code}"

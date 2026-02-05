@@ -9,7 +9,6 @@ Tag 类：用于管理测试用例的标签关系（级别 / 父 tag / 子 tag�
 """
 
 
-
 class Tag:
     def __init__(self, name: str, level: int = 0):
         self.name: str = str(name)
@@ -34,7 +33,9 @@ class Tag:
         return self.level
 
     # --- 父 / 子 操作 ---
-    def add_parent(self, parent: "Tag", bidirectional: bool = True, prevent_cycle: bool = True) -> None:
+    def add_parent(
+        self, parent: "Tag", bidirectional: bool = True, prevent_cycle: bool = True
+    ) -> None:
         if parent is self:
             raise ValueError("不能将自己设为自己的父 tag")
         if prevent_cycle and parent in self.find_descendants(include_self=True):
@@ -48,7 +49,9 @@ class Tag:
         if bidirectional:
             parent.children.discard(self)
 
-    def add_child(self, child: "Tag", bidirectional: bool = True, prevent_cycle: bool = True) -> None:
+    def add_child(
+        self, child: "Tag", bidirectional: bool = True, prevent_cycle: bool = True
+    ) -> None:
         if child is self:
             raise ValueError("不能将自己设为自己的子 tag")
         if prevent_cycle and child in self.find_ancestors(include_self=True):

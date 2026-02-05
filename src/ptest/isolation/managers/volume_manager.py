@@ -58,7 +58,7 @@ class VolumeManager:
             except NotFound:
                 pass
 
-            volume_config : Dict[str, Any] = {
+            volume_config: Dict[str, Any] = {
                 "Name": volume_name,
                 "Driver": driver,
             }

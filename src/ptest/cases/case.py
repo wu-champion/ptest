@@ -1,4 +1,4 @@
-from typing import Set, Dict, Any, Iterable, List
+from typing import Set
 from .tag import Tag
 
 

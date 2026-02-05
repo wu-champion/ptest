@@ -57,7 +57,7 @@ for key, value in TEST_ENV_VARS.items():
 
 # 导入测试工具
 try:
-    import pytest # type: ignore
+    import pytest  # type: ignore
 
     HAS_PYTEST = True
 except ImportError:

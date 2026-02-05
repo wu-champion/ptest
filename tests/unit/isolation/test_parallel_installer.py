@@ -369,7 +369,7 @@ class TestParallelInstaller:
         finally:
             installer.stop(wait_for_completion=False)
 
-    @patch("isolation.parallel_installer.AdvancedPackageManager")
+    @patch("ptest.isolation.parallel_installer.AdvancedPackageManager")
     def test_task_execution_success(self, mock_pm_class, installer, mock_environment):
         """测试任务执行成功"""
         # 模拟包管理器

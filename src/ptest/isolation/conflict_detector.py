@@ -4,12 +4,10 @@
 提供Python包版本冲突检测、分析和解决功能
 """
 
-import re
 import sys
-from typing import Dict, List, Set, Optional, Tuple, Any, Union
+from typing import Dict, List, Set, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from datetime import datetime
-from packaging import version
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet, InvalidSpecifier
 

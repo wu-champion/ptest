@@ -51,7 +51,7 @@ def discover_test_modules() -> list:
     return sorted(test_modules)
 
 
-def run_all_tests(test_modules: list = None) -> dict: # type: ignore
+def run_all_tests(test_modules: list = None) -> dict:  # type: ignore
     """运行所有测试"""
     if test_modules is None:
         test_modules = discover_test_modules()

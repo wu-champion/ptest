@@ -205,8 +205,8 @@ class TestIsolationManager(unittest.TestCase):
         # 获取资源使用情况
         usage = self.manager.get_environment_resource_usage(env.env_id)
         self.assertIsInstance(usage, dict)
-        self.assertIn("cpu_percent", usage)
-        self.assertIn("memory_mb", usage)
+        self.assertIn("cpu", usage)
+        self.assertIn("memory", usage)
 
     def test_context_manager(self):
         """测试上下文管理器"""

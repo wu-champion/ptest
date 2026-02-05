@@ -23,7 +23,7 @@ class DatabaseServerObject(BaseManagedObject):
         super().__init__(name, "database_server", env_manager)
         self.server_component: Optional[DatabaseServerComponent] = None
 
-    def install(self, params: Dict[str, Any] = None) -> str: # type: ignore
+    def install(self, params: Dict[str, Any] = None) -> str:  # type: ignore
         """安装数据库服务端"""
         if not params:
             return f"✗ Database server installation requires parameters"
@@ -86,7 +86,7 @@ class DatabaseServerObject(BaseManagedObject):
         self.env_manager.logger.info(f"Stopping database server: {self.name}")
 
         try:
-            success, message = self.server_component.stop() # type: ignore
+            success, message = self.server_component.stop()  # type: ignore
             if success:
                 self.status = "stopped"
                 return f"✓ {get_colored_text('Database Server', 92)} '{self.name}' stopped: {message}"
@@ -177,7 +177,7 @@ class DatabaseClientObject(BaseManagedObject):
         super().__init__(name, "database_client", env_manager)
         self.client_component: Optional[DatabaseClientComponent] = None
 
-    def install(self, params: Dict[str, Any] = None) -> str: # type: ignore
+    def install(self, params: Dict[str, Any] = None) -> str:  # type: ignore
         """安装数据库客户端"""
         if not params:
             return f"✗ Database client installation requires parameters"
@@ -234,7 +234,7 @@ class DatabaseClientObject(BaseManagedObject):
         self.env_manager.logger.info(f"Stopping database client: {self.name}")
 
         try:
-            success, message = self.client_component.stop() # type: ignore
+            success, message = self.client_component.stop()  # type: ignore
             if success:
                 self.status = "stopped"
                 return f"✓ {get_colored_text('Database Client', 92)} '{self.name}' disconnected: {message}"
@@ -298,7 +298,7 @@ class DatabaseClientObject(BaseManagedObject):
         except Exception as e:
             return f"✗ Health check error: {str(e)}"
 
-    def execute_query(self, query: str) -> Tuple[bool, Any]: # type: ignore
+    def execute_query(self, query: str) -> Tuple[bool, Any]:  # type: ignore
         """执行数据库查询"""
         if not self.installed or not self.client_component:
             return False, f"Database client '{self.name}' not properly installed"

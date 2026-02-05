@@ -27,7 +27,7 @@ class EnhancedDBObject(BaseManagedObject):
         self.client_component: Optional[DatabaseClientComponent] = None
         self.mode = "client_only"  # client_only, server_only, full_stack
 
-    def install(self, params: Dict[str, Any] = None) -> str: # type: ignore
+    def install(self, params: Dict[str, Any] = None) -> str:  # type: ignore
         """安装数据库对象"""
         if not params:
             return f"✗ Database installation requires parameters"

@@ -1,14 +1,10 @@
 # ptest/isolation/docker_engine.py - 完善版本
 
 import os
-import sys
-import json
-import time
 import uuid
-from typing import Dict, Any, List, Optional, Union, Callable, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from pathlib import Path
 import threading
-from contextlib import contextmanager
 from datetime import datetime
 
 # Docker SDK imports (如果不可用，使用模拟接口)
@@ -87,8 +83,8 @@ else:
 
 
 from .base import IsolationEngine, IsolatedEnvironment, ProcessResult
-from .enums import EnvironmentStatus, ProcessStatus, IsolationEvent
-from ..core import get_logger, execute_command
+from .enums import EnvironmentStatus, IsolationEvent
+from ..core import get_logger
 
 from .managers import ImageManager, NetworkManager, VolumeManager
 

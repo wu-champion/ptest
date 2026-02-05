@@ -384,7 +384,7 @@ class ImageManager:
                             )
                             if created_dt.timestamp() < cutoff_time:
                                 unused_images.append(img.id)
-                        except:
+                        except (ValueError, TypeError):
                             pass
 
                 for img_id in unused_images:

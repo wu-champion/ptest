@@ -132,7 +132,7 @@ class GenericDatabaseConnector(DatabaseConnector):
             self.connection_module = pymysql
         except ImportError:
             try:
-                import mysql.connector # type: ignore
+                import mysql.connector  # type: ignore
 
                 self.connection_module = mysql.connector
             except ImportError:
@@ -143,12 +143,12 @@ class GenericDatabaseConnector(DatabaseConnector):
     def _setup_postgresql(self):
         """设置PostgreSQL连接"""
         try:
-            import psycopg2 # type: ignore
+            import psycopg2  # type: ignore
 
             self.connection_module = psycopg2
         except ImportError:
             try:
-                import pg8000 # type: ignore
+                import pg8000  # type: ignore
 
                 self.connection_module = pg8000
             except ImportError:
@@ -159,12 +159,12 @@ class GenericDatabaseConnector(DatabaseConnector):
     def _setup_oracle(self):
         """设置Oracle连接"""
         try:
-            import cx_Oracle # type: ignore
+            import cx_Oracle  # type: ignore
 
             self.connection_module = cx_Oracle
         except ImportError:
             try:
-                import oracledb # type: ignore
+                import oracledb  # type: ignore
 
                 self.connection_module = oracledb
             except ImportError:
@@ -175,12 +175,12 @@ class GenericDatabaseConnector(DatabaseConnector):
     def _setup_sqlserver(self):
         """设置SQL Server连接"""
         try:
-            import pyodbc # type: ignore
+            import pyodbc  # type: ignore
 
             self.connection_module = pyodbc
         except ImportError:
             try:
-                import pymssql # type: ignore
+                import pymssql  # type: ignore
 
                 self.connection_module = pymssql
             except ImportError:
@@ -191,7 +191,7 @@ class GenericDatabaseConnector(DatabaseConnector):
     def _setup_mongodb(self):
         """设置MongoDB连接"""
         try:
-            import pymongo # type: ignore
+            import pymongo  # type: ignore
 
             self.connection_module = pymongo
         except ImportError:
@@ -225,14 +225,14 @@ class GenericDatabaseConnector(DatabaseConnector):
         database = self.config.get("database", self.config.get("db_file", ":memory:"))
         timeout = self.config.get("timeout", 30)
 
-        self.connection = self.connection_module.connect(database, timeout=timeout) # type: ignore
+        self.connection = self.connection_module.connect(database, timeout=timeout)  # type: ignore
         if hasattr(self.connection, "row_factory"):
-            self.connection.row_factory = self.connection_module.Row # type: ignore
+            self.connection.row_factory = self.connection_module.Row  # type: ignore
         return self.connection
 
     def _connect_mysql(self):
         """连接MySQL数据库"""
-        self.connection = self.connection_module.connect( # type: ignore
+        self.connection = self.connection_module.connect(  # type: ignore
             host=self.config.get("host", "localhost"),
             port=self.config.get("port", 3306),
             user=self.config.get("username", self.config.get("user", "root")),
@@ -246,7 +246,7 @@ class GenericDatabaseConnector(DatabaseConnector):
 
     def _connect_postgresql(self):
         """连接PostgreSQL数据库"""
-        self.connection = self.connection_module.connect( # type: ignore
+        self.connection = self.connection_module.connect(  # type: ignore
             host=self.config.get("host", "localhost"),
             port=self.config.get("port", 5432),
             user=self.config.get("username", self.config.get("user", "postgres")),
@@ -264,7 +264,7 @@ class GenericDatabaseConnector(DatabaseConnector):
             f"{self.config.get('host', 'localhost')}/{self.config.get('service_name', 'ORCL')}",
         )
 
-        self.connection = self.connection_module.connect( # type: ignore
+        self.connection = self.connection_module.connect(  # type: ignore
             user=self.config.get("username", self.config.get("user", "")),
             password=self.config.get("password", ""),
             dsn=dsn,
@@ -283,10 +283,10 @@ class GenericDatabaseConnector(DatabaseConnector):
             f"PWD={self.config.get('password', '')}"
         )
 
-        if self.connection_module.__name__ == "pyodbc": # type: ignore
-            self.connection = self.connection_module.connect(connection_string) # type: ignore
+        if self.connection_module.__name__ == "pyodbc":  # type: ignore
+            self.connection = self.connection_module.connect(connection_string)  # type: ignore
         else:  # pymssql
-            self.connection = self.connection_module.connect( # type: ignore
+            self.connection = self.connection_module.connect(  # type: ignore
                 server=self.config.get("host", "localhost"),
                 user=self.config.get("username", self.config.get("user", "")),
                 password=self.config.get("password", ""),
@@ -303,7 +303,7 @@ class GenericDatabaseConnector(DatabaseConnector):
             f"mongodb://{self.config.get('host', 'localhost')}:{self.config.get('port', 27017)}",
         )
 
-        client = self.connection_module.MongoClient( # type: ignore
+        client = self.connection_module.MongoClient(  # type: ignore
             connection_string, **self.config.get("connection_params", {})
         )
         database_name = self.config.get("database", self.config.get("db", "test"))
@@ -314,9 +314,9 @@ class GenericDatabaseConnector(DatabaseConnector):
         """通用连接方式"""
         connection_config = self.config.get("connection_config", {})
         if hasattr(self.connection_module, "connect"):
-            self.connection = self.connection_module.connect(**connection_config) # type: ignore
+            self.connection = self.connection_module.connect(**connection_config)  # type: ignore
         elif hasattr(self.connection_module, "Connection"):
-            self.connection = self.connection_module.Connection(**connection_config) # type: ignore
+            self.connection = self.connection_module.Connection(**connection_config)  # type: ignore
         else:
             raise ValueError(
                 f"Cannot determine how to connect using module {self.connection_module}"
@@ -341,7 +341,7 @@ class GenericDatabaseConnector(DatabaseConnector):
 
     def _execute_sql_query(self, query: str) -> Tuple[bool, Any]:
         """执行SQL查询"""
-        cursor = self.connection.cursor() # type: ignore
+        cursor = self.connection.cursor()  # type: ignore
         cursor.execute(query)
 
         if query.strip().upper().startswith("SELECT"):
@@ -356,7 +356,7 @@ class GenericDatabaseConnector(DatabaseConnector):
                 result = []
         else:
             if hasattr(self.connection, "commit"):
-                self.connection.commit() # type: ignore
+                self.connection.commit()  # type: ignore
             if hasattr(cursor, "rowcount"):
                 result = (
                     f"Query executed successfully. Rows affected: {cursor.rowcount}"
@@ -378,7 +378,7 @@ class GenericDatabaseConnector(DatabaseConnector):
             if not collection_name:
                 return False, "MongoDB query must specify 'collection'"
 
-            collection = self.connection[collection_name] # type: ignore
+            collection = self.connection[collection_name]  # type: ignore
             query_filter = query_data.get("filter", {})
             projection = query_data.get("projection", None)
             limit = query_data.get("limit", None)
@@ -395,10 +395,10 @@ class GenericDatabaseConnector(DatabaseConnector):
 
             return True, result
 
-        except json.JSONDecodeError: # type: ignore
+        except json.JSONDecodeError:  # type: ignore
             # 如果不是JSON，当作集合名处理，返回所有文档
-            if query in self.connection.list_collection_names(): # type: ignore
-                collection = self.connection[query] # type: ignore
+            if query in self.connection.list_collection_names():  # type: ignore
+                collection = self.connection[query]  # type: ignore
                 result = list(collection.find({}, {"_id": 0}))  # 排除_id字段
                 return True, result
             else:
@@ -414,7 +414,7 @@ class GenericDatabaseConnector(DatabaseConnector):
             if driver == "mongodb":
                 # MongoDB需要关闭客户端连接
                 if hasattr(self.connection, "client"):
-                    self.connection.client.close() # type: ignore
+                    self.connection.client.close()  # type: ignore
                 elif hasattr(self.connection, "close"):
                     self.connection.close()
             else:
@@ -430,7 +430,7 @@ class GenericDatabaseConnector(DatabaseConnector):
 
             if driver == "mongodb":
                 # MongoDB测试：运行一个简单的查询
-                result = conn.command("ping") # type: ignore
+                result = conn.command("ping")  # type: ignore
                 if result.get("ok"):
                     return True, "MongoDB connection successful"
                 else:

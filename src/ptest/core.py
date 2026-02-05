@@ -6,13 +6,10 @@ ptest 框架核心配置和工具模块
 这个文件不包含具体的API实现，而是作为整个框架的基础支撑。
 """
 
-import os
 import sys
-import json
 import logging
 import subprocess
 import threading
-import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union, Callable
 from datetime import datetime

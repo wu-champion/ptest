@@ -1,8 +1,5 @@
 # ptest/api.py - Python API 接口
 
-import os
-import sys
-import json
 import uuid
 import time
 from typing import Dict, List, Any, Optional, Union
