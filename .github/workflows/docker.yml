@@ -51,54 +51,46 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
 
-      - name: 构建并推送 Docker 镜像
-        id: push
+      - name: 构建 Docker 镜像（加载到本地）
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
+          push: false
+          load: true
+          tags: ptest:scan
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
+
+      - name: 运行 Trivy 漏洞扫描（本地镜像）
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ptest:scan
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: 上传扫描结果到 GitHub Security
+        if: |
+          github.event_name == 'push' ||
+          (github.event_name == 'pull_request' &&
+           github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: 推送 Docker 镜像到 Registry
+        if: github.event_name != 'pull_request'
+        run: |
+          docker tag ptest:scan ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: 生成构件证明
         if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@v1
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
-
-  security-scan:
-    name: 安全扫描
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
-    permissions:
-      contents: read
-      security-events: write
-
-    steps:
-      - name: 登录到 Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 运行 Trivy 漏洞扫描
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-
-      - name: 上传扫描结果
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: 'trivy-results.sarif'

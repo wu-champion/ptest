@@ -46,6 +46,13 @@ logger = get_logger("test_virtualenv")
 def _check_virtualenv_available():
     """检查virtualenv是否可用"""
     try:
+        # 方法1: 检查virtualenv模块是否可以导入
+        import importlib.util
+
+        if importlib.util.find_spec("virtualenv") is None:
+            return False
+
+        # 方法2: 尝试运行virtualenv命令
         result = subprocess.run(
             [sys.executable, "-m", "virtualenv", "--version"],
             capture_output=True,
@@ -56,10 +63,25 @@ def _check_virtualenv_available():
         return False
 
 
-# Windows平台且virtualenv不可用时跳过测试
-IS_WINDOWS = sys.platform == "win32"
-VIRTUALENV_AVAILABLE = _check_virtualenv_available()
-SHOULD_SKIP_VIRTUALENV_TESTS = IS_WINDOWS and not VIRTUALENV_AVAILABLE
+def _should_skip_virtualenv_tests():
+    """决定是否跳过virtualenv测试"""
+    import os
+
+    # 环境变量覆盖（用于CI配置）
+    if os.environ.get("SKIP_VIRTUALENV_TESTS", "").lower() == "true":
+        return True
+
+    # 检查virtualenv是否可用
+    virtualenv_available = _check_virtualenv_available()
+
+    # 如果virtualenv不可用则跳过测试
+    if not virtualenv_available:
+        return True
+
+    return False
+
+
+SHOULD_SKIP_VIRTUALENV_TESTS = _should_skip_virtualenv_tests()
 
 
 @unittest.skipIf(

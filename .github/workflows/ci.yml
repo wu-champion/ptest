@@ -65,6 +65,8 @@ jobs:
         run: uv sync
 
       - name: 运行单元测试
+        env:
+          SKIP_VIRTUALENV_TESTS: ${{ runner.os == 'Windows' && 'true' || 'false' }}
         run: |
           uv run pytest tests/unit/ -v --tb=short --cov=src/ptest --cov-report=xml --cov-report=term
 

@@ -45,7 +45,7 @@ TEST_SUMMARY_TEMPLATE = """
 
 TEST_RESULTS_TABLE_TEMPLATE = """
 <div class="results-section">
-    <h2>📋 Test Results</h2>
+    <h2>[RESULTS] Test Results</h2>
     <table class="results-table">
         <thead>
             <tr>
@@ -77,7 +77,7 @@ TEST_RESULT_ROW_TEMPLATE = """
 
 ENVIRONMENT_INFO_TEMPLATE = """
 <div class="environment-section">
-    <h2>🖥️ Test Environment</h2>
+    <h2>[ENV] Test Environment</h2>
     <table class="info-table">
         <tbody>
             <tr>
