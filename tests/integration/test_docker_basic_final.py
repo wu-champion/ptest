@@ -8,9 +8,10 @@ Docker引擎基础功能验证测试
 import sys
 import tempfile
 from pathlib import Path
+import pytest
 
 # 添加项目根目录到Python路径
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 # 框架导入
@@ -22,6 +23,21 @@ from ptest.core import get_logger  # noqa: E402
 logger = get_logger("docker_basic_test")
 
 
+def is_docker_available():
+    """检查Docker是否可用"""
+    try:
+        import docker
+
+        client = docker.from_env()
+        client.ping()
+        return True
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(
+    not is_docker_available(), reason="Docker不可用，跳过真实Docker测试"
+)
 def test_docker_engine_basic_functionality():
     """测试Docker引擎基础功能"""
     logger.info("开始Docker引擎基础功能测试")

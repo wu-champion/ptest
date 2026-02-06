@@ -20,9 +20,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 # 添加项目根目录到Python路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "ptest"))
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root / "src"))
 
 # 框架导入
 from ptest.isolation.docker_engine import DockerIsolationEngine, DockerEnvironment  # noqa: E402
@@ -34,6 +33,19 @@ from ptest.core import get_logger  # noqa: E402
 logger = get_logger("docker_test")
 
 
+def is_docker_available():
+    """检查Docker是否可用"""
+    try:
+        import docker
+
+        client = docker.from_env()
+        client.ping()
+        return True
+    except Exception:
+        return False
+
+
+@unittest.skipUnless(is_docker_available(), "Docker不可用，跳过真实Docker测试")
 class TestDockerEngineComplete(unittest.TestCase):
     """Docker引擎完整功能测试套件"""
 

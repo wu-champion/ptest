@@ -1,0 +1,141 @@
+name: Nightly - 真实 Docker 测试
+
+on:
+  schedule:
+    # 每天凌晨 2 点运行（UTC 时间）
+    - cron: '0 2 * * *'
+  # 允许手动触发
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ============ 真实 Docker 集成测试 ============
+  real-docker-tests:
+    name: 真实 Docker 环境测试
+    runs-on: ubuntu-latest
+
+    services:
+      docker:
+        image: docker:25-dind
+        options: --privileged
+        ports:
+          - 2375:2375
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 同步依赖
+        run: uv sync
+
+      - name: 等待 Docker 就绪
+        run: |
+          echo "等待 Docker daemon 启动..."
+          timeout 120 sh -c 'until docker info; do sleep 2; done'
+          echo "Docker 已就绪"
+          docker --version
+          docker info
+
+      - name: 拉取测试镜像
+        run: |
+          # 预拉取测试所需镜像，避免测试时超时
+          docker pull python:3.9-slim
+          docker pull python:3.9-alpine
+
+      - name: 运行真实 Docker 集成测试
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
+        run: |
+          uv run pytest tests/integration/docker/ -v \
+            --tb=short \
+            --timeout=300
+
+      - name: 清理 Docker 资源
+        if: always()
+        run: |
+          echo "清理 Docker 容器..."
+          docker container prune -f || true
+          echo "清理 Docker 卷..."
+          docker volume prune -f || true
+          echo "清理 Docker 网络..."
+          docker network prune -f || true
+
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-docker-test-report
+          path: |
+            pytest-report.xml
+            test-logs/
+          retention-days: 7
+
+  # ============ 多平台构建测试 ============
+  multi-platform-build:
+    name: 多平台 Docker 构建测试
+    runs-on: ubuntu-latest
+    needs: real-docker-tests
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录到 Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建多平台镜像（不推送）
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============ 通知 ============
+  notify:
+    name: 发送测试通知
+    runs-on: ubuntu-latest
+    needs: [real-docker-tests, multi-platform-build]
+    if: always()
+
+    steps:
+      - name: 检查结果
+        run: |
+          if [ "${{ needs.real-docker-tests.result }}" == "success" ] && \
+             [ "${{ needs.multi-platform-build.result }}" == "success" ]; then
+            echo "✅ Nightly 测试全部通过"
+            exit 0
+          else
+            echo "❌ Nightly 测试失败"
+            exit 1
+          fi
+
+      - name: 发送失败通知（可选）
+        if: failure()
+        run: |
+          echo "测试失败，发送通知..."
+          # 这里可以集成 Slack、邮件等通知
+          # curl -X POST ${{ secrets.SLACK_WEBHOOK }} ...
