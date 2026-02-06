@@ -9,7 +9,6 @@ import tempfile
 import shutil
 from pathlib import Path
 import sys
-import os
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent.parent
@@ -21,11 +20,11 @@ try:
 except ImportError:
     try:
         from pypj.ptest.isolation.manager import IsolationManager
-        from pypj.ptest.isolation.enums import IsolationLevel, EnvironmentStatus
+        from pypj.ptest.isolation.enums import IsolationLevel, EnvironmentStatus  # noqa: F401
     except ImportError:
         sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
         from ptest.isolation.manager import IsolationManager
-        from isolation.enums import IsolationLevel, EnvironmentStatus
+        from isolation.enums import IsolationLevel
 
 
 class TestIsolationManager(unittest.TestCase):
@@ -48,7 +47,7 @@ class TestIsolationManager(unittest.TestCase):
             shutil.rmtree(self.temp_dir)
         try:
             self.manager.cleanup_all_environments(force=True)
-        except:
+        except Exception:
             pass
 
     def test_manager_initialization(self):
@@ -235,7 +234,7 @@ class TestAutoSelection(unittest.TestCase):
             shutil.rmtree(self.temp_dir)
         try:
             self.manager.cleanup_all_environments(force=True)
-        except:
+        except Exception:
             pass
 
     def test_auto_select_docker_for_container(self):
@@ -335,7 +334,7 @@ class TestEnvironmentMigration(unittest.TestCase):
             shutil.rmtree(self.temp_dir)
         try:
             self.manager.cleanup_all_environments(force=True)
-        except:
+        except Exception:
             pass
 
     def test_migrate_environment_success(self):
@@ -426,7 +425,7 @@ class TestBenchmarking(unittest.TestCase):
             shutil.rmtree(self.temp_dir)
         try:
             self.manager.cleanup_all_environments(force=True)
-        except:
+        except Exception:
             pass
 
     def test_benchmark_engines(self):

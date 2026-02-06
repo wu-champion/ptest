@@ -11,7 +11,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from objects.manager import ObjectManager
+from objects.manager import ObjectManager  # noqa: E402
 
 
 class MockEnvManager:
@@ -62,7 +62,7 @@ def test_database_server_object():
             print(f"  Status: {status.get('status', 'unknown')}")
             print(f"  Endpoint: {status.get('endpoint', 'unknown')}")
 
-        print(f"✓ Database server object test passed\n")
+        print("✓ Database server object test passed\n")
 
     except Exception as e:
         print(f"✗ Database server object test failed: {str(e)}")
@@ -104,7 +104,7 @@ def test_database_client_object():
             if status.get("server_endpoint"):
                 print(f"  Server endpoint: {status['server_endpoint']}")
 
-        print(f"✓ Database client object test passed\n")
+        print("✓ Database client object test passed\n")
 
     except Exception as e:
         print(f"✗ Database client object test failed: {str(e)}")
@@ -145,7 +145,7 @@ def test_separated_lifecycle():
     obj_manager = ObjectManager(env_manager)
 
     # 创建服务端
-    server_obj = obj_manager.create_object("database_server", "mysql_server")
+    obj_manager.create_object("database_server", "mysql_server")
     server_params = {
         "db_type": "sqlite",
         "server_host": "localhost",
@@ -154,7 +154,7 @@ def test_separated_lifecycle():
     }
 
     # 创建客户端
-    client_obj = obj_manager.create_object("database_client", "sqlite_client")
+    obj_manager.create_object("database_client", "sqlite_client")
     client_params = {
         "db_type": "sqlite",
         "server_host": "localhost",
@@ -202,7 +202,7 @@ def test_separated_lifecycle():
         server_uninstall = obj_manager.uninstall("mysql_server")
         print(f"Server uninstall: {server_uninstall}")
 
-        print(f"\n✓ Separated lifecycle management test passed\n")
+        print("\n✓ Separated lifecycle management test passed\n")
 
     except Exception as e:
         print(f"✗ Separated lifecycle test failed: {str(e)}")

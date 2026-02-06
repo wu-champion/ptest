@@ -8,11 +8,9 @@ import unittest
 import tempfile
 import shutil
 from pathlib import Path
-import sys
-import os
 
 from ptest.isolation.docker_engine import DockerIsolationEngine, DockerEnvironment
-from ptest.isolation.enums import EnvironmentStatus, IsolationEvent
+from ptest.isolation.enums import IsolationEvent
 
 
 class TestDockerBasic(unittest.TestCase):
@@ -34,7 +32,7 @@ class TestDockerBasic(unittest.TestCase):
             shutil.rmtree(self.temp_dir)
         try:
             self.engine.cleanup_all_environments()
-        except:
+        except Exception:
             pass
 
     def test_engine_creation(self):

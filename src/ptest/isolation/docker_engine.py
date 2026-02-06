@@ -15,8 +15,6 @@ try:
 except ImportError:
     DOCKER_AVAILABLE = False
 
-# 类型定义（使用TYPE_CHECKING避免运行时导入问题）
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from docker.models.containers import Container as DockerContainer
@@ -1559,7 +1557,7 @@ class DockerIsolationEngine(IsolationEngine):
                     ]
                 }
                 network_config["Options"] = {
-                    f"com.docker.network.bridge.name": network_name
+                    "com.docker.network.bridge.name": network_name
                 }
 
             network = self.docker_client.networks.create(network_config)

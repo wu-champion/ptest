@@ -11,7 +11,7 @@ current_dir = Path(__file__).parent
 sys.path.insert(0, str(current_dir))
 
 # 确保能找到core模块
-import os
+import os  # noqa: E402
 
 os.environ["PYTHONPATH"] = str(current_dir)
 
@@ -50,9 +50,6 @@ def test_core_modules():
         from core import (
             PtestError,
             EnvironmentError,
-            ObjectError,
-            TestExecutionError,
-            ConfigurationError,
         )
 
         # 测试异常层次
@@ -86,7 +83,7 @@ def test_core_modules():
 
         # 测试日志管理器
         print("\n5. 测试日志管理器...")
-        from core import LoggerManager, get_logger
+        from core import get_logger
 
         logger1 = get_logger("test1")
         logger2 = get_logger("test1")  # 应该返回相同的实例
@@ -96,7 +93,7 @@ def test_core_modules():
         print("\n6. 测试命令执行器...")
         from core import CommandExecutor, execute_command
 
-        executor = CommandExecutor()
+        CommandExecutor()
         result = execute_command("echo 'test'", shell=True)
         if result["success"]:
             print(f"   ✅ 命令执行成功: {result['stdout'].strip()}")
@@ -131,7 +128,7 @@ def test_core_modules():
 
         # 测试颜色输出
         print("\n9. 测试颜色输出...")
-        from core import get_colored_text, print_colored
+        from core import get_colored_text
 
         colored_text = get_colored_text("绿色文本", 92)
         print(f"   ✅ 颜色文本: {colored_text}")
@@ -159,7 +156,6 @@ def test_new_vs_old():
     print("=" * 50)
 
     print("\n📊 文件大小对比:")
-    import os
 
     try:
         # 检查是否有备份文件（如果有）
@@ -173,7 +169,7 @@ def test_new_vs_old():
             print("   原版本: 无备份文件")
             new_size = Path("core.py").stat().st_size
             print(f"   新版本: {new_size // 10} 行")
-    except:
+    except Exception:
         print("   无法比较文件大小")
 
     print("\n🏗️ 架构改进:")

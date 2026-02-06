@@ -5,10 +5,8 @@
 
 import sys
 import os
-import json
 import sqlite3
 import tempfile
-import shutil
 from pathlib import Path
 
 # 添加项目路径到Python路径
@@ -17,9 +15,8 @@ src_dir = project_root / "src"
 sys.path.insert(0, str(src_dir))
 
 # 直接导入模块
-from ptest.cases.executor import TestExecutor
-from ptest.cases.result import TestCaseResult
-from ptest.cases.manager import CaseManager
+from ptest.cases.executor import TestExecutor  # noqa: E402
+from ptest.cases.manager import CaseManager  # noqa: E402
 
 
 class MockEnvManager:
@@ -201,7 +198,7 @@ def test_case_manager_integration():
     print(f"  {result}")
 
     # 显示结果统计
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Total cases: {len(case_manager.cases)}")
     print(f"  Passed: {len(case_manager.passed_cases)}")
     print(f"  Failed: {len(case_manager.failed_cases)}")

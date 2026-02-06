@@ -12,24 +12,22 @@ Docker引擎完整功能测试 - 使用正确的src布局
 - 资源清理
 """
 
-import os
 import sys
-import json
 import time
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 # 框架导入
-from ptest.isolation.docker_engine import DockerIsolationEngine, DockerEnvironment
-from ptest.isolation.base import IsolationEngine, IsolatedEnvironment, ProcessResult
-from ptest.isolation.enums import EnvironmentStatus, ProcessStatus, IsolationEvent
-from ptest.core import get_logger
+from ptest.isolation.docker_engine import DockerIsolationEngine, DockerEnvironment  # noqa: E402
+from ptest.isolation.base import IsolationEngine, ProcessResult  # noqa: E402
+from ptest.isolation.enums import EnvironmentStatus  # noqa: E402
+from ptest.core import get_logger  # noqa: E402
 
 # 设置测试日志
 logger = get_logger("docker_test")
@@ -228,7 +226,7 @@ class TestDockerEngineComplete(unittest.TestCase):
         self.assertIsInstance(packages, dict)
 
         # 测试获取特定包版本
-        python_version = env.get_package_version("python")
+        env.get_package_version("python")
         # 在模拟模式下可能为None，这是正常的
 
         # 测试安装包（模拟模式）
@@ -354,7 +352,7 @@ class TestDockerEngineComplete(unittest.TestCase):
 
         # 测试恢复快照（简化版本）
         # 注意：在单元测试中，我们主要验证方法调用而不实际恢复
-        restore_result = env.restore_from_snapshot(snapshot)
+        env.restore_from_snapshot(snapshot)
         # 在模拟模式下可能失败，这是正常的
 
         # 测试删除快照

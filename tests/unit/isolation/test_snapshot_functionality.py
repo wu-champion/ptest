@@ -44,7 +44,7 @@ class TestSnapshotFunctionality(unittest.TestCase):
             shutil.rmtree(self.temp_dir)
         try:
             self.manager.cleanup_all_environments(force=True)
-        except:
+        except Exception:
             pass
 
     def test_create_basic_environment_snapshot(self):
@@ -81,9 +81,9 @@ class TestSnapshotFunctionality(unittest.TestCase):
         env = self.manager.create_environment(env_path, IsolationLevel.BASIC.value)
 
         # 创建多个快照
-        snapshot1 = self.manager.create_snapshot(env.env_id, "test_snapshot_1")
+        self.manager.create_snapshot(env.env_id, "test_snapshot_1")
         time.sleep(0.1)  # 确保时间戳不同
-        snapshot2 = self.manager.create_snapshot(env.env_id, "test_snapshot_2")
+        self.manager.create_snapshot(env.env_id, "test_snapshot_2")
 
         # 列出所有快照
         all_snapshots = self.manager.list_snapshots()
@@ -99,7 +99,7 @@ class TestSnapshotFunctionality(unittest.TestCase):
         env = self.manager.create_environment(env_path, IsolationLevel.BASIC.value)
 
         # 创建快照
-        snapshot = self.manager.create_snapshot(env.env_id, "info_snapshot")
+        self.manager.create_snapshot(env.env_id, "info_snapshot")
 
         # 获取快照信息
         snapshot_info = self.manager.get_snapshot_info("info_snapshot")
@@ -112,7 +112,7 @@ class TestSnapshotFunctionality(unittest.TestCase):
         env = self.manager.create_environment(env_path, IsolationLevel.BASIC.value)
 
         # 创建快照
-        snapshot = self.manager.create_snapshot(env.env_id, "delete_snapshot")
+        self.manager.create_snapshot(env.env_id, "delete_snapshot")
 
         # 验证快照存在
         self.assertIsNotNone(self.manager.get_snapshot_info("delete_snapshot"))
@@ -185,7 +185,7 @@ class TestSnapshotEvents(unittest.TestCase):
         env.add_event_listener(IsolationEvent.SNAPSHOT_CREATED, event_callback)
 
         # 创建快照（应该触发事件）
-        snapshot = self.manager.create_snapshot(env.env_id, "event_snapshot")
+        self.manager.create_snapshot(env.env_id, "event_snapshot")
 
         # 验证事件被触发
         self.assertGreater(len(self.events_received), 0)

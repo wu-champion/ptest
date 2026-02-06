@@ -3,6 +3,7 @@
 数据库客户端组件
 """
 
+import os
 from typing import Dict, Any, Tuple
 from .service_base import ServiceClientComponent
 from .db import DatabaseRegistry
@@ -63,7 +64,7 @@ class DatabaseClientComponent(ServiceClientComponent):
     def stop(self) -> Tuple[bool, str]:
         """停止客户端（断开连接）"""
         if self.status != "running":
-            return True, f"Database client not connected"
+            return True, "Database client not connected"
 
         try:
             if self.connector:

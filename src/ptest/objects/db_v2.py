@@ -29,7 +29,7 @@ class EnhancedDBObject(BaseManagedObject):
     def install(self, params: Dict[str, Any] = None) -> str:  # type: ignore
         """安装数据库对象"""
         if not params:
-            return f"✗ Database installation requires parameters"
+            return "✗ Database installation requires parameters"
 
         self.env_manager.logger.info(
             f"Installing enhanced database object: {self.name}"

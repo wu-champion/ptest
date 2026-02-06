@@ -14,7 +14,7 @@
 - DockerIsolationEngine: Docker隔离实现
 """
 
-from .base import IsolationEngine, IsolatedEnvironment, ProcessResult, EnvironmentStatus
+from .base import IsolationEngine, IsolatedEnvironment, ProcessResult
 from .enums import (
     EnvironmentStatus,
     ProcessStatus,

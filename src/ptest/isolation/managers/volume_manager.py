@@ -292,9 +292,7 @@ class VolumeManager:
                 os.makedirs(mountpoint, exist_ok=True)
 
             if os.listdir(mountpoint) and not force:
-                logger.warning(
-                    f"Volume mountpoint not empty, use force=True to restore"
-                )
+                logger.warning("Volume mountpoint not empty, use force=True to restore")
                 return False
 
             shutil.rmtree(mountpoint)

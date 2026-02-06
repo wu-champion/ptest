@@ -50,11 +50,11 @@ class SimpleAPITest(unittest.TestCase):
     def test_framework_components_import(self):
         """测试框架组件导入"""
         try:
-            from ptest.isolation.manager import IsolationManager
-            from ptest.objects.manager import ObjectManager
-            from ptest.cases.manager import CaseManager
-            from ptest.reports.generator import ReportGenerator
-            from ptest.environment import EnvironmentManager
+            from ptest.isolation.manager import IsolationManager  # noqa: F401
+            from ptest.objects.manager import ObjectManager  # noqa: F401
+            from ptest.cases.manager import CaseManager  # noqa: F401
+            from ptest.reports.generator import ReportGenerator  # noqa: F401
+            from ptest.environment import EnvironmentManager  # noqa: F401
 
             print("✓ 成功导入主要API类")
         except ImportError as e:

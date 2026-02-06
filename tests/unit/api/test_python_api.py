@@ -12,7 +12,7 @@ import sys
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from ptest.api import PTestAPI, create_ptest_api
+from ptest.api import PTestAPI, create_ptest_api  # noqa: E402
 
 
 class TestPTestAPI(unittest.TestCase):

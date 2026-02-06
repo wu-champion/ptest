@@ -26,7 +26,7 @@ class IsolationManager:
     支持动态加载、依赖管理和插件化架构
     """
 
-    def __init__(self, config: Dict[str, Any] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
         self.engines: Dict[str, IsolationEngine] = {}
         self.active_environments: Dict[str, IsolatedEnvironment] = {}
@@ -103,7 +103,10 @@ class IsolationManager:
         return success
 
     def create_environment(
-        self, path: Path, isolation_level: str = None, env_config: Dict[str, Any] = None
+        self,
+        path: Path,
+        isolation_level: Optional[str] = None,
+        env_config: Optional[Dict[str, Any]] = None,
     ) -> IsolatedEnvironment:
         """创建隔离环境"""
 
@@ -112,6 +115,8 @@ class IsolationManager:
             isolation_level = self.default_isolation_level
 
         # 检查隔离级别是否支持
+        if isolation_level is None:
+            raise ValueError("Isolation level must not be None")
         if isolation_level not in self.engines:
             # 尝试通过注册表创建引擎
             engine = self.registry.create_engine(
@@ -252,13 +257,13 @@ class IsolationManager:
         else:
             return True  # 基础隔离始终视为有效
 
-    def get_engine_info(self, isolation_level: str) -> Dict[str, Any]:
-        """获取引擎信息"""
-        if isolation_level not in self.engines:
-            return {"error": f"Engine {isolation_level} not found"}
+    # def get_engine_info(self, isolation_level: str) -> Dict[str, Any]:
+    #     """获取引擎信息"""
+    #     if isolation_level not in self.engines:
+    #         return {"error": f"Engine {isolation_level} not found"}
 
-        engine = self.engines[isolation_level]
-        return engine.get_engine_info()
+    #     engine = self.engines[isolation_level]
+    #     return engine.get_engine_info()
 
     def list_available_engines(self) -> Dict[str, Dict[str, Any]]:
         """列出可用的隔离引擎"""
@@ -540,8 +545,8 @@ class IsolationManager:
     def create_environment_with_auto_selection(
         self,
         path: Path,
-        requirements: Dict[str, Any] = None,
-        env_config: Dict[str, Any] = None,
+        requirements: Optional[Dict[str, Any]] = None,
+        env_config: Optional[Dict[str, Any]] = None,
     ) -> IsolatedEnvironment:
         """创建环境并自动选择隔离级别"""
 
@@ -637,7 +642,7 @@ class IsolationManager:
         return recommendations
 
     def benchmark_engines(
-        self, test_scenarios: List[str] = None
+        self, test_scenarios: Optional[List[str]] = None
     ) -> Dict[str, Dict[str, Any]]:
         """基准测试所有隔离引擎"""
         import tempfile
@@ -771,7 +776,9 @@ class IsolationManager:
         return matrix
 
     # 快照管理功能
-    def create_snapshot(self, env_id: str, snapshot_id: str = None) -> Dict[str, Any]:
+    def create_snapshot(
+        self, env_id: str, snapshot_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """创建环境快照"""
         if env_id not in self.active_environments:
             raise ValueError(f"Environment {env_id} not found")
@@ -874,7 +881,7 @@ class IsolationManager:
             self.logger.error(f"Failed to delete snapshot {snapshot_id}: {e}")
             return False
 
-    def list_snapshots(self, env_id: str = None) -> List[Dict[str, Any]]:
+    def list_snapshots(self, env_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """列出快照"""
         snapshots = list(self.snapshots.values())
 

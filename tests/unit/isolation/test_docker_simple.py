@@ -19,7 +19,6 @@ def test_docker_engine_basic_functionality():
             DockerIsolationEngine,
             DockerEnvironment,
         )
-        from ptest.isolation.enums import EnvironmentStatus
 
         print("✓ 成功导入模块")
 

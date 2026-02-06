@@ -124,7 +124,7 @@ class EnvironmentMigrator:
             )
 
             if not target_env:
-                raise RuntimeError(f"Failed to create target Docker environment")
+                raise RuntimeError("Failed to create target Docker environment")
 
             self.progress.complete_step()
 
@@ -209,7 +209,7 @@ class EnvironmentMigrator:
             )
 
             if not target_env:
-                raise RuntimeError(f"Failed to create target Virtualenv environment")
+                raise RuntimeError("Failed to create target Virtualenv environment")
 
             self.progress.complete_step()
 

@@ -5,7 +5,6 @@ Docker引擎基础功能验证测试
 这个测试脚本验证Docker隔离引擎的核心功能是否正常工作
 """
 
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -15,10 +14,9 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 # 框架导入
-from ptest.isolation.docker_engine import DockerIsolationEngine, DockerEnvironment
-from ptest.isolation.base import IsolationEngine, IsolatedEnvironment, ProcessResult
-from ptest.isolation.enums import EnvironmentStatus, ProcessStatus, IsolationEvent
-from ptest.core import get_logger
+from ptest.isolation.docker_engine import DockerIsolationEngine, DockerEnvironment  # noqa: E402
+from ptest.isolation.base import IsolationEngine, IsolatedEnvironment  # noqa: E402
+from ptest.core import get_logger  # noqa: E402
 
 # 设置测试日志
 logger = get_logger("docker_basic_test")

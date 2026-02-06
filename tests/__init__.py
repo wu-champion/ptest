@@ -57,14 +57,14 @@ for key, value in TEST_ENV_VARS.items():
 
 # 导入测试工具
 try:
-    import pytest  # type: ignore
+    import pytest  # noqa: F401
 
     HAS_PYTEST = True
 except ImportError:
     HAS_PYTEST = False
 
 try:
-    import unittest
+    import unittest  # noqa: F401
 
     HAS_UNITTEST = True
 except ImportError:

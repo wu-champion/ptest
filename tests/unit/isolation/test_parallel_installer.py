@@ -8,8 +8,7 @@ ParallelInstaller 测试用例
 import pytest
 import tempfile
 import time
-import threading
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -19,10 +18,9 @@ from ptest.isolation.parallel_installer import (
     InstallationTask,
     InstallationResult,
     Priority,
-    InstallationStatus,
     ResourceMonitor,
 )
-from ptest.isolation.package_manager import InstallResult, PackageInfo
+from ptest.isolation.package_manager import InstallResult
 from ptest.isolation.base import IsolatedEnvironment, ProcessResult
 from ptest.isolation.enums import EnvironmentStatus
 
@@ -108,19 +106,19 @@ class TestResourceMonitor:
         )
 
         # 初始状态应该可以开始安装
-        assert monitor.can_start_installation() == True
+        assert monitor.can_start_installation()
 
         # 达到最大并发数时不可以开始安装
         monitor.active_installations = 4
-        assert monitor.can_start_installation() == False
+        assert not monitor.can_start_installation()
 
         # 重置并测试资源限制
         monitor.active_installations = 2
         monitor.resource_usage = {"cpu_percent": 90.0, "memory_mb": 500.0}
-        assert monitor.can_start_installation() == False
+        assert not monitor.can_start_installation()
 
         monitor.resource_usage = {"cpu_percent": 70.0, "memory_mb": 500.0}
-        assert monitor.can_start_installation() == True
+        assert monitor.can_start_installation()
 
     def test_register_unregister_installation(self):
         """测试注册和注销安装"""
@@ -209,7 +207,7 @@ class TestInstallationResult:
         assert result.task_id == "test_task"
         assert result.environment_id == "test_env"
         assert result.packages == ["requests", "numpy"]
-        assert result.success == True
+        assert result.success
 
     def test_successful_packages_property(self):
         """测试成功安装包属性"""
@@ -249,7 +247,7 @@ class TestInstallationResult:
         assert result_dict["task_id"] == "test_task"
         assert result_dict["environment_id"] == "test_env"
         assert result_dict["packages"] == ["requests"]
-        assert result_dict["success"] == True
+        assert result_dict["success"]
         assert isinstance(result_dict["start_time"], str)
         assert result_dict["start_time"] == start_time.isoformat()
 
@@ -277,10 +275,10 @@ class TestParallelInstaller:
         """测试安装器初始化"""
         assert installer.max_workers == 2
         assert installer.max_queue_size == 10
-        assert installer.enable_resource_monitoring == True
-        assert installer.is_running == False
-        assert installer.is_paused == False
-        assert installer.task_queue.empty() == True
+        assert installer.enable_resource_monitoring
+        assert not installer.is_running
+        assert not installer.is_paused
+        assert installer.task_queue.empty()
         assert len(installer.running_tasks) == 0
         assert len(installer.completed_tasks) == 0
 
@@ -288,12 +286,12 @@ class TestParallelInstaller:
         """测试启动和停止安装器"""
         # 启动安装器
         installer.start()
-        assert installer.is_running == True
-        assert installer.is_paused == False
+        assert installer.is_running
+        assert not installer.is_paused
 
         # 停止安装器
         installer.stop(wait_for_completion=False)
-        assert installer.is_running == False
+        assert not installer.is_running
 
     def test_pause_resume_installer(self, installer):
         """测试暂停和恢复安装器"""
@@ -301,11 +299,11 @@ class TestParallelInstaller:
 
         # 暂停
         installer.pause()
-        assert installer.is_paused == True
+        assert installer.is_paused
 
         # 恢复
         installer.resume()
-        assert installer.is_paused == False
+        assert not installer.is_paused
 
         installer.stop(wait_for_completion=False)
 
@@ -439,7 +437,7 @@ class TestParallelInstaller:
             )
 
             # 尝试取消任务
-            success = installer.cancel_task(task_id)
+            installer.cancel_task(task_id)
             # 任务可能已经开始执行，取消可能失败
             # 这取决于具体的时机
 
@@ -478,12 +476,12 @@ class TestParallelInstaller:
 
         assert queue_info["max_queue_size"] == 10
         assert queue_info["max_workers"] == 2
-        assert queue_info["is_running"] == False
+        assert not queue_info["is_running"]
 
     def test_context_manager(self, mock_environment):
         """测试上下文管理器"""
         with ParallelInstaller(max_workers=2) as installer:
-            assert installer.is_running == True
+            assert installer.is_running
 
             # 提交任务
             task_id = installer.submit_task(
@@ -492,7 +490,7 @@ class TestParallelInstaller:
             assert task_id != ""
 
         # 退出上下文后应该停止
-        assert installer.is_running == False
+        assert not installer.is_running
 
     def test_environment_info(self, installer, mock_environment):
         """测试获取环境信息"""
@@ -540,7 +538,7 @@ class TestParallelInstaller:
         try:
             # 导出统计信息
             success = installer.export_statistics(temp_path)
-            assert success == True
+            assert success
 
             # 检查文件是否创建
             assert temp_path.exists()

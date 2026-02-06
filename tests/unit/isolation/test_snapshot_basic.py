@@ -39,7 +39,7 @@ class TestBasicSnapshot(unittest.TestCase):
             shutil.rmtree(self.temp_dir)
         try:
             self.manager.cleanup_all_environments(force=True)
-        except:
+        except Exception:
             pass
 
     def test_manager_snapshot_support(self):

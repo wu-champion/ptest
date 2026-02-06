@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # 直接导入模块
 from ptest.isolation.manager import IsolationManager
-from ptest.isolation.enums import IsolationLevel, EnvironmentStatus
+from ptest.isolation.enums import EnvironmentStatus
 from ptest.isolation.basic_engine import BasicIsolationEngine
 
 
@@ -105,10 +105,10 @@ class TestIsolationManager(unittest.TestCase):
         manager = IsolationManager(config)
 
         # 创建环境直到达到限制
-        env1 = manager.create_environment(
+        manager.create_environment(
             Path(self.test_dir) / "test_env1", isolation_level="basic"
         )
-        env2 = manager.create_environment(
+        manager.create_environment(
             Path(self.test_dir) / "test_env2", isolation_level="basic"
         )
 

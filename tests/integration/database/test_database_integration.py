@@ -5,7 +5,6 @@
 
 import sys
 import os
-import json
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -14,11 +13,9 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from cases.executor import TestExecutor
-from cases.result import TestCaseResult
-from cases.manager import CaseManager
-from objects.db import DBObject
-from objects.manager import ObjectManager
+from cases.manager import CaseManager  # noqa: E402
+from objects.db import DBObject  # noqa: E402
+from objects.manager import ObjectManager  # noqa: E402
 
 
 class MockEnvManager:
@@ -151,13 +148,13 @@ def test_database_object_integration():
         print(f"  {result}")
 
     # 6. 显示测试摘要
-    print(f"\n6. Test Summary:")
+    print("\n6. Test Summary:")
     print(f"  Total cases: {len(case_manager.cases)}")
     print(f"  Passed: {len(case_manager.passed_cases)}")
     print(f"  Failed: {len(case_manager.failed_cases)}")
 
     # 7. 清理
-    print(f"\n7. Cleaning up...")
+    print("\n7. Cleaning up...")
     db_object.uninstall()
     os.remove(test_db)
     print(f"  ✓ Cleaned up test database: {test_db}")
@@ -218,7 +215,7 @@ def test_database_object_types():
                 # 清理
                 db_object.uninstall()
             else:
-                print(f"  Installation failed, skipping connection test")
+                print("  Installation failed, skipping connection test")
 
         except Exception as e:
             print(f"  Error: {str(e)}")

@@ -8,17 +8,13 @@ import unittest
 import tempfile
 import shutil
 from pathlib import Path
-import sys
-import os
 import time
-from unittest.mock import Mock, patch, MagicMock
 
 from ptest.isolation.docker_engine import (
     DockerEnvironment,
     DockerIsolationEngine,
 )
 from ptest.isolation.enums import EnvironmentStatus, IsolationEvent
-from ptest.core import get_logger
 
 
 class TestDockerIsolationEngine(unittest.TestCase):
@@ -75,7 +71,7 @@ class TestDockerIsolationEngine(unittest.TestCase):
     def test_get_isolation_status(self):
         """测试获取隔离状态"""
         env_id = "test_status_env"
-        env = self.engine.create_isolation(self.temp_dir, env_id, {})
+        self.engine.create_isolation(self.temp_dir, env_id, {})
 
         status = self.engine.get_isolation_status(env_id)
 
@@ -107,7 +103,7 @@ class TestDockerIsolationEngine(unittest.TestCase):
     def test_pull_image_simulation(self):
         """测试拉取镜像（模拟模式）"""
         # 模拟模式下可能因网络问题失败，只验证方法可调用
-        result = self.engine.pull_image("python:3.9-slim")
+        self.engine.pull_image("python:3.9-slim")
         # 不验证结果，因为模拟模式下可能成功也可能失败
 
     def test_create_network_simulation(self):

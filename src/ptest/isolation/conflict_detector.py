@@ -332,7 +332,7 @@ class ConflictDetector:
                                         (
                                             str(req.specifier),
                                             dep_source,
-                                            f"transitive dependency",
+                                            "transitive dependency",
                                         )
                                     ],
                                     severity="warning",

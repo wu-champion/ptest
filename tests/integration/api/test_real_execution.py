@@ -5,7 +5,6 @@
 
 import sys
 import os
-import json
 from pathlib import Path
 
 # 添加项目路径到Python路径
@@ -14,8 +13,8 @@ src_dir = project_root / "src"
 sys.path.insert(0, str(src_dir))
 
 # 直接导入模块
-from ptest.environment import EnvironmentManager
-from ptest.cases.manager import CaseManager
+from ptest.environment import EnvironmentManager  # noqa: E402
+from ptest.cases.manager import CaseManager  # noqa: E402
 
 
 def test_real_execution():

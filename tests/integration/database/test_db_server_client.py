@@ -6,16 +6,15 @@
 import sys
 import os
 import tempfile
-import time
 from pathlib import Path
 
 # 添加项目路径到Python路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from objects.db_v2 import EnhancedDBObject
-from objects.db_server import DatabaseServerComponent
-from objects.db_client import DatabaseClientComponent
+from objects.db_v2 import EnhancedDBObject  # noqa: E402
+from objects.db_server import DatabaseServerComponent  # noqa: E402
+from objects.db_client import DatabaseClientComponent  # noqa: E402
 
 
 class MockEnvManager:
@@ -59,7 +58,7 @@ def test_database_components():
         status = server.get_status()
         print(f"  ✓ Initial status: {status['status']}")
 
-        print(f"  ✓ Server component test passed")
+        print("  ✓ Server component test passed")
 
     except Exception as e:
         print(f"  ✗ Server component test failed: {str(e)}")
@@ -117,7 +116,7 @@ def test_database_components():
         else:
             print(f"  ✗ Database info failed: {info}")
 
-        print(f"  ✓ Client component test passed")
+        print("  ✓ Client component test passed")
 
     except Exception as e:
         print(f"  ✗ Client component test failed: {str(e)}")
@@ -175,9 +174,9 @@ def test_enhanced_database_object():
 
         # 清理
         db_obj.uninstall()
-        print(f"  Uninstall result: ✓")
+        print("  Uninstall result: ✓")
 
-        print(f"  ✓ Client-only mode test passed")
+        print("  ✓ Client-only mode test passed")
 
     except Exception as e:
         print(f"  ✗ Client-only mode test failed: {str(e)}")
@@ -217,7 +216,7 @@ def test_enhanced_database_object():
             print(f"  ✓ Client status: {client_info.get('status', 'unknown')}")
             print(f"  ✓ Connected: {client_info.get('connected', False)}")
 
-        print(f"  ✓ Full stack mode test passed")
+        print("  ✓ Full stack mode test passed")
 
     except Exception as e:
         print(f"  ✗ Full stack mode test failed: {str(e)}")

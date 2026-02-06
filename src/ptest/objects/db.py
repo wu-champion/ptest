@@ -464,7 +464,7 @@ class DBObject(BaseManagedObject):
 
     def install(self, params=None):
         if not params:
-            return f"✗ Database installation requires parameters"
+            return "✗ Database installation requires parameters"
 
         self.env_manager.logger.info(f"Installing database object: {self.name}")
         self.db_config = params.copy() if params else {}  # type: ignore

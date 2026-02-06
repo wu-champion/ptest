@@ -9,14 +9,13 @@ import tempfile
 import shutil
 from pathlib import Path
 import sys
-import os
 import time
 
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from ptest.isolation.docker_engine import DockerIsolationEngine, DockerEnvironment
-from ptest.isolation.enums import EnvironmentStatus
+from ptest.isolation.docker_engine import DockerIsolationEngine, DockerEnvironment  # noqa: E402
+from ptest.isolation.enums import EnvironmentStatus  # noqa: E402
 
 
 class TestRealDockerEnvironment(unittest.TestCase):
@@ -57,7 +56,7 @@ class TestRealDockerEnvironment(unittest.TestCase):
         if hasattr(self, "engine") and self.engine:
             try:
                 self.engine.cleanup_all_environments()
-            except:
+            except Exception:
                 pass
 
         if self.temp_dir.exists():
@@ -166,7 +165,7 @@ class TestRealDockerCleanup(unittest.TestCase):
             containers = client.containers.list(all=True)
             cls.initial_container_count = len(containers)
             print(f"\n测试前容器数量: {cls.initial_container_count}")
-        except:
+        except Exception:
             cls.docker_available = False
 
     def setUp(self):
@@ -187,7 +186,7 @@ class TestRealDockerCleanup(unittest.TestCase):
         if hasattr(self, "engine") and self.engine:
             try:
                 self.engine.cleanup_all_environments()
-            except:
+            except Exception:
                 pass
 
         if self.temp_dir.exists():

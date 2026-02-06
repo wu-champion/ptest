@@ -7,6 +7,7 @@ ptest 框架核心配置和工具模块
 """
 
 import sys
+import json
 import logging
 import subprocess
 import threading

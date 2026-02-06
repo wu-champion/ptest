@@ -3,7 +3,6 @@
 验证Python API文件结构
 """
 
-import os
 from pathlib import Path
 
 print("验证Python API实现结构...")
@@ -173,7 +172,7 @@ print("   • 支持扩展和插件")
 if api_file.exists():
     with open(api_file, "r") as f:
         lines = len(f.readlines())
-    print(f"\n📊 API实现统计:")
+    print("\n📊 API实现统计:")
     print(f"   • API主文件: {lines} 行代码")
-    print(f"   • 文档页面: 详细的使用指南和示例")
-    print(f"   • 测试文件: 完整的测试用例验证")
+    print("   • 文档页面: 详细的使用指南和示例")
+    print("   • 测试文件: 完整的测试用例验证")

@@ -26,7 +26,7 @@ class DatabaseServerObject(BaseManagedObject):
     def install(self, params: Dict[str, Any] = None) -> str:  # type: ignore
         """安装数据库服务端"""
         if not params:
-            return f"✗ Database server installation requires parameters"
+            return "✗ Database server installation requires parameters"
 
         self.env_manager.logger.info(f"Installing database server: {self.name}")
 
@@ -180,7 +180,7 @@ class DatabaseClientObject(BaseManagedObject):
     def install(self, params: Dict[str, Any] = None) -> str:  # type: ignore
         """安装数据库客户端"""
         if not params:
-            return f"✗ Database client installation requires parameters"
+            return "✗ Database client installation requires parameters"
 
         self.env_manager.logger.info(f"Installing database client: {self.name}")
 

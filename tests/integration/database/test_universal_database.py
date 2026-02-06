@@ -5,7 +5,6 @@
 
 import sys
 import os
-import json
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -14,9 +13,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from objects.db import DatabaseRegistry, GenericDatabaseConnector, DBObject
-from cases.executor import TestExecutor
-from cases.manager import CaseManager
+from objects.db import DatabaseRegistry, GenericDatabaseConnector, DBObject  # noqa: E402
 
 
 class MockEnvManager:
@@ -207,7 +204,7 @@ def test_database_object_with_generic_connector():
                 # 清理
                 db_object.uninstall()
             else:
-                print(f"  Skipping query test due to installation failure")
+                print("  Skipping query test due to installation failure")
 
         except Exception as e:
             print(f"  Error: {str(e)}")

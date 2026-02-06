@@ -16,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from ptest.isolation.engine_registry import (
     EngineRegistry,
-    get_global_registry,
 )
 from ptest.isolation.registry import list_available_engines as global_list
 from ptest.isolation.base import IsolationEngine, IsolatedEnvironment, ProcessResult

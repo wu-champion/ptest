@@ -9,7 +9,6 @@ import tempfile
 import shutil
 from pathlib import Path
 import sys
-import os
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent.parent
@@ -21,11 +20,10 @@ try:
         VirtualenvEnvironment,
         VirtualenvIsolationEngine,
     )
-    from ptest.isolation.enums import EnvironmentStatus, IsolationEvent
+    from ptest.isolation.enums import EnvironmentStatus, IsolationEvent  # noqa: F401
     from ptest.core import get_logger
 except ImportError:
     import sys
-    import os
 
     # 添加当前目录到路径
     current_dir = Path(__file__).parent
@@ -37,7 +35,7 @@ except ImportError:
         VirtualenvEnvironment,
         VirtualenvIsolationEngine,
     )
-    from ptest.isolation.enums import EnvironmentStatus, IsolationEvent
+    from ptest.isolation.enums import EnvironmentStatus
     from ptest.core import get_logger
 
 logger = get_logger("test_virtualenv")
@@ -249,7 +247,7 @@ class TestVirtualenvIsolationEngine(unittest.TestCase):
         env_id = "test_status"
 
         # 创建环境
-        env = self.engine.create_isolation(self.temp_dir, env_id, {})
+        self.engine.create_isolation(self.temp_dir, env_id, {})
 
         # 查询状态
         status = self.engine.get_isolation_status(env_id)

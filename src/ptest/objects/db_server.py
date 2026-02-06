@@ -49,7 +49,7 @@ class DatabaseServerComponent(ServiceServerComponent):
     def stop(self) -> Tuple[bool, str]:
         """停止数据库服务端"""
         if self.status != "running":
-            return True, f"Database server not running"
+            return True, "Database server not running"
 
         try:
             # 读取PID文件
@@ -75,7 +75,7 @@ class DatabaseServerComponent(ServiceServerComponent):
                     os.remove(self.pid_file)
 
             self.status = "stopped"
-            return True, f"Database server stopped successfully"
+            return True, "Database server stopped successfully"
 
         except Exception as e:
             return False, f"Failed to stop database server: {str(e)}"

@@ -4,7 +4,6 @@
 """
 
 import sys
-import os
 import importlib
 import traceback
 from pathlib import Path
@@ -14,7 +13,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # 导入测试配置
-from tests import TEST_CONFIG
+from tests import TEST_CONFIG  # noqa: E402
 
 
 def run_test_module(module_name: str) -> bool:
