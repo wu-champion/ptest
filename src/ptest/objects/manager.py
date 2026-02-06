@@ -71,7 +71,7 @@ class ObjectManager:
         self.object_types = {
             "database": {
                 "class": db_module.DBObject,
-                "client": db_module.DatabaseClientObject,
+                "client": db_enhanced_module.DatabaseClientObject,
                 "server": db_enhanced_module.DatabaseServerObject,
             },
             "service": service_module.ServiceObject,
