@@ -286,9 +286,9 @@ class PackageCache:
             for cache_key in entries_to_remove:
                 if self._remove_entry(cache_key):
                     cleanup_result["removed_entries"] += 1
-                    entry = self._cache_index.get(cache_key)
-                    if entry:
-                        cleanup_result["freed_space"] += entry.file_size
+                    cache_entry: CacheEntry | None = self._cache_index.get(cache_key)
+                    if cache_entry:
+                        cleanup_result["freed_space"] += cache_entry.file_size
 
             # 更新统计
             self._update_stats()

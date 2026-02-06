@@ -276,8 +276,12 @@ class DatabaseClientComponent(ServiceClientComponent):
         """获取MongoDB数据库信息"""
         try:
             # MongoDB需要特殊处理
-            if hasattr(self.connector, "connection") and self.connector.connection:
-                db = self.connector.connection
+            if (
+                self.connector
+                and hasattr(self.connector, "connection")
+                and self.connector.connection
+            ):
+                db = self.connector.connection  # type: ignore[union-attr]
 
                 info = {
                     "db_type": "MongoDB",

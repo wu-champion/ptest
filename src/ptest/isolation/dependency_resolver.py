@@ -543,7 +543,7 @@ class DependencyResolver:
             依赖图数据
         """
         try:
-            graph = {
+            graph: dict[str, Any] = {
                 "nodes": [],
                 "edges": [],
                 "conflicts": [],

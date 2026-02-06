@@ -71,9 +71,9 @@ class EngineRegistry:
         description: str = "",
         version: str = "1.0.0",
         author: str = "Unknown",
-        supported_features: List[str] = None,
-        dependencies: List[str] = None,
-        config_schema: Dict[str, Any] = None,
+        supported_features: List[str] | None = None,
+        dependencies: List[str] | None = None,
+        config_schema: Dict[str, Any] | None = None,
         priority: int = 100,
         replace: bool = False,
     ) -> bool:
@@ -146,7 +146,7 @@ class EngineRegistry:
         dependent_engines = [
             engine_name
             for engine_name, info in self._engines.items()
-            if name in info.dependencies
+            if info.dependencies and name in info.dependencies
         ]
 
         if dependent_engines:
@@ -214,7 +214,10 @@ class EngineRegistry:
         return result
 
     def create_engine(
-        self, name: str, config: Dict[str, Any] = None, force_recreate: bool = False
+        self,
+        name: str,
+        config: Dict[str, Any] | None = None,
+        force_recreate: bool = False,
     ) -> Optional[IsolationEngine]:
         """创建引擎实例
 
@@ -302,7 +305,7 @@ class EngineRegistry:
             self.logger.error(f"Failed to destroy engine '{name}': {e}")
             return False
 
-    def discover_engines(self, search_paths: List[str] = None) -> int:
+    def discover_engines(self, search_paths: List[str] | None = None) -> int:
         """发现并注册引擎
 
         Args:
@@ -522,10 +525,10 @@ class EngineRegistry:
         Returns:
             Dict: 依赖关系图 {engine: [dependencies]}
         """
-        graph = {}
+        graph: dict[str, list[str]] = {}
 
         for name, info in self._engines.items():
-            graph[name] = info.dependencies.copy()
+            graph[name] = (info.dependencies or []).copy()
 
         return graph
 

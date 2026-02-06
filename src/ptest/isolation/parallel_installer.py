@@ -165,7 +165,7 @@ class ResourceMonitor:
         self.max_memory_mb = max_memory_mb
         self.max_workers = max_workers
         self.active_installations = 0
-        self.resource_usage = {}
+        self.resource_usage: Dict[str, Any] = {}
         self.lock = threading.Lock()
 
     def can_start_installation(self) -> bool:
@@ -251,7 +251,9 @@ class ParallelInstaller:
         )
 
         # 任务队列和执行器
-        self.task_queue = queue.PriorityQueue(maxsize=max_queue_size)
+        self.task_queue: queue.PriorityQueue = queue.PriorityQueue(
+            maxsize=max_queue_size
+        )
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.running_tasks: Dict[str, Future] = {}
         self.completed_tasks: Dict[str, InstallationResult] = {}
@@ -406,7 +408,7 @@ class ParallelInstaller:
                     packages
                 )
                 if conflict_analysis.total_conflicts > 0:
-                    conflicts = []
+                    conflicts: list[dict[str, Any]] = []
                     for pkg in conflict_analysis.conflicts_by_package:
                         pkg_conflicts = conflict_analysis.conflicts_by_package[pkg]
                         for conflict in pkg_conflicts:

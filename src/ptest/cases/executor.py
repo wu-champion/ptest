@@ -6,7 +6,7 @@
 
 import json
 import sqlite3
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Union
 from datetime import datetime
 from .result import TestCaseResult
 
@@ -19,7 +19,7 @@ except ImportError:
     REQUESTS_AVAILABLE = False
 
 try:
-    import pymysql
+    import pymysql  # type: ignore[import-untyped]
 
     PYMYSQL_AVAILABLE = True
 except ImportError:
@@ -231,6 +231,7 @@ class TestExecutor:
             cursor = connection.cursor()
             cursor.execute(query)
 
+            result: Union[list[dict[str, Any]], str]
             if query.strip().upper().startswith("SELECT"):
                 result = [dict(row) for row in cursor.fetchall()]
             else:

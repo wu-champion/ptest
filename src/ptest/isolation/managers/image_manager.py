@@ -350,7 +350,7 @@ class ImageManager:
             if not self.client:
                 return {"images_removed": 0, "space_reclaimed": 0}
 
-            results = {
+            results: dict[str, Any] = {
                 "dangling_removed": 0,
                 "unused_removed": 0,
                 "total_removed": 0,

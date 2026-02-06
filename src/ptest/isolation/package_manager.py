@@ -185,10 +185,10 @@ class AdvancedPackageManager:
                     cmd.extend(["--constraint", constraint])
 
             # 添加包规格
+            package_spec = package
             if requirements_file:
                 cmd.extend(["-r", str(requirements_file)])
             else:
-                package_spec = package
                 if version_spec:
                     package_spec = f"{package}{version_spec}"
                 cmd.append(package_spec)
@@ -472,7 +472,7 @@ class AdvancedPackageManager:
                 return None
 
             # 解析show输出
-            details = {}
+            details: dict[str, Any] = {}
             for line in result.stdout.split("\n"):
                 if ":" in line:
                     key, value = line.split(":", 1)

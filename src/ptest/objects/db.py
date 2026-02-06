@@ -6,8 +6,8 @@ try:
     from ..utils import get_colored_text
 except ImportError:
 
-    def get_colored_text(text, color_code):
-        return text
+    def get_colored_text(text: Any, color_code: Any) -> str:
+        return str(text)
 
 
 class DatabaseConnector:
@@ -36,7 +36,7 @@ class DatabaseConnector:
 class DatabaseRegistry:
     """数据库连接器注册表，支持动态注册和发现数据库类型"""
 
-    _connectors = {}
+    _connectors: dict[str, type] = {}
 
     @classmethod
     def register(cls, db_type: str, connector_class):
@@ -126,7 +126,7 @@ class GenericDatabaseConnector(DatabaseConnector):
     def _setup_mysql(self):
         """设置MySQL连接"""
         try:
-            import pymysql
+            import pymysql  # type: ignore[import-untyped]
 
             self.connection_module = pymysql
         except ImportError:
@@ -460,7 +460,7 @@ class DBObject(BaseManagedObject):
     def __init__(self, name: str, env_manager):
         super().__init__(name, "database", env_manager)
         self.connector = None
-        self.db_config = {}
+        self.db_config: dict[str, Any] = {}
 
     def install(self, params=None):
         if not params:

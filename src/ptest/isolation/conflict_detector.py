@@ -124,9 +124,9 @@ class ConflictDetector:
         try:
             # 获取包信息
             if installed_packages is None:
-                installed_packages = self.package_manager.list_packages()
+                packages_list = self.package_manager.list_packages()
                 installed_packages = {
-                    name: info.version for name, info in installed_packages.items()
+                    name: info.version for name, info in packages_list.items() if info
                 }
 
             # 获取要检查的包
@@ -198,7 +198,7 @@ class ConflictDetector:
         Returns:
             冲突列表
         """
-        conflicts = []
+        conflicts: list[VersionConflict] = []
 
         try:
             # 获取包的详细信息

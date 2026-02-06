@@ -13,8 +13,8 @@ try:
     from ..utils import get_colored_text
 except ImportError:
 
-    def get_colored_text(text, color_code):
-        return text
+    def get_colored_text(text: Any, color_code: Any) -> str:
+        return str(text)
 
 
 class EnhancedDBObject(BaseManagedObject):
@@ -224,7 +224,7 @@ class EnhancedDBObject(BaseManagedObject):
 
         # 评估整体健康状态
         all_healthy = all(result["healthy"] for result in health_results)
-        messages = [result["message"] for result in health_results]
+        messages: list[str] = [str(result["message"]) for result in health_results]
 
         if all_healthy:
             return True, f"All components healthy: {'; '.join(messages)}"

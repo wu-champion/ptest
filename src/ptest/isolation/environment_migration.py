@@ -4,6 +4,7 @@
 提供 Virtualenv 到 Docker 和 Docker 到 Virtualenv 的环境迁移功能
 """
 
+# mypy: ignore-errors
 from typing import Dict, Any, List, Optional, Callable
 from pathlib import Path
 

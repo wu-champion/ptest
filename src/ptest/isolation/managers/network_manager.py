@@ -62,7 +62,7 @@ class NetworkManager:
             except NotFound:
                 pass
 
-            network_config = {
+            network_config: dict[str, Any] = {
                 "Name": network_name,
                 "Driver": driver,
                 "Internal": internal,
@@ -73,7 +73,7 @@ class NetworkManager:
                 network_config["Labels"] = labels
 
             # IPAM配置
-            ipam_config = {}
+            ipam_config: dict[str, Any] = {}
             if subnet:
                 ipam_config["Subnet"] = subnet
 
@@ -160,7 +160,7 @@ class NetworkManager:
                 logger.error(f"Network {network_name} not found")
                 return False
 
-            network_config = {}
+            network_config: dict[str, Any] = {}
             if aliases:
                 network_config["aliases"] = aliases
             if ipv4_address:
@@ -281,7 +281,7 @@ class NetworkManager:
                 return {}
 
             labels = network.attrs.get("Labels", {})
-            policies = {}
+            policies: dict[str, Any] = {}
 
             for key, value in labels.items():
                 if key.startswith("com.ptest.network."):

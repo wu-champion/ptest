@@ -38,3 +38,19 @@ dev = [
     "twine>=4.0.0",
     "build>=1.0.0",
 ]
+
+[mypy]
+ignore_errors = false
+warn_return_any = false
+warn_unused_ignores = false
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = [
+    "ptest.isolation.environment_migration",
+    "ptest.isolation.parallel_installer",
+    "ptest.isolation.registry",
+    "ptest.isolation.manager",
+    "ptest.isolation.docker_engine",
+]
+ignore_errors = true

@@ -8,8 +8,8 @@ try:
     from ..utils import get_colored_text
 except ImportError:
     # 简单的颜色输出函数，当无法导入时使用
-    def get_colored_text(text, color_code):
-        return text
+    def get_colored_text(text: Any, color_code: Any) -> str:
+        return str(text)
 
 
 class CaseManager:

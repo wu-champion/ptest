@@ -74,9 +74,9 @@ class PTestAPI:
         test_type: str,
         name: str,
         description: str = "",
-        content: Union[str, Dict[str, Any]] = None,
-        tags: List[str] = None,
-        expected_result: str = None,
+        content: Union[str, Dict[str, Any]] | None = None,
+        tags: List[str] | None = None,
+        expected_result: str | None = None,
         timeout: Optional[float] = None,
     ) -> str:
         """创建测试用例
@@ -156,8 +156,10 @@ class PTestAPI:
         if not self._active_env_path:
             self.init_environment()
 
-        report_gen = ReportGenerator(self.env_manager)
-        return report_gen.generate_report(format_type, output_path)
+        case_manager = CaseManager(self.env_manager)
+        report_path = Path(output_path) if output_path else None
+        report_gen = ReportGenerator(self.env_manager, case_manager)
+        return report_gen.generate_report(format_type, report_path)
 
     def get_system_info(self) -> Dict[str, Any]:
         """获取系统信息"""

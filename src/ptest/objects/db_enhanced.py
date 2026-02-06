@@ -12,8 +12,8 @@ try:
     from ..utils import get_colored_text
 except ImportError:
 
-    def get_colored_text(text, color_code):
-        return text
+    def get_colored_text(text: Any, color_code: Any) -> str:
+        return str(text)
 
 
 class DatabaseServerObject(BaseManagedObject):

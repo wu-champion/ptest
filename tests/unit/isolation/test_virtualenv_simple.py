@@ -61,7 +61,6 @@ def test_basic_functionality():
             status = env.get_status()
             print(f"✓ 环境状态: {status.get('status')}")
 
-
         finally:
             # 清理临时目录
             import shutil
