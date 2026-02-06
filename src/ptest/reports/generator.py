@@ -137,7 +137,7 @@ class ReportGenerator:
         # 生成结果表格
         results_table = ""
         for case_id, result in self.case_manager.results.items():
-            status_icon = "✅" if result.status == "passed" else "❌"
+            status_icon = "[PASS]" if result.status == "passed" else "[FAIL]"
             duration = f"{result.duration:.2f}s" if result.duration > 0 else "N/A"
             error_msg = result.error_message or ""
             results_table += f"| {case_id} | {status_icon} {result.status.upper()} | {duration} | {error_msg} |\n"
@@ -178,11 +178,7 @@ class ReportGenerator:
             config_isolation = getattr(
                 self.env_manager.config, "isolation_level", "basic"
             )
-            isolation_engine = (
-                config_isolation.value
-                if hasattr(config_isolation, "value")
-                else str(config_isolation)
-            )
+            isolation_engine = str(config_isolation)
 
         return {
             "total_cases": len(self.case_manager.cases),

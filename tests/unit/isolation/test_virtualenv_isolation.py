@@ -2,6 +2,7 @@
 Virtualenv隔离引擎测试
 
 测试Virtualenv隔离引擎的各项功能，包括环境创建、激活、包管理等
+注意：在Windows环境下需要virtualenv包支持
 """
 
 import unittest
@@ -9,6 +10,7 @@ import tempfile
 import shutil
 from pathlib import Path
 import sys
+import subprocess
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent.parent
@@ -41,6 +43,29 @@ except ImportError:
 logger = get_logger("test_virtualenv")
 
 
+def _check_virtualenv_available():
+    """检查virtualenv是否可用"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "virtualenv", "--version"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+# Windows平台且virtualenv不可用时跳过测试
+IS_WINDOWS = sys.platform == "win32"
+VIRTUALENV_AVAILABLE = _check_virtualenv_available()
+SHOULD_SKIP_VIRTUALENV_TESTS = IS_WINDOWS and not VIRTUALENV_AVAILABLE
+
+
+@unittest.skipIf(
+    SHOULD_SKIP_VIRTUALENV_TESTS,
+    "Virtualenv not available on Windows - install with: pip install virtualenv",
+)
 class TestVirtualenvEnvironment(unittest.TestCase):
     """VirtualenvEnvironment测试类"""
 
@@ -197,6 +222,10 @@ class TestVirtualenvEnvironment(unittest.TestCase):
         )
 
 
+@unittest.skipIf(
+    SHOULD_SKIP_VIRTUALENV_TESTS,
+    "Virtualenv not available on Windows - install with: pip install virtualenv",
+)
 class TestVirtualenvIsolationEngine(unittest.TestCase):
     """VirtualenvIsolationEngine测试类"""
 
@@ -324,6 +353,10 @@ class TestVirtualenvIsolationEngine(unittest.TestCase):
         )
 
 
+@unittest.skipIf(
+    SHOULD_SKIP_VIRTUALENV_TESTS,
+    "Virtualenv not available on Windows - install with: pip install virtualenv",
+)
 class TestIntegration(unittest.TestCase):
     """集成测试类"""
 

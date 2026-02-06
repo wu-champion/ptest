@@ -9,6 +9,7 @@ import tempfile
 import shutil
 from pathlib import Path
 import sys
+import subprocess
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent.parent
@@ -27,6 +28,28 @@ except ImportError:
         from isolation.enums import IsolationLevel
 
 
+def _check_virtualenv_available():
+    """检查virtualenv是否可用"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "virtualenv", "--version"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+IS_WINDOWS = sys.platform == "win32"
+VIRTUALENV_AVAILABLE = _check_virtualenv_available()
+SKIP_VIRTUALENV_TESTS = IS_WINDOWS and not VIRTUALENV_AVAILABLE
+
+
+@unittest.skipIf(
+    SKIP_VIRTUALENV_TESTS,
+    "Virtualenv not available on Windows - install with: pip install virtualenv",
+)
 class TestIsolationManager(unittest.TestCase):
     """隔离管理器测试"""
 
@@ -220,6 +243,10 @@ class TestIsolationManager(unittest.TestCase):
         self.assertNotIn(env.env_id, manager.active_environments)
 
 
+@unittest.skipIf(
+    SKIP_VIRTUALENV_TESTS,
+    "Virtualenv not available on Windows - install with: pip install virtualenv",
+)
 class TestAutoSelection(unittest.TestCase):
     """自动隔离级别选择测试"""
 
@@ -320,6 +347,10 @@ class TestAutoSelection(unittest.TestCase):
         )
 
 
+@unittest.skipIf(
+    SKIP_VIRTUALENV_TESTS,
+    "Virtualenv not available on Windows - install with: pip install virtualenv",
+)
 class TestEnvironmentMigration(unittest.TestCase):
     """环境迁移测试"""
 
@@ -411,6 +442,10 @@ class TestEngineCompatibility(unittest.TestCase):
         self.assertIn("isolation_strength", matrix["basic"])
 
 
+@unittest.skipIf(
+    SKIP_VIRTUALENV_TESTS,
+    "Virtualenv not available on Windows - install with: pip install virtualenv",
+)
 class TestBenchmarking(unittest.TestCase):
     """基准测试"""
 

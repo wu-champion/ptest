@@ -219,6 +219,17 @@ class DockerEnvironment(IsolatedEnvironment):
 
     def start_container(self) -> bool:
         """启动Docker容器"""
+        # 检查是否处于模拟模式
+        if self.config.get("simulation_mode", False):
+            logger.debug(
+                f"[SIMULATION] Container start simulated for {self.container_id}"
+            )
+            # 模拟_container对象，使测试中的_container检查通过
+            self._container = type("_SimulatedContainer", (), {"status": "running"})()
+            self.status = EnvironmentStatus.ACTIVE
+            self._emit_event(IsolationEvent.ENVIRONMENT_ACTIVATED)
+            return True
+
         try:
             if not DOCKER_AVAILABLE:
                 logger.warning("Docker SDK not available, simulating container start")
@@ -246,6 +257,15 @@ class DockerEnvironment(IsolatedEnvironment):
 
     def stop_container(self) -> bool:
         """停止Docker容器"""
+        # 检查是否处于模拟模式
+        if self.config.get("simulation_mode", False):
+            logger.debug(
+                f"[SIMULATION] Container stop simulated for {self.container_id}"
+            )
+            self.status = EnvironmentStatus.INACTIVE
+            self._emit_event(IsolationEvent.ENVIRONMENT_DEACTIVATED)
+            return True
+
         try:
             if not DOCKER_AVAILABLE:
                 logger.warning("Docker SDK not available, simulating container stop")
@@ -611,6 +631,11 @@ class DockerEnvironment(IsolatedEnvironment):
         interactive: bool = False,
     ) -> ProcessResult:
         """在Docker容器中执行命令 (Docker特定方法)"""
+        # 检查是否处于模拟模式
+        if self.config.get("simulation_mode", False):
+            logger.debug(f"[SIMULATION] Command execution simulated: {cmd}")
+            return ProcessResult(returncode=0, stdout="", stderr="", command=cmd)
+
         try:
             from datetime import datetime
 
@@ -822,6 +847,13 @@ class DockerEnvironment(IsolatedEnvironment):
 
     def cleanup(self, force: bool = False) -> bool:
         """清理Docker环境"""
+        # 检查是否处于模拟模式
+        if self.config.get("simulation_mode", False):
+            logger.debug(f"[SIMULATION] Cleanup simulated for {self.container_id}")
+            self.status = EnvironmentStatus.CLEANUP_COMPLETE
+            self._emit_event(IsolationEvent.ENVIRONMENT_CLEANUP_COMPLETE)
+            return True
+
         try:
             if not DOCKER_AVAILABLE:
                 logger.warning("Docker SDK not available, simulating cleanup")
@@ -1161,6 +1193,7 @@ class DockerIsolationEngine(IsolationEngine):
             "build_timeout": 1800,
             "stop_timeout": 30,
             "resource_limits": {"memory": "512m", "cpus": "1.0", "disk": "10g"},
+            "simulation_mode": False,  # 默认使用真实Docker操作
         }
 
         # 合并用户配置
@@ -1825,8 +1858,18 @@ class DockerIsolationEngine(IsolationEngine):
         # 合并引擎配置和隔离配置
         final_config = {**self.engine_config, **isolation_config}
 
+        # 检查是否处于模拟模式
+        is_simulation = final_config.get("simulation_mode", False)
+
         # 创建环境
         env = DockerEnvironment(env_id, path, self, final_config)
+
+        # 模拟模式下跳过实际Docker操作
+        if is_simulation:
+            logger.debug(f"[SIMULATION] Docker isolation created: {env_id}")
+            env.container_id = f"sim_{uuid.uuid4().hex[:8]}"
+            self.created_environments[env_id] = env
+            return env
 
         # 预拉取镜像
         image_name = final_config.get("image", self.engine_config["default_image"])

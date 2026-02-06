@@ -6,17 +6,17 @@ ptest 报告模板
 
 TEST_SUMMARY_TEMPLATE = """
 <div class="summary-section">
-    <h2>📊 Test Summary</h2>
+    <h2>[STATS] Test Summary</h2>
     <div class="summary-grid">
         <div class="summary-card">
-            <div class="summary-icon">📋</div>
+            <div class="summary-icon">[LIST]</div>
             <div class="summary-content">
                 <div class="summary-label">Total Test Cases</div>
                 <div class="summary-value">{total_cases}</div>
             </div>
         </div>
         <div class="summary-card success">
-            <div class="summary-icon">✅</div>
+            <div class="summary-icon">[PASS]</div>
             <div class="summary-content">
                 <div class="summary-label">Passed</div>
                 <div class="summary-value">{passed_count}</div>
@@ -24,7 +24,7 @@ TEST_SUMMARY_TEMPLATE = """
             </div>
         </div>
         <div class="summary-card failure">
-            <div class="summary-icon">❌</div>
+            <div class="summary-icon">[FAIL]</div>
             <div class="summary-content">
                 <div class="summary-label">Failed</div>
                 <div class="summary-value">{failed_count}</div>
@@ -32,7 +32,7 @@ TEST_SUMMARY_TEMPLATE = """
             </div>
         </div>
         <div class="summary-card">
-            <div class="summary-icon">⏱️</div>
+            <div class="summary-icon">[TIME]</div>
             <div class="summary-content">
                 <div class="summary-label">Total Duration</div>
                 <div class="summary-value">{total_duration:.2f}s</div>
@@ -376,7 +376,7 @@ FULL_REPORT_TEMPLATE = """
 <body>
     <div class="container">
         <div class="header">
-            <h1>🧪 ptest Test Report</h1>
+            <h1>[TEST] ptest Test Report</h1>
             <div class="header-meta">
                 <div>Generated: {generated_at}</div>
                 <div>Test Environment: {test_env}</div>
@@ -399,13 +399,13 @@ FULL_REPORT_TEMPLATE = """
 
 
 MARKDOWN_REPORT_TEMPLATE = """
-# 🧪 ptest Test Report
+# [TEST] ptest Test Report
 
 **Generated:** {generated_at}
 **Test Environment:** {test_env}
 **Test Duration:** {total_duration:.2f}s
 
-## 📊 Test Summary
+## [STATS] Test Summary
 
 | Metric | Value |
 |--------|--------|
@@ -415,7 +415,7 @@ MARKDOWN_REPORT_TEMPLATE = """
 | **Success Rate** | {success_rate:.1f}% |
 | **Total Duration** | {total_duration:.2f}s |
 
-## 🖥️ Test Environment
+## [ENV] Test Environment
 
 | Property | Value |
 |----------|--------|
@@ -424,7 +424,7 @@ MARKDOWN_REPORT_TEMPLATE = """
 | **Test Date** | {test_date} |
 | **Python Version** | {python_version} |
 
-## 📋 Test Results
+## [RESULTS] Test Results
 
 | Test Case | Status | Duration | Error |
 |-----------|--------|---------|

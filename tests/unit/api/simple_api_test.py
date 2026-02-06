@@ -31,8 +31,17 @@ class SimpleAPITest(unittest.TestCase):
 
     def tearDown(self):
         """测试后清理"""
+        # 关闭日志处理器，避免Windows文件锁定
+        if hasattr(self, "env_manager") and self.env_manager:
+            import logging
+
+            logger = logging.getLogger("ptest.environment")
+            for handler in logger.handlers[:]:
+                handler.close()
+                logger.removeHandler(handler)
+
         if os.path.exists(self.test_dir):
-            shutil.rmtree(self.test_dir)
+            shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_environment_creation(self):
         """测试环境创建功能"""
