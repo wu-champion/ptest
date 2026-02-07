@@ -34,7 +34,9 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: 同步依赖
-        run: uv sync
+        run: |
+          rm -f uv.lock
+          uv sync
 
       - name: 运行测试
         run: uv run pytest tests/unit/ -v --tb=short

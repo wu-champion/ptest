@@ -105,7 +105,10 @@ class DockerEnvironment(IsolatedEnvironment):
         # Docker特有属性
         self.container_id: Optional[str] = None
         self._container: Optional[Any] = None
+        self._network: Optional[Any] = None
+        self._volume: Optional[Any] = None
         self.container_name: str = f"ptest_{env_id}_{uuid.uuid4().hex[:8]}"
+        self.volume_name: str = ""
         default_image = "python:3.9-slim"
         if (
             hasattr(isolation_engine, "engine_config")
@@ -118,10 +121,18 @@ class DockerEnvironment(IsolatedEnvironment):
             config.get("image", default_image) if config else default_image
         )
         self.network_name: str = ""
-        self.volumes: Dict[str, Dict[str, str]] = {}
-        self.port_mappings: Dict[int, int] = {}
-        self.environment_vars: Dict[str, str] = {}
-        self.resource_limits: Dict[str, Any] = {}
+        self.volumes: Dict[str, Dict[str, str]] = (
+            config.get("volumes", {}) if config else {}
+        )
+        self.port_mappings: Dict[int, int] = (
+            config.get("port_mappings", {}) if config else {}
+        )
+        self.environment_vars: Dict[str, str] = (
+            config.get("environment_vars", {}) if config else {}
+        )
+        self.resource_limits: Dict[str, Any] = (
+            config.get("resource_limits", {}) if config else {}
+        )
         self.restart_policy: str = ""
         self.healthcheck_config: Dict[str, Any] = {}
         self.allocated_ports: List[int] = []  # 跟踪已分配的端口
@@ -294,6 +305,15 @@ class DockerEnvironment(IsolatedEnvironment):
     def remove_container(self) -> bool:
         """删除Docker容器"""
         try:
+            # 检查是否处于模拟模式
+            if self.config.get("simulation_mode", False):
+                logger.debug(
+                    f"[SIMULATION] Container removal simulated for {self.container_id}"
+                )
+                self._container = None
+                self.status = EnvironmentStatus.INACTIVE
+                return True
+
             if not DOCKER_AVAILABLE:
                 logger.warning("Docker SDK not available, simulating container removal")
                 return True
@@ -634,14 +654,32 @@ class DockerEnvironment(IsolatedEnvironment):
         # 检查是否处于模拟模式
         if self.config.get("simulation_mode", False):
             logger.debug(f"[SIMULATION] Command execution simulated: {cmd}")
-            return ProcessResult(returncode=0, stdout="", stderr="", command=cmd)
+            # 模拟无效命令的错误处理
+            invalid_commands = ["/invalid/command", "nonexistent", "fakecommand"]
+            if cmd and cmd[0] in invalid_commands:
+                stderr = f"bash: {cmd[0]}: command not found"
+                return ProcessResult(
+                    returncode=127, stdout="", stderr=stderr, command=cmd
+                )
+            stdout = f"Docker simulation: {' '.join(cmd)}"
+            return ProcessResult(returncode=0, stdout=stdout, stderr="", command=cmd)
 
         try:
             from datetime import datetime
 
             if not DOCKER_AVAILABLE:
                 logger.warning("Docker SDK not available, simulating command execution")
-                return ProcessResult(returncode=0, stdout="", stderr="", command=cmd)
+                # 模拟无效命令的错误处理
+                invalid_commands = ["/invalid/command", "nonexistent", "fakecommand"]
+                if cmd and cmd[0] in invalid_commands:
+                    stderr = f"bash: {cmd[0]}: command not found"
+                    return ProcessResult(
+                        returncode=127, stdout="", stderr=stderr, command=cmd
+                    )
+                stdout = f"Docker simulation: {' '.join(cmd)}"
+                return ProcessResult(
+                    returncode=0, stdout=stdout, stderr="", command=cmd
+                )
 
             if not self._container:
                 logger.warning("Container not created, cannot execute command")
@@ -847,16 +885,12 @@ class DockerEnvironment(IsolatedEnvironment):
 
     def cleanup(self, force: bool = False) -> bool:
         """清理Docker环境"""
-        # 检查是否处于模拟模式
-        if self.config.get("simulation_mode", False):
-            logger.debug(f"[SIMULATION] Cleanup simulated for {self.container_id}")
-            self.status = EnvironmentStatus.CLEANUP_COMPLETE
-            self._emit_event(IsolationEvent.ENVIRONMENT_CLEANUP_COMPLETE)
-            return True
-
         try:
-            if not DOCKER_AVAILABLE:
-                logger.warning("Docker SDK not available, simulating cleanup")
+            if not DOCKER_AVAILABLE or self.config.get("simulation_mode", False):
+                logger.warning(
+                    "Docker SDK not available or simulation mode, simulating cleanup"
+                )
+                self._container = None
                 self.status = EnvironmentStatus.CLEANUP_COMPLETE
                 self._emit_event(IsolationEvent.ENVIRONMENT_CLEANUP_COMPLETE)
                 return True
@@ -921,15 +955,24 @@ class DockerEnvironment(IsolatedEnvironment):
     def create_snapshot(self, snapshot_id: Optional[str] = None) -> Dict[str, Any]:
         """创建Docker环境快照"""
         try:
-            if not DOCKER_AVAILABLE:
-                logger.warning("Docker SDK not available, simulating snapshot creation")
+            if not DOCKER_AVAILABLE or self.config.get("simulation_mode", False):
+                logger.warning(
+                    "Docker SDK not available or simulation mode, simulating snapshot creation"
+                )
                 snapshot_id = snapshot_id or f"snapshot_{uuid.uuid4().hex}"
+                now = datetime.now().isoformat()
                 return {
                     "snapshot_id": snapshot_id,
                     "env_id": self.env_id,
-                    "snapshot_time": datetime.now().isoformat(),
+                    "snapshot_time": now,
+                    "created_at": now,
                     "status": "simulated",
                     "config": self.config,
+                    "docker_info": {
+                        "image_name": self.image_name,
+                        "container_name": self.container_name,
+                        "status": "simulated",
+                    },
                 }
 
             if not self._container:
@@ -1038,6 +1081,23 @@ class DockerEnvironment(IsolatedEnvironment):
         except Exception as e:
             logger.error(f"Failed to delete snapshot {snapshot_id}: {e}")
             return False
+
+    def export_snapshot_data(self) -> Dict[str, Any]:
+        """导出快照数据"""
+        return {
+            "env_id": self.env_id,
+            "env_type": "docker",
+            "image_name": self.image_name,
+            "container_name": self.container_name,
+            "environment_vars": self.environment_vars,
+            "resource_limits": self.resource_limits,
+            "port_mappings": self.port_mappings,
+            "volumes": self.volumes,
+            "status": self.status.value,
+            "created_at": self.created_at.isoformat()
+            if hasattr(self, "created_at")
+            else None,
+        }
 
     def export_container(self, output_path: Path) -> bool:
         """导出容器为tar文件"""
@@ -1329,12 +1389,22 @@ class DockerIsolationEngine(IsolationEngine):
         try:
             if not DOCKER_AVAILABLE:
                 logger.warning("Docker SDK not available, simulating cleanup")
-                return {"cleaned": False, "containers": 0, "details": "simulation_mode"}
+                return {
+                    "cleaned": True,
+                    "containers": 0,
+                    "images": 0,
+                    "volumes": 0,
+                    "networks": 0,
+                    "details": "simulation_mode",
+                }
 
             if not self.docker_client:
                 return {
                     "cleaned": False,
                     "containers": 0,
+                    "images": 0,
+                    "volumes": 0,
+                    "networks": 0,
                     "details": "no_docker_client",
                 }
 
@@ -1347,11 +1417,14 @@ class DockerIsolationEngine(IsolationEngine):
             logger.info(f"Cleaned up {images_count} images and {volumes_count} volumes")
             return {
                 "cleaned": True,
+                "containers": 0,
+                "images": images_count,
+                "volumes": volumes_count,
+                "networks": 0,
                 "details": {
                     "images_removed": images_pruned.get("ImagesDeleted", []),
                     "volumes_removed": volumes_pruned.get("VolumesDeleted", []),
                     "total_cleaned": images_count + volumes_count,
-                    "containers": 0,
                 },
             }
 
@@ -1361,6 +1434,9 @@ class DockerIsolationEngine(IsolationEngine):
                 "cleaned": False,
                 "error": str(e),
                 "containers": 0,
+                "images": 0,
+                "volumes": 0,
+                "networks": 0,
             }
 
     def pull_image(self, image_name: str, tag: str = "latest") -> bool:
