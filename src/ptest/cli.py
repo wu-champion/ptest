@@ -7,6 +7,7 @@ from .objects.manager import ObjectManager
 from .tools.manager import ToolManager
 from .cases.manager import CaseManager
 from .reports.generator import ReportGenerator
+from .data.cli import setup_data_subparser, handle_data_command
 from .utils import print_colored, get_colored_text
 
 
@@ -146,6 +147,8 @@ def setup_cli():
     report_parser.add_argument(
         "--format", choices=["html", "json"], default="html", help="Report format"
     )
+
+    setup_data_subparser(subparsers)
 
     # status command - 高优先级
     subparsers.add_parser("status", help=get_colored_text("Show overall status", 92))
@@ -318,6 +321,7 @@ def main():
         "case": lambda: _handle_case_command(case_manager, args),
         "run": lambda: _handle_run_command(case_manager, args),
         "report": lambda: _handle_report_command(env_manager, case_manager, args),
+        "data": lambda: handle_data_command(args),
         "status": lambda: _handle_status_command(env_manager),
     }
 
