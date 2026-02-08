@@ -2,12 +2,10 @@
 
 import json
 import pytest
-from pathlib import Path
 
 from ptest.data.generator import (
     DataGenerator,
     DataGenerationConfig,
-    DataType,
     DataTemplate,
     generate_data,
     quick_generate,

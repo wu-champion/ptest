@@ -53,5 +53,6 @@ module = [
     "ptest.isolation.registry",
     "ptest.isolation.manager",
     "ptest.isolation.docker_engine",
+    "ptest.data.*",
 ]
 ignore_errors = true

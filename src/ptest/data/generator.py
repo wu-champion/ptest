@@ -134,6 +134,7 @@ class DataGenerator:
 
     def _generate_with_faker(self, data_type: DataType) -> Any:
         """使用Faker生成数据"""
+        assert self._faker is not None, "Faker instance should be initialized"
         faker = self._faker
 
         generators = {
@@ -250,7 +251,7 @@ class DataGenerator:
     def _to_yaml(self, data: list[Any]) -> str:
         """转换为YAML格式"""
         try:
-            import yaml
+            import yaml  # type: ignore[import-untyped]
 
             return yaml.dump(data, allow_unicode=True, sort_keys=False)
         except ImportError:
