@@ -61,6 +61,52 @@ class DataType(str, Enum):
     BOOLEAN = "boolean"
 
 
+DATA_TYPE_CATEGORIES: dict[str, list[str]] = {
+    "Basic": [
+        DataType.NAME.value,
+        DataType.CHINESE_NAME.value,
+        DataType.ENGLISH_NAME.value,
+        DataType.PHONE.value,
+        DataType.EMAIL.value,
+        DataType.ADDRESS.value,
+        DataType.ID_CARD.value,
+        DataType.UUID.value,
+    ],
+    "Network": [
+        DataType.URL.value,
+        DataType.IP.value,
+        DataType.IPV4.value,
+        DataType.IPV6.value,
+        DataType.DOMAIN.value,
+        DataType.MAC_ADDRESS.value,
+    ],
+    "Business": [
+        DataType.COMPANY.value,
+        DataType.JOB.value,
+        DataType.USERNAME.value,
+        DataType.PASSWORD.value,
+        DataType.CREDIT_CARD.value,
+    ],
+    "Time": [
+        DataType.DATE.value,
+        DataType.TIME.value,
+        DataType.DATETIME.value,
+        DataType.TIMESTAMP.value,
+    ],
+    "Text": [
+        DataType.TEXT.value,
+        DataType.SENTENCE.value,
+        DataType.PARAGRAPH.value,
+        DataType.WORD.value,
+    ],
+    "Numeric": [
+        DataType.INTEGER.value,
+        DataType.FLOAT.value,
+        DataType.BOOLEAN.value,
+    ],
+}
+
+
 @dataclass
 class DataGenerationConfig:
     """数据生成配置"""

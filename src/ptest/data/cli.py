@@ -4,7 +4,13 @@ import json
 from pathlib import Path
 
 from ..utils import print_colored, get_colored_text
-from .generator import DataGenerator, DataGenerationConfig, DataType, DataTemplate
+from .generator import (
+    DataGenerator,
+    DataGenerationConfig,
+    DataType,
+    DataTemplate,
+    DATA_TYPE_CATEGORIES,
+)
 
 
 def setup_data_subparser(subparsers):
@@ -236,26 +242,7 @@ def _handle_types():
     print_colored("Supported data types:", 96)
     print()
 
-    # 按类别分组
-    categories = {
-        "Basic": [
-            "name",
-            "chinese_name",
-            "english_name",
-            "phone",
-            "email",
-            "address",
-            "id_card",
-            "uuid",
-        ],
-        "Network": ["url", "ip", "ipv4", "ipv6", "domain", "mac_address"],
-        "Business": ["company", "job", "username", "password", "credit_card"],
-        "Time": ["date", "time", "datetime", "timestamp"],
-        "Text": ["text", "sentence", "paragraph", "word"],
-        "Numeric": ["integer", "float", "boolean"],
-    }
-
-    for category, type_list in categories.items():
+    for category, type_list in DATA_TYPE_CATEGORIES.items():
         print_colored(f"{category}:", 94)
         for t in type_list:
             if t in types:

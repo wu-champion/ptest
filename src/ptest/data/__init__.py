@@ -5,6 +5,7 @@ from .generator import (
     DataGenerationConfig,
     DataType,
     DataTemplate,
+    DATA_TYPE_CATEGORIES,
     generate_data,
     quick_generate,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "DataGenerationConfig",
     "DataType",
     "DataTemplate",
+    "DATA_TYPE_CATEGORIES",
     "generate_data",
     "quick_generate",
     "setup_data_subparser",
