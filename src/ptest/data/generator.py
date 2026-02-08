@@ -123,7 +123,9 @@ class DataGenerator:
         elif format == "csv":
             return self._to_csv(results)
         else:
-            return results
+            raise ValueError(
+                f"Unsupported format: {format!r}. Expected one of: 'raw', 'json', 'yaml', 'csv'."
+            )
 
     def _generate_single(self, data_type: DataType) -> Any:
         """生成单条数据"""
