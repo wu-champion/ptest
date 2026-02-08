@@ -8,6 +8,7 @@ from .tools.manager import ToolManager
 from .cases.manager import CaseManager
 from .reports.generator import ReportGenerator
 from .data.cli import setup_data_subparser, handle_data_command
+from .contract.cli import setup_contract_subparser, handle_contract_command
 from .utils import print_colored, get_colored_text
 
 
@@ -150,7 +151,8 @@ def setup_cli():
 
     setup_data_subparser(subparsers)
 
-    # status command - 高优先级
+    setup_contract_subparser(subparsers)
+
     subparsers.add_parser("status", help=get_colored_text("Show overall status", 92))
 
     return parser
@@ -322,6 +324,7 @@ def main():
         "run": lambda: _handle_run_command(case_manager, args),
         "report": lambda: _handle_report_command(env_manager, case_manager, args),
         "data": lambda: handle_data_command(args),
+        "contract": lambda: handle_contract_command(args),
         "status": lambda: _handle_status_command(env_manager),
     }
 

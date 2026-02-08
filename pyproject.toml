@@ -16,6 +16,8 @@ dependencies = [
     "packaging>=26.0",
     "virtualenv>=20.0.0",
     "faker>=35.0.0",
+    "prance>=25.0.0",
+    "openapi-spec-validator>=0.7.0",
 ]
 
 [project.scripts]
