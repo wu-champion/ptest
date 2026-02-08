@@ -14,6 +14,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ..core import get_logger
+
+logger = get_logger("data")
+
 
 class DataType(str, Enum):
     """支持的数据类型枚举"""
@@ -136,30 +140,26 @@ class DataGenerator:
             self._faker = Faker(self.config.locale)
             if self.config.seed is not None:
                 self._faker.seed_instance(self.config.seed)
+            logger.debug(f"Faker initialized with locale {self.config.locale}")
         except ImportError:
             self._faker = None
+            logger.warning("Faker not available, using fallback generators")
 
     def generate(
         self, data_type: str | DataType, count: int = 1, format: str = "json"
     ) -> Any:
         """
-                生成测试数据
+        生成测试数据
 
-                Args:
-                    data_type: 数据类型
-                    count: 生成数量
-                    format: 输出格式 (json, yaml, csv, raw)
+        Args:
+            data_type: 数据类型
+            count: 生成数量
+            format: 输出格式 (json, yaml, csv, raw)
 
-                Returns:
-        <<<<<<< HEAD
-                    - format="json" 或 "yaml": list[dict[str, Any]]
-                    - format="csv": str (CSV 文本)
-                    - format="raw": 当 count == 1 时为任意标量类型 (如 str/int/bool 等)，当 count > 1 时为 list[Any]
-        =======
-                    - format="json" 或 "yaml": 返回序列化后的字符串
-                    - format="csv": 返回CSV格式字符串
-                    - format="raw": count==1时返回单个值，count>1时返回列表
-        >>>>>>> abe4fff (refactor(data): address code review feedback)
+        Returns:
+            - format="json" 或 "yaml": 返回序列化后的字符串
+            - format="csv": 返回CSV格式字符串
+            - format="raw": count==1时返回单个值，count>1时返回列表
         """
         data_type = DataType(data_type) if isinstance(data_type, str) else data_type
 
@@ -396,6 +396,7 @@ class DataTemplate:
         )
         self.templates_dir.mkdir(parents=True, exist_ok=True)
         self._templates: dict[str, dict[str, Any]] = {}
+        logger.debug(f"DataTemplate initialized with directory {self.templates_dir}")
 
     def load_template(self, name: str) -> dict[str, Any] | None:
         """加载模板"""
@@ -410,6 +411,7 @@ class DataTemplate:
         template_file = self.templates_dir / f"{name}.json"
         with open(template_file, "w", encoding="utf-8") as f:
             json.dump(template, f, ensure_ascii=False, indent=2)
+        logger.info(f"Template '{name}' saved to {template_file}")
 
     def list_templates(self) -> list[str]:
         """列出所有模板"""

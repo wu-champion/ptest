@@ -7,6 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..core import get_logger
+
+logger = get_logger("contract")
+
 
 @dataclass
 class APIEndpoint:
@@ -181,15 +185,16 @@ class ContractManager:
         Returns:
             APIContract对象
         """
+        logger.info(f"Importing contract from {source}")
         parser = ContractParser()
         contract = parser.parse(source)
 
         if name:
             contract.name = name
 
-        # 保存到存储
         self._save_contract(contract)
         self._contracts[contract.name] = contract
+        logger.info(f"Contract '{contract.name}' imported successfully")
 
         return contract
 
@@ -228,7 +233,9 @@ class ContractManager:
             contract_file.unlink()
             if name in self._contracts:
                 del self._contracts[name]
+            logger.info(f"Contract '{name}' deleted")
             return True
+        logger.warning(f"Contract '{name}' not found for deletion")
         return False
 
     def get_endpoint(
@@ -259,15 +266,18 @@ class ContractManager:
         Returns:
             (是否通过, 错误信息列表)
         """
+        logger.debug(f"Validating response for {method} {path}")
         endpoint = self.get_endpoint(contract_name, path, method)
         if not endpoint:
-            return False, [
-                f"Endpoint {method} {path} not found in contract {contract_name}"
-            ]
+            error = f"Endpoint {method} {path} not found in contract {contract_name}"
+            logger.warning(error)
+            return False, [error]
 
         response_key = str(status_code)
         if response_key not in endpoint.responses:
-            return False, [f"Status code {status_code} not defined for {method} {path}"]
+            error = f"Status code {status_code} not defined for {method} {path}"
+            logger.warning(error)
+            return False, [error]
 
         response_def = endpoint.responses[response_key]
         schema = (
@@ -275,6 +285,7 @@ class ContractManager:
         )
 
         if not schema:
+            logger.debug(f"No schema defined for {method} {path}, skipping validation")
             return True, []
 
         try:
