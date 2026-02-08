@@ -95,7 +95,7 @@ class DataGenerator:
 
     def generate(
         self, data_type: str | DataType, count: int = 1, format: str = "json"
-    ) -> list[dict[str, Any]] | list[str] | str:
+    ) -> Any:
         """
         生成测试数据
 
@@ -105,7 +105,9 @@ class DataGenerator:
             format: 输出格式 (json, yaml, csv, raw)
 
         Returns:
-            生成的数据
+            - format="json" 或 "yaml": list[dict[str, Any]]
+            - format="csv": str (CSV 文本)
+            - format="raw": 当 count == 1 时为任意标量类型 (如 str/int/bool 等)，当 count > 1 时为 list[Any]
         """
         data_type = DataType(data_type) if isinstance(data_type, str) else data_type
 
