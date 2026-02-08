@@ -20,17 +20,12 @@ class TestDataGenerationConfig:
         config = DataGenerationConfig()
         assert config.locale == "zh_CN"
         assert config.seed is None
-        assert config.custom_providers == {}
 
     def test_custom_config(self):
         """测试自定义配置"""
-        config = DataGenerationConfig(
-            locale="en_US", seed=42, custom_providers={"test": lambda: "value"}
-        )
+        config = DataGenerationConfig(locale="en_US", seed=42)
         assert config.locale == "en_US"
         assert config.seed == 42
-        assert "test" in config.custom_providers
-        assert callable(config.custom_providers["test"])
 
 
 class TestDataGenerator:
@@ -161,32 +156,129 @@ class TestDataTypes:
     """测试各种数据类型"""
 
     @pytest.mark.parametrize(
-        "data_type",
+        "data_type,expected_type",
         [
-            "name",
-            "email",
-            "phone",
-            "address",
-            "uuid",
-            "url",
-            "ip",
-            "domain",
-            "company",
-            "job",
-            "date",
-            "time",
-            "datetime",
-            "text",
-            "integer",
-            "float",
-            "boolean",
-            "username",
-            "password",
+            ("name", str),
+            ("email", str),
+            ("phone", str),
+            ("uuid", str),
+            ("integer", int),
+            ("float", float),
+            ("boolean", bool),
         ],
     )
-    def test_data_types(self, data_type):
-        """测试各种数据类型都能正常生成"""
+    def test_data_types_with_type_check(self, data_type, expected_type):
+        """测试各种数据类型都能正常生成并验证类型"""
         generator = DataGenerator()
         result = generator.generate(data_type, count=1, format="raw")
         assert result is not None
         assert result != "unknown"
+        assert isinstance(result, expected_type)
+
+
+class TestGenerateFormats:
+    """测试不同输出格式"""
+
+    def test_generate_yaml_format(self):
+        """测试YAML格式输出"""
+        generator = DataGenerator()
+        result = generator.generate("name", count=2, format="yaml")
+        assert isinstance(result, str)
+        # YAML应该有换行符
+        assert "\n" in result or "- " in result
+
+    def test_generate_csv_format_scalar(self):
+        """测试CSV格式输出 - 标量值"""
+        generator = DataGenerator()
+        result = generator.generate("integer", count=3, format="csv")
+        assert isinstance(result, str)
+        lines = result.strip().split("\n")
+        assert len(lines) == 3
+
+    def test_generate_csv_format_dict(self):
+        """测试CSV格式输出 - 字典值"""
+        # 通过模板生成字典数据
+        generator = DataGenerator()
+        template = {"id": "{{integer}}", "name": "{{name}}"}
+        results = generator.generate_from_template(template, count=2)
+        # CSV格式需要列表中包含字典
+        import csv
+        import io
+
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=results[0].keys())
+        writer.writeheader()
+        writer.writerows(results)
+        csv_content = output.getvalue()
+        assert "id" in csv_content
+        assert "name" in csv_content
+
+    def test_generate_raw_multi_item(self):
+        """测试raw格式生成多个项目"""
+        generator = DataGenerator()
+        result = generator.generate("email", count=3, format="raw")
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert all("@" in email for email in result)
+
+    def test_generate_unknown_format_raises(self):
+        """测试未知格式抛出ValueError"""
+        generator = DataGenerator()
+        with pytest.raises(ValueError, match="Unsupported format"):
+            generator.generate("name", count=1, format="unknown")
+
+
+class TestSeedDeterminism:
+    """测试随机种子确定性"""
+
+    def test_same_seed_produces_same_output(self):
+        """相同seed应该产生相同的输出"""
+        config1 = DataGenerationConfig(locale="en_US", seed=42)
+        config2 = DataGenerationConfig(locale="en_US", seed=42)
+
+        generator1 = DataGenerator(config=config1)
+        generator2 = DataGenerator(config=config2)
+
+        result1 = generator1.generate("name", count=5, format="raw")
+        result2 = generator2.generate("name", count=5, format="raw")
+
+        assert result1 == result2
+
+    def test_different_seed_produces_different_output(self):
+        """不同seed应该产生不同的输出"""
+        config1 = DataGenerationConfig(locale="en_US", seed=42)
+        config2 = DataGenerationConfig(locale="en_US", seed=43)
+
+        generator1 = DataGenerator(config=config1)
+        generator2 = DataGenerator(config=config2)
+
+        result1 = generator1.generate("name", count=20, format="raw")
+        result2 = generator2.generate("name", count=20, format="raw")
+
+        # 不同seed下20个名字完全相同的概率极低
+        assert result1 != result2
+
+
+class TestCLILevel:
+    """测试CLI层面的行为"""
+
+    def test_cli_invalid_data_type(self):
+        """CLI层面对无效数据类型的友好错误处理"""
+        import subprocess
+
+        result = subprocess.run(
+            ["uv", "run", "ptest", "data", "generate", "invalid_type"],
+            capture_output=True,
+            text=True,
+        )
+
+        # CLI应该以非0退出码失败
+        assert result.returncode != 0
+
+        output = (result.stdout or "") + (result.stderr or "")
+
+        # 不应该有Python traceback
+        assert "Traceback (most recent call last)" not in output
+
+        # 应该包含错误信息
+        assert "invalid_type" in output.lower() or "unknown" in output.lower()

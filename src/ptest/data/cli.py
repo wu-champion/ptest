@@ -83,21 +83,28 @@ def setup_data_subparser(subparsers):
     return data_parser
 
 
-def handle_data_command(args):
-    """处理 data 命令"""
+def handle_data_command(args) -> bool:
+    """处理 data 命令
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
     if not hasattr(args, "data_action") or not args.data_action:
         print_colored("✗ Please specify a data action (generate/template/types)", 91)
-        return
+        return False
 
     if args.data_action == "generate":
-        _handle_generate(args)
+        return _handle_generate(args)
     elif args.data_action == "template":
-        _handle_template(args)
+        return _handle_template(args)
     elif args.data_action == "types":
         _handle_types()
+        return True
+
+    return False
 
 
-def _handle_generate(args):
+def _handle_generate(args) -> bool:
     """处理 generate 子命令"""
     try:
         # 验证数据类型
@@ -106,7 +113,7 @@ def _handle_generate(args):
         except ValueError:
             print_colored(f"✗ Unknown data type: {args.type}", 91)
             print_colored("  Use 'ptest data types' to see supported types", 93)
-            return
+            return False
 
         # 创建生成器
         config = DataGenerationConfig(locale=args.locale, seed=args.seed)
@@ -132,33 +139,38 @@ def _handle_generate(args):
             print()
 
         print_colored(f"✓ Generated {args.count} item(s) successfully", 92)
+        return True
 
     except Exception as e:
         print_colored(f"✗ Error generating data: {e}", 91)
+        return False
 
 
-def _handle_template(args):
+def _handle_template(args) -> bool:
     """处理 template 子命令"""
     if not hasattr(args, "template_action") or not args.template_action:
         print_colored("✗ Please specify a template action (generate/save/list)", 91)
-        return
+        return False
 
     template_manager = DataTemplate()
 
     if args.template_action == "generate":
-        _handle_template_generate(args, template_manager)
+        return _handle_template_generate(args, template_manager)
     elif args.template_action == "save":
-        _handle_template_save(args, template_manager)
+        return _handle_template_save(args, template_manager)
     elif args.template_action == "list":
         _handle_template_list(template_manager)
+        return True
+
+    return False
 
 
-def _handle_template_generate(args, template_manager):
+def _handle_template_generate(args, template_manager) -> bool:
     """从模板生成数据"""
     template = template_manager.load_template(args.name)
-    if not template:
+    if template is None:
         print_colored(f"✗ Template not found: {args.name}", 91)
-        return
+        return False
 
     config = DataGenerationConfig()
     generator = DataGenerator(config)
@@ -178,9 +190,10 @@ def _handle_template_generate(args, template_manager):
         print()
 
     print_colored(f"✓ Generated {args.count} item(s) successfully", 92)
+    return True
 
 
-def _handle_template_save(args, template_manager):
+def _handle_template_save(args, template_manager) -> bool:
     """保存模板"""
     try:
         # 尝试解析JSON
@@ -192,11 +205,14 @@ def _handle_template_save(args, template_manager):
 
         template_manager.save_template(args.name, template)
         print_colored(f"✓ Template '{args.name}' saved successfully", 92)
+        return True
 
     except json.JSONDecodeError as e:
         print_colored(f"✗ Invalid JSON: {e}", 91)
+        return False
     except Exception as e:
         print_colored(f"✗ Error saving template: {e}", 91)
+        return False
 
 
 def _handle_template_list(template_manager):

@@ -328,10 +328,17 @@ def main():
     try:
         handler = command_handlers.get(args.command)
         if handler:
-            handler()
+            result = handler()
+            if result is False:
+                import sys
+
+                sys.exit(1)
     except Exception as e:
         print_colored(f"✗ Error: {str(e)}", 91)
         if args.debug:
             import traceback
 
             traceback.print_exc()
+        import sys
+
+        sys.exit(1)

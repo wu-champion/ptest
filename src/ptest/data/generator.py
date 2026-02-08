@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import random
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -67,11 +67,6 @@ class DataGenerationConfig:
 
     locale: str = "zh_CN"  # 默认中文
     seed: int | None = None  # 随机种子，用于可重复生成
-    custom_providers: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self):
-        if self.seed is not None:
-            random.seed(self.seed)
 
 
 class DataGenerator:
@@ -80,6 +75,11 @@ class DataGenerator:
     def __init__(self, config: DataGenerationConfig | None = None):
         self.config = config or DataGenerationConfig()
         self._faker = None
+        self._rng = (
+            random.Random(self.config.seed)
+            if self.config.seed is not None
+            else random.Random()
+        )
         self._init_faker()
 
     def _init_faker(self):
@@ -105,9 +105,15 @@ class DataGenerator:
             format: 输出格式 (json, yaml, csv, raw)
 
         Returns:
+<<<<<<< HEAD
             - format="json" 或 "yaml": list[dict[str, Any]]
             - format="csv": str (CSV 文本)
             - format="raw": 当 count == 1 时为任意标量类型 (如 str/int/bool 等)，当 count > 1 时为 list[Any]
+=======
+            - format="json" 或 "yaml": 返回序列化后的字符串
+            - format="csv": 返回CSV格式字符串
+            - format="raw": count==1时返回单个值，count>1时返回列表
+>>>>>>> abe4fff (refactor(data): address code review feedback)
         """
         data_type = DataType(data_type) if isinstance(data_type, str) else data_type
 
@@ -179,9 +185,9 @@ class DataGenerator:
             DataType.PARAGRAPH: lambda: faker.paragraph(),
             DataType.WORD: lambda: faker.word(),
             # 数值数据
-            DataType.INTEGER: lambda: random.randint(1, 1000),
-            DataType.FLOAT: lambda: round(random.uniform(1.0, 1000.0), 2),
-            DataType.BOOLEAN: lambda: random.choice([True, False]),
+            DataType.INTEGER: lambda: self._rng.randint(1, 1000),
+            DataType.FLOAT: lambda: round(self._rng.uniform(1.0, 1000.0), 2),
+            DataType.BOOLEAN: lambda: self._rng.choice([True, False]),
         }
 
         generator = generators.get(data_type)
@@ -196,58 +202,58 @@ class DataGenerator:
     def _generate_fallback(self, data_type: DataType) -> Any:
         """Faker不可用时的备用生成逻辑"""
         fallbacks = {
-            DataType.NAME: lambda: random.choice(
+            DataType.NAME: lambda: self._rng.choice(
                 ["张三", "李四", "王五", "赵六", "钱七"]
             ),
-            DataType.CHINESE_NAME: lambda: random.choice(
+            DataType.CHINESE_NAME: lambda: self._rng.choice(
                 ["张三", "李四", "王五", "赵六", "钱七"]
             ),
-            DataType.ENGLISH_NAME: lambda: random.choice(
+            DataType.ENGLISH_NAME: lambda: self._rng.choice(
                 ["John", "Jane", "Bob", "Alice", "Tom"]
             ),
             DataType.PHONE: lambda: (
-                f"1{random.choice([3, 4, 5, 7, 8, 9])}{random.randint(100000000, 999999999)}"
+                f"1{self._rng.choice([3, 4, 5, 7, 8, 9])}{self._rng.randint(100000000, 999999999)}"
             ),
-            DataType.EMAIL: lambda: f"user{random.randint(1, 10000)}@example.com",
-            DataType.ADDRESS: lambda: f"北京市朝阳区{random.randint(1, 100)}号",
+            DataType.EMAIL: lambda: f"user{self._rng.randint(1, 10000)}@example.com",
+            DataType.ADDRESS: lambda: f"北京市朝阳区{self._rng.randint(1, 100)}号",
             DataType.ID_CARD: lambda: (
-                f"{random.randint(100000, 999999)}{random.randint(10000000, 99999999)}{random.randint(1000, 9999)}"
+                f"{self._rng.randint(100000, 999999)}{self._rng.randint(10000000, 99999999)}{self._rng.randint(1000, 9999)}"
             ),
             DataType.UUID: lambda: str(uuid.uuid4()),
-            DataType.URL: lambda: f"https://example{random.randint(1, 100)}.com",
+            DataType.URL: lambda: f"https://example{self._rng.randint(1, 100)}.com",
             DataType.IP: lambda: (
-                f"{random.randint(1, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}"
+                f"{self._rng.randint(1, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}"
             ),
             DataType.IPV4: lambda: (
-                f"{random.randint(1, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}"
+                f"{self._rng.randint(1, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}"
             ),
             DataType.IPV6: lambda: "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
-            DataType.DOMAIN: lambda: f"example{random.randint(1, 100)}.com",
+            DataType.DOMAIN: lambda: f"example{self._rng.randint(1, 100)}.com",
             DataType.MAC_ADDRESS: lambda: "00:1B:44:11:3A:B7",
-            DataType.COMPANY: lambda: random.choice(
+            DataType.COMPANY: lambda: self._rng.choice(
                 ["科技有限公司", "网络公司", "软件公司"]
             ),
-            DataType.JOB: lambda: random.choice(["工程师", "经理", "总监", "专员"]),
-            DataType.USERNAME: lambda: f"user{random.randint(1, 10000)}",
-            DataType.PASSWORD: lambda: f"Pass{random.randint(1000, 9999)}!",
+            DataType.JOB: lambda: self._rng.choice(["工程师", "经理", "总监", "专员"]),
+            DataType.USERNAME: lambda: f"user{self._rng.randint(1, 10000)}",
+            DataType.PASSWORD: lambda: f"Pass{self._rng.randint(1000, 9999)}!",
             DataType.CREDIT_CARD: lambda: (
-                f"{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}"
+                f"{self._rng.randint(1000, 9999)}-{self._rng.randint(1000, 9999)}-{self._rng.randint(1000, 9999)}-{self._rng.randint(1000, 9999)}"
             ),
             DataType.DATE: lambda: (
-                datetime.now() - timedelta(days=random.randint(0, 365))
+                datetime.now() - timedelta(days=self._rng.randint(0, 365))
             ).strftime("%Y-%m-%d"),
             DataType.TIME: lambda: (
-                f"{random.randint(0, 23):02d}:{random.randint(0, 59):02d}:{random.randint(0, 59):02d}"
+                f"{self._rng.randint(0, 23):02d}:{self._rng.randint(0, 59):02d}:{self._rng.randint(0, 59):02d}"
             ),
             DataType.DATETIME: lambda: datetime.now().isoformat(),
             DataType.TIMESTAMP: lambda: int(datetime.now().timestamp()),
             DataType.TEXT: lambda: "这是一段示例文本内容。",
             DataType.SENTENCE: lambda: "这是一个示例句子。",
             DataType.PARAGRAPH: lambda: "这是一个示例段落。包含多句话的内容。",
-            DataType.WORD: lambda: random.choice(["测试", "数据", "示例", "内容"]),
-            DataType.INTEGER: lambda: random.randint(1, 1000),
-            DataType.FLOAT: lambda: round(random.uniform(1.0, 1000.0), 2),
-            DataType.BOOLEAN: lambda: random.choice([True, False]),
+            DataType.WORD: lambda: self._rng.choice(["测试", "数据", "示例", "内容"]),
+            DataType.INTEGER: lambda: self._rng.randint(1, 1000),
+            DataType.FLOAT: lambda: round(self._rng.uniform(1.0, 1000.0), 2),
+            DataType.BOOLEAN: lambda: self._rng.choice([True, False]),
         }
 
         return fallbacks.get(data_type, lambda: "unknown")()
