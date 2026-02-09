@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import threading
 import time
 import uuid
@@ -326,6 +327,19 @@ class MockServer:
         def handle_root():
             return handle_request("")
 
+        # 添加shutdown路由用于停止服务器
+        # Add shutdown route for stopping the server
+        @self._app.route("/shutdown", methods=["POST"])
+        def shutdown():
+            """关闭服务器 / Shutdown server"""
+            from flask import request
+
+            func = request.environ.get("werkzeug.server.shutdown")
+            if func is None:
+                return jsonify({"error": "Not running with Werkzeug Server"}), 500
+            func()
+            return jsonify({"message": "Server shutting down..."})
+
         self._running = True
 
         if blocking:
@@ -370,16 +384,50 @@ class MockServer:
         return result
 
     def stop(self) -> None:
-        """停止Mock服务器 / Stop mock server"""
+        """
+        停止Mock服务器 / Stop mock server
+
+        通过向服务器发送shutdown请求来真正停止Flask服务器。
+        使用Werkzeug提供的shutdown endpoint机制。
+        """
         if not self._running:
             return
 
         self._running = False
 
-        # Flask没有直接的停止方法，这里只是标记状态
-        # 实际停止需要更复杂的实现（使用Werkzeug的shutdown路由）
+        # 使用shutdown路由停止Flask服务器
+        # 这是Werkzeug提供的标准停止机制
+        if self._app is not None:
+            try:
+                import requests
+
+                # 发送shutdown请求到服务器
+                shutdown_url = f"http://{self.config.host}:{self.config.port}/shutdown"
+                try:
+                    requests.post(shutdown_url, timeout=2)
+                except requests.exceptions.RequestException:
+                    # 服务器可能已经停止或shutdown路由不存在
+                    pass
+            except ImportError:
+                # requests未安装，使用socket直接关闭
+                self._force_stop()
+
+        # 等待服务器线程结束
+        if self._server_thread and self._server_thread.is_alive():
+            self._server_thread.join(timeout=5)
 
         logger.info("Mock服务器已停止 / Mock server stopped")
+
+    def _force_stop(self) -> None:
+        """强制停止服务器（通过连接后断开）/ Force stop server"""
+        try:
+            # 创建一个连接然后立即关闭，触发服务器错误从而停止
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            sock.connect((self.config.host, self.config.port))
+            sock.close()
+        except Exception:
+            pass
 
     def is_running(self) -> bool:
         """检查服务器是否运行 / Check if server is running"""

@@ -25,7 +25,9 @@ def setup_suite_subparser(subparsers):
     # 创建套件命令
     create_parser = suite_subparsers.add_parser("create", help="创建测试套件")
     create_parser.add_argument("name", help="套件名称")
-    create_parser.add_argument("from_file", help="从文件创建套件（可选）")
+    create_parser.add_argument(
+        "--from-file", "-f", help="从配置文件创建套件（JSON/YAML）", default=None
+    )
 
     # 列出套件命令
     suite_subparsers.add_parser("list", help="列出所有套件")
@@ -77,9 +79,74 @@ def handle_suite_command(env_manager, args) -> bool:
 
 def _handle_create(env_manager, suite_manager, args) -> bool:
     """处理创建套件命令"""
-    print_colored("创建测试套件功能待实现", 93)
-    print_colored("需要提供套件数据或JSON文件路径", 93)
-    return False
+    from pathlib import Path
+    import json
+
+    suite_name = args.name
+
+    # 检查套件是否已存在
+    if suite_manager.load_suite(suite_name):
+        print_colored(f"✗ 套件已存在: {suite_name}", 91)
+        return False
+
+    suite_data = None
+
+    # 如果从文件创建
+    if hasattr(args, "from_file") and args.from_file:
+        file_path = Path(args.from_file)
+        if not file_path.exists():
+            print_colored(f"✗ 文件不存在: {args.from_file}", 91)
+            return False
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                if file_path.suffix in [".yaml", ".yml"]:
+                    try:
+                        import yaml
+
+                        suite_data = yaml.safe_load(f)
+                    except ImportError:
+                        print_colored("✗ 需要安装 PyYAML: pip install pyyaml", 91)
+                        return False
+                else:
+                    suite_data = json.load(f)
+
+            # 确保名称一致
+            if suite_data:
+                suite_data["name"] = suite_name
+
+            print_colored(f"✓ 从文件加载配置: {args.from_file}", 92)
+
+        except Exception as e:
+            print_colored(f"✗ 读取文件失败: {e}", 91)
+            return False
+    else:
+        # 创建空套件
+        suite_data = {
+            "name": suite_name,
+            "description": None,
+            "setup": [],
+            "cases": [],
+            "teardown": [],
+            "execution_mode": "sequential",
+            "max_workers": 4,
+        }
+
+    # 创建套件
+    try:
+        suite = suite_manager.create_suite(suite_data)
+        print_colored(f"✓ 测试套件创建成功: {suite.name}", 92)
+
+        # 显示套件信息
+        print(f"  用例数: {len(suite.cases)}")
+        print(f"  执行模式: {suite.execution_mode.value}")
+        print(f"  最大并行数: {suite.max_workers}")
+
+        return True
+
+    except Exception as e:
+        print_colored(f"✗ 创建套件失败: {e}", 91)
+        return False
 
 
 def _handle_list(env_manager, suite_manager, args) -> bool:

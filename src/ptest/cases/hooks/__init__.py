@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import sqlite3
 import subprocess
 import time
@@ -121,13 +122,16 @@ class HookExecutor:
 
         cwd = hook.config.get("cwd")
         timeout = hook.config.get("timeout", 60)
-        use_shell = hook.config.get("use_shell", True)
+        use_shell = hook.config.get("use_shell", False)
 
         if use_shell:
             logger.warning(
                 f"Executing command with shell=True: {command}. "
                 "This may have security implications."
             )
+            # 当使用shell=True时，对命令进行转义以防止注入
+            # Escape command when using shell=True to prevent injection
+            command = shlex.quote(command)
 
         try:
             start_time = time.time()

@@ -3,7 +3,9 @@
 import argparse
 import json
 import os
+import shlex
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .objects.manager import ObjectManager
@@ -238,7 +240,10 @@ def handle_config_command(env_manager, args) -> bool:
         editor = args.editor or os.environ.get("EDITOR", "vim")
         print_colored(f"Opening {config_file} with {editor}...", 94)
         try:
-            subprocess.call([editor, str(config_file)])
+            # 使用shlex.split处理编辑器命令，防止命令注入
+            # Use shlex.split to handle editor command and prevent command injection
+            editor_parts = shlex.split(editor)
+            subprocess.call([*editor_parts, str(config_file)])
             print_colored("✓ Configuration edit complete", 92)
             return True
         except Exception as e:
@@ -288,7 +293,7 @@ def _handle_entity_command(entity_manager, args, action: str, entity_type: str):
     """
     # 定义通用的操作映射
     action_map = {
-        "install": lambda: (
+        "install": lambda: _print_result(
             entity_manager.install(
                 args.name,
                 {"version": args.version}
@@ -298,20 +303,37 @@ def _handle_entity_command(entity_manager, args, action: str, entity_type: str):
             if hasattr(args, "version")
             else entity_manager.install(args.name)
         ),
-        "start": lambda: entity_manager.start(args.name),
-        "stop": lambda: entity_manager.stop(args.name),
-        "restart": lambda: entity_manager.restart(args.name),
-        "uninstall": lambda: entity_manager.uninstall(args.name),
-        "list": lambda: (entity_manager.list_()),
-        "status": lambda: (entity_manager.status(args.name)),
+        "start": lambda: _print_result(entity_manager.start(args.name)),
+        "stop": lambda: _print_result(entity_manager.stop(args.name)),
+        "restart": lambda: _print_result(entity_manager.restart(args.name)),
+        "uninstall": lambda: _print_result(entity_manager.uninstall(args.name)),
+        "list": lambda: _print_result(
+            entity_manager.list_objects()
+            if hasattr(entity_manager, "list_objects")
+            else entity_manager.list_all()
+        ),
+        "status": lambda: _print_result(entity_manager.status(args.name)),
     }
 
     handler = action_map.get(action)
     if handler:
-        return handler()
+        result = handler()
+        # 确保返回布尔值表示成功/失败
+        if isinstance(result, str):
+            return "error" not in result.lower() and "failed" not in result.lower()
+        return bool(result)
     else:
         print_colored(f"✗ Unknown {entity_type} action: {action}", 91)
         return False
+
+
+def _print_result(result: Any) -> Any:
+    """打印结果并返回"""
+    if isinstance(result, str):
+        print(result)
+    elif isinstance(result, (list, dict)):
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    return result
 
 
 def _handle_data_command(env_manager, args) -> bool:
@@ -342,17 +364,35 @@ def main():
     command_handlers = {
         "init": lambda: _handle_init_command(env_manager, args),
         "config": lambda: handle_config_command(env_manager, args),
-        "obj": lambda: _handle_entity_command(
-            ObjectManager(),
-            args,
-            args.obj_action if hasattr(args, "obj_action") else None,
-            "obj",
+        "obj": lambda: (
+            _handle_entity_command(
+                ObjectManager(),
+                args,
+                args.obj_action,
+                "obj",
+            )
+            if hasattr(args, "obj_action") and args.obj_action
+            else (
+                print_colored(
+                    "请指定操作: install/start/stop/restart/uninstall/list/status", 93
+                )
+                or False
+            )
         ),
-        "tool": lambda: _handle_entity_command(
-            ToolManager(),
-            args,
-            args.tool_action if hasattr(args, "tool_action") else None,
-            "tool",
+        "tool": lambda: (
+            _handle_entity_command(
+                ToolManager(),
+                args,
+                args.tool_action,
+                "tool",
+            )
+            if hasattr(args, "tool_action") and args.tool_action
+            else (
+                print_colored(
+                    "请指定操作: install/start/stop/restart/uninstall/list/status", 93
+                )
+                or False
+            )
         ),
         "case": lambda: _handle_case_command(env_manager, args),
         "run": lambda: _handle_run_command(env_manager, args),
@@ -376,17 +416,166 @@ def main():
 
 def _handle_case_command(env_manager, args) -> bool:
     """处理case命令"""
-    print_colored("Case command handler - TODO: implement", 93)
-    return True
+    from .cases.manager import CaseManager
+
+    case_manager = CaseManager(env_manager)
+
+    if not hasattr(args, "case_action") or not args.case_action:
+        print_colored("请指定 case 操作: add/list/show/delete/run", 91)
+        return False
+
+    if args.case_action == "add":
+        # 添加用例
+        if hasattr(args, "case_data") and args.case_data:
+            try:
+                case_data = json.loads(args.case_data)
+                case_manager.add_case(case_data)
+                print_colored(f"✓ 用例已添加: {case_data.get('id', 'unknown')}", 92)
+                return True
+            except json.JSONDecodeError as e:
+                print_colored(f"✗ 无效的 JSON: {e}", 91)
+                return False
+        else:
+            print_colored("✗ 请提供用例数据 (--data)", 91)
+            return False
+
+    elif args.case_action == "list":
+        # 列出所有用例
+        cases = case_manager.list_cases()
+        if cases:
+            print_colored(f"共有 {len(cases)} 个用例:", 96)
+            for case in cases:
+                print(
+                    f"  • {case.get('id', 'unknown')}: {case.get('description', '无描述')}"
+                )
+        else:
+            print_colored("没有找到用例", 93)
+        return True
+
+    elif args.case_action == "show":
+        # 显示用例详情
+        if hasattr(args, "id") and args.id:
+            case = case_manager.get_case(args.id)
+            if case:
+                print_colored(f"用例: {args.id}", 96)
+                print(json.dumps(case, indent=2, ensure_ascii=False))
+                return True
+            else:
+                print_colored(f"✗ 用例不存在: {args.id}", 91)
+                return False
+        else:
+            print_colored("✗ 请提供用例 ID", 91)
+            return False
+
+    elif args.case_action == "delete":
+        # 删除用例
+        if hasattr(args, "id") and args.id:
+            if case_manager.delete_case(args.id):
+                print_colored(f"✓ 用例已删除: {args.id}", 92)
+                return True
+            else:
+                print_colored(f"✗ 删除失败: {args.id}", 91)
+                return False
+        else:
+            print_colored("✗ 请提供用例 ID", 91)
+            return False
+
+    elif args.case_action == "run":
+        # 运行用例
+        if hasattr(args, "id") and args.id:
+            case = case_manager.get_case(args.id)
+            if case:
+                result = case_manager.run_case(case)
+                status = "通过" if result.success else "失败"
+                color = 92 if result.success else 91
+                print_colored(
+                    f"用例 {args.id}: {status} ({result.duration:.2f}s)", color
+                )
+                if not result.success and result.error:
+                    print_colored(f"错误: {result.error}", 91)
+                return result.success
+            else:
+                print_colored(f"✗ 用例不存在: {args.id}", 91)
+                return False
+        else:
+            print_colored("✗ 请提供用例 ID", 91)
+            return False
+
+    else:
+        print_colored(f"✗ 未知的 case 操作: {args.case_action}", 91)
+        return False
 
 
 def _handle_run_command(env_manager, args) -> bool:
-    """处理run命令"""
-    print_colored("Run command handler - TODO: implement", 93)
-    return True
+    """处理run命令 - 运行所有或过滤后的用例"""
+    from .cases.manager import CaseManager
+
+    case_manager = CaseManager(env_manager)
+
+    # 获取所有用例
+    cases = case_manager.list_cases()
+
+    # 如果有过滤条件，进行过滤
+    if hasattr(args, "filter") and args.filter:
+        cases = [c for c in cases if args.filter in str(c)]
+        print_colored(f"过滤后: {len(cases)} 个用例", 94)
+
+    if not cases:
+        print_colored("没有要运行的用例", 93)
+        return True
+
+    print_colored(f"开始运行 {len(cases)} 个用例...", 96)
+
+    passed = 0
+    failed = 0
+
+    for case in cases:
+        result = case_manager.run_case(case)
+        if result.success:
+            passed += 1
+            status_icon = "✓"
+            color = 92
+        else:
+            failed += 1
+            status_icon = "✗"
+            color = 91
+
+        print_colored(
+            f"{status_icon} {case.get('id', 'unknown')}: {result.duration:.2f}s", color
+        )
+
+    print_colored(f"\n完成: {passed} 通过, {failed} 失败", 96 if failed == 0 else 91)
+    return failed == 0
 
 
 def _handle_status_command(env_manager, args) -> bool:
-    """处理status命令"""
-    print_colored("Status command handler - TODO: implement", 93)
+    """处理status命令 - 显示整体状态"""
+    from .objects.manager import ObjectManager
+    from .tools.manager import ToolManager
+    from .cases.manager import CaseManager
+
+    print_colored("=== ptest 状态 ===", 96)
+
+    # 环境状态
+    if env_manager.test_path:
+        print(f"测试环境路径: {env_manager.test_path}")
+        print(f"测试环境已初始化: ✓")
+    else:
+        print_colored("测试环境未初始化", 93)
+
+    # 对象状态
+    obj_manager = ObjectManager()
+    print(f"\n测试对象:")
+    # 显示对象数量
+
+    # 工具状态
+    tool_manager = ToolManager()
+    print(f"\n测试工具:")
+    # 显示工具数量
+
+    # 用例状态
+    case_manager = CaseManager(env_manager)
+    cases = case_manager.list_cases()
+    print(f"\n测试用例: {len(cases)} 个")
+
     return True
