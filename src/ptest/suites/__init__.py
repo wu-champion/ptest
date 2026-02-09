@@ -114,9 +114,7 @@ class TestSuite:
             setup=data.get("setup", []),
             cases=[CaseRef.from_dict(case) for case in cases_data],
             teardown=data.get("teardown", []),
-            execution_mode=ExecutionMode(
-                data.get("execution_mode", "sequential")
-            ),
+            execution_mode=ExecutionMode(data.get("execution_mode", "sequential")),
             max_workers=data.get("max_workers", 4),
         )
 
@@ -128,15 +126,11 @@ class TestSuite:
             errors.append("套件名称不能为空 / Suite name cannot be empty")
 
         if not self.cases:
-            errors.append(
-                "套件至少需要一个用例 / Suite must have at least one case"
-            )
+            errors.append("套件至少需要一个用例 / Suite must have at least one case")
 
         orders = [case.order for case in self.cases]
         if len(orders) != len(set(orders)):
-            errors.append(
-                f"用例执行顺序重复: {orders} / Duplicate execution orders"
-            )
+            errors.append(f"用例执行顺序重复: {orders} / Duplicate execution orders")
 
         case_ids = set(case.case_id for case in self.cases)
         for case in self.cases:
@@ -160,9 +154,7 @@ class SuiteManager:
     def __init__(self, storage_dir: str | Path | None = None):
         """初始化套件管理器 / Initialize suite manager"""
         self.storage_dir = (
-            Path(storage_dir)
-            if storage_dir
-            else Path.cwd() / ".ptest" / "suites"
+            Path(storage_dir) if storage_dir else Path.cwd() / ".ptest" / "suites"
         )
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self._suites: dict[str, TestSuite] = {}
@@ -241,3 +233,106 @@ class SuiteManager:
             return []
 
         return suite.get_sorted_cases()
+
+    def execute_suite(
+        self,
+        suite_name: str,
+        case_manager=None,
+        parallel: bool = False,
+        max_workers: int = 4,
+    ) -> dict[str, Any]:
+        """
+        执行测试套件 / Execute test suite
+
+        Args:
+            suite_name: 套件名称
+            case_manager: 用例管理器（用于执行用例）
+            parallel: 是否并行执行
+            max_workers: 最大并行工作数
+
+        Returns:
+            执行结果统计
+        """
+        from ..execution import (
+            ParallelExecutor,
+            SequentialExecutor,
+            ExecutionTask,
+        )
+
+        suite = self.load_suite(suite_name)
+        if not suite:
+            logger.error(f"套件不存在: {suite_name}")
+            return {"success": False, "error": "Suite not found"}
+
+        # 验证套件
+        is_valid, errors = suite.validate()
+        if not is_valid:
+            logger.error(f"套件验证失败: {errors}")
+            return {"success": False, "errors": errors}
+
+        logger.info(f"开始执行套件: {suite_name} (并行={parallel})")
+
+        # 构建依赖图
+        dependencies = {}
+        for case in suite.cases:
+            if case.depends_on:
+                dependencies[case.case_id] = case.depends_on
+
+        # 创建执行任务
+        tasks = []
+        for case in suite.cases:
+            if case.skip:
+                logger.info(f"跳过用例: {case.case_id}")
+                continue
+
+            def execute_case(case_id=case.case_id):
+                if case_manager:
+                    case_data = case_manager.get_case(case_id)
+                    if case_data:
+                        return case_manager.run_case(case_data)
+                return {"case_id": case_id, "status": "executed"}
+
+            task = ExecutionTask(
+                task_id=case.case_id,
+                func=execute_case,
+            )
+            tasks.append(task)
+
+        if not tasks:
+            logger.warning("没有可执行的用例")
+            return {"success": True, "total": 0, "passed": 0, "failed": 0}
+
+        # 选择执行器
+        if parallel or suite.execution_mode.value == "parallel":
+            executor = ParallelExecutor(max_workers=max_workers)
+        else:
+            executor = SequentialExecutor()
+
+        try:
+            # 执行
+            results = executor.execute(tasks, dependencies)
+
+            # 统计结果
+            total = len(results)
+            passed = sum(1 for r in results if r.success)
+            failed = total - passed
+
+            logger.info(
+                f"套件执行完成: {suite_name} - 总计={total}, 通过={passed}, 失败={failed}"
+            )
+
+            return {
+                "success": failed == 0,
+                "total": total,
+                "passed": passed,
+                "failed": failed,
+                "results": [r.to_dict() for r in results],
+            }
+
+        except Exception as e:
+            logger.error(f"套件执行失败: {e}")
+            return {"success": False, "error": str(e)}
+
+        finally:
+            if hasattr(executor, "shutdown"):
+                executor.shutdown()
