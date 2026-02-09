@@ -6,11 +6,8 @@ import os
 from pathlib import Path
 
 from . import __version__
-from .environment import EnvironmentManager
 from .objects.manager import ObjectManager
 from .tools.manager import ToolManager
-from .cases.manager import CaseManager
-from .reports.generator import ReportGenerator
 from .data.cli import setup_data_subparser, handle_data_command
 from .contract.cli import setup_contract_subparser, handle_contract_command
 from .suites.cli import setup_suite_subparser, handle_suite_command
@@ -114,7 +111,7 @@ def setup_cli():
     )
     uninstall_obj_parser.add_argument("name", help="Object name")
 
-    list_obj_parser = obj_subparsers.add_parser("list", help="List all test objects")
+    obj_subparsers.add_parser("list", help="List all test objects")
 
     status_obj_parser = obj_subparsers.add_parser(
         "status", help="Get test object status"
@@ -137,7 +134,7 @@ def setup_cli():
     delete_case_parser = case_subparsers.add_parser("delete", help="Delete a test case")
     delete_case_parser.add_argument("id", help="Test case ID")
 
-    list_case_parser = case_subparsers.add_parser("list", help="List all test cases")
+    case_subparsers.add_parser("list", help="List all test cases")
 
     show_case_parser = case_subparsers.add_parser("show", help="Show test case details")
     show_case_parser.add_argument("id", help="尝试添加：Test case ID")
@@ -195,7 +192,7 @@ def setup_cli():
 
 def handle_config_command(env_manager, args) -> bool:
     """处理config命令"""
-    from .config import load_config, save_config, validate_config, generate_config
+    from .config import load_config, save_config, generate_config
 
     if not hasattr(args, "config_action") or not args.config_action:
         config_file = (
@@ -235,7 +232,7 @@ def handle_config_command(env_manager, args) -> bool:
 
         if not config_file.exists():
             print_colored("✗ Configuration file not found", 91)
-            print_colored(f"  Run 'ptest config init' to create one", 93)
+            print_colored("  Run 'ptest config init' to create one", 93)
             return False
 
         editor = args.editor or os.environ.get("EDITOR", "vim")
@@ -259,7 +256,7 @@ def handle_config_command(env_manager, args) -> bool:
 
         if not config_file.exists():
             print_colored("✗ Configuration file not found", 91)
-            print_colored(f"  Run 'ptest config init' to create one", 93)
+            print_colored("  Run 'ptest config init' to create one", 93)
             return False
 
         config = load_config(config_file)
@@ -334,21 +331,34 @@ def _handle_suite_command(env_manager, args) -> bool:
 
 def main():
     """主入口"""
+    from .environment import EnvironmentManager
+
     parser = setup_cli()
     args = parser.parse_args()
 
+    # 初始化环境管理器
+    env_manager = EnvironmentManager()
+
     command_handlers = {
         "init": lambda: _handle_init_command(env_manager, args),
-        "config": lambda: _handle_config_command(env_manager, args),
-        "obj": lambda: _handle_entity_command(ObjectManager(), args, "obj"),
-        "tool": lambda: _handle_entity_command(ToolManager(), args, "tool"),
+        "config": lambda: handle_config_command(env_manager, args),
+        "obj": lambda: _handle_entity_command(
+            ObjectManager(),
+            args,
+            args.obj_action if hasattr(args, "obj_action") else None,
+            "obj",
+        ),
+        "tool": lambda: _handle_entity_command(
+            ToolManager(),
+            args,
+            args.tool_action if hasattr(args, "tool_action") else None,
+            "tool",
+        ),
         "case": lambda: _handle_case_command(env_manager, args),
         "run": lambda: _handle_run_command(env_manager, args),
         "data": lambda: _handle_data_command(env_manager, args),
-        "setup_contract": lambda: _handle_contract_command(env_manager, args),
-        "data": lambda: handle_data_command(args),
-        "contract": lambda: handle_contract_command(env_manager, args),
-        "suite": lambda: handle_suite_command(env_manager, args),
+        "contract": lambda: _handle_contract_command(env_manager, args),
+        "suite": lambda: _handle_suite_command(env_manager, args),
         "status": lambda: _handle_status_command(env_manager, args),
     }
 
@@ -362,3 +372,21 @@ def main():
     else:
         print_colored(f"✗ Unknown command: {args.command}", 91)
         return 1
+
+
+def _handle_case_command(env_manager, args) -> bool:
+    """处理case命令"""
+    print_colored("Case command handler - TODO: implement", 93)
+    return True
+
+
+def _handle_run_command(env_manager, args) -> bool:
+    """处理run命令"""
+    print_colored("Run command handler - TODO: implement", 93)
+    return True
+
+
+def _handle_status_command(env_manager, args) -> bool:
+    """处理status命令"""
+    print_colored("Status command handler - TODO: implement", 93)
+    return True
