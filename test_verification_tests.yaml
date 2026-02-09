@@ -1,0 +1,26 @@
+{
+  "name": "verification_tests",
+  "description": "验证测试套件 - 验证框架功能完整性",
+  "setup": [
+    "install_mysql",
+    "start_mysql"
+  ],
+  "cases": [
+    {
+      "id": "verify_api_structure",
+      "order": 1,
+      "description": "验证API结构",
+      "request": {
+        "url": "https://httpbin.org/status/200",
+        "method": "GET"
+      },
+      "assertions": [
+        {
+          "type": "status_code",
+          "expected": 200
+        }
+      ]
+    }
+  ],
+  "execution_mode": "sequential"
+}

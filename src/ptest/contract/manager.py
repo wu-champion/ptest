@@ -289,15 +289,18 @@ class ContractManager:
             return True, []
 
         try:
-            from jsonschema import validate
+            from jsonschema import validate, ValidationError, SchemaError
 
             validate(instance=response_body, schema=schema)
             return True, []
-        except Exception as e:
-            error_msg = str(e)
-            if "validation" in error_msg.lower():
-                return False, [f"Response validation failed: {error_msg}"]
+        except ValidationError as e:
+            return False, [f"Response validation failed: {e}"]
+        except SchemaError as e:
+            logger.warning(f"Schema error in contract: {e}")
             return True, []
+        except Exception as e:
+            logger.error(f"Unexpected validation error: {e}")
+            return False, [f"Unexpected validation error: {e}"]
 
     def generate_test_cases(self, contract_name: str) -> list[dict[str, Any]]:
         """

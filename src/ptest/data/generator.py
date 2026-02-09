@@ -5,8 +5,11 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import random
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -122,6 +125,13 @@ class DataGenerationConfig:
 class DataGenerator:
     """数据生成器主类"""
 
+    # 类常量 - 默认数值范围
+    INTEGER_MIN = 1
+    INTEGER_MAX = 1000
+    FLOAT_MIN = 1.0
+    FLOAT_MAX = 1000.0
+    MAX_GENERATION_COUNT = 10000  # 最大生成数量限制
+
     def __init__(self, config: DataGenerationConfig | None = None):
         self.config = config or DataGenerationConfig()
         self._faker = None
@@ -130,9 +140,11 @@ class DataGenerator:
             if self.config.seed is not None
             else random.Random()
         )
+        self._faker_generators = {}
+        self._fallback_generators = {}
         self._init_faker()
 
-    def _init_faker(self):
+    def _init_faker(self) -> None:
         """初始化Faker实例"""
         try:
             from faker import Faker
@@ -161,6 +173,12 @@ class DataGenerator:
             - format="csv": 返回CSV格式字符串
             - format="raw": count==1时返回单个值，count>1时返回列表
         """
+        if count <= 0:
+            raise ValueError(f"count must be positive, got {count}")
+        if count > self.MAX_GENERATION_COUNT:
+            raise ValueError(
+                f"count cannot exceed {self.MAX_GENERATION_COUNT}, got {count}"
+            )
         data_type = DataType(data_type) if isinstance(data_type, str) else data_type
 
         results = []
@@ -193,50 +211,55 @@ class DataGenerator:
         assert self._faker is not None, "Faker instance should be initialized"
         faker = self._faker
 
-        generators = {
-            # 基础数据
-            DataType.NAME: lambda: faker.name(),
-            DataType.CHINESE_NAME: lambda: faker.name(),
-            DataType.ENGLISH_NAME: lambda: faker.name(),
-            DataType.PHONE: lambda: faker.phone_number(),
-            DataType.EMAIL: lambda: faker.email(),
-            DataType.ADDRESS: lambda: faker.address(),
-            DataType.ID_CARD: lambda: (
-                faker.ssn()
-                if hasattr(faker, "ssn")
-                else self._generate_fallback(DataType.ID_CARD)
-            ),
-            DataType.UUID: lambda: str(uuid.uuid4()),
-            # 网络数据
-            DataType.URL: lambda: faker.url(),
-            DataType.IP: lambda: faker.ipv4(),
-            DataType.IPV4: lambda: faker.ipv4(),
-            DataType.IPV6: lambda: faker.ipv6(),
-            DataType.DOMAIN: lambda: faker.domain_name(),
-            DataType.MAC_ADDRESS: lambda: faker.mac_address(),
-            # 业务数据
-            DataType.COMPANY: lambda: faker.company(),
-            DataType.JOB: lambda: faker.job(),
-            DataType.USERNAME: lambda: faker.user_name(),
-            DataType.PASSWORD: lambda: faker.password(),
-            DataType.CREDIT_CARD: lambda: faker.credit_card_number(),
-            # 时间数据
-            DataType.DATE: lambda: faker.date(),
-            DataType.TIME: lambda: faker.time(),
-            DataType.DATETIME: lambda: faker.iso8601(),
-            DataType.TIMESTAMP: lambda: int(datetime.now().timestamp()),
-            # 文本数据
-            DataType.TEXT: lambda: faker.text(),
-            DataType.SENTENCE: lambda: faker.sentence(),
-            DataType.PARAGRAPH: lambda: faker.paragraph(),
-            DataType.WORD: lambda: faker.word(),
-            # 数值数据
-            DataType.INTEGER: lambda: self._rng.randint(1, 1000),
-            DataType.FLOAT: lambda: round(self._rng.uniform(1.0, 1000.0), 2),
-            DataType.BOOLEAN: lambda: self._rng.choice([True, False]),
-        }
+        if not self._faker_generators:
+            self._faker_generators = {
+                # 基础数据
+                DataType.NAME: lambda: faker.name(),
+                DataType.CHINESE_NAME: lambda: faker.name(),
+                DataType.ENGLISH_NAME: lambda: faker.name(),
+                DataType.PHONE: lambda: faker.phone_number(),
+                DataType.EMAIL: lambda: faker.email(),
+                DataType.ADDRESS: lambda: faker.address(),
+                DataType.ID_CARD: lambda: (
+                    faker.ssn()
+                    if hasattr(faker, "ssn")
+                    else self._generate_fallback(DataType.ID_CARD)
+                ),
+                DataType.UUID: lambda: str(uuid.uuid4()),
+                # 网络数据
+                DataType.URL: lambda: faker.url(),
+                DataType.IP: lambda: faker.ipv4(),
+                DataType.IPV4: lambda: faker.ipv4(),
+                DataType.IPV6: lambda: faker.ipv6(),
+                DataType.DOMAIN: lambda: faker.domain_name(),
+                DataType.MAC_ADDRESS: lambda: faker.mac_address(),
+                # 业务数据
+                DataType.COMPANY: lambda: faker.company(),
+                DataType.JOB: lambda: faker.job(),
+                DataType.USERNAME: lambda: faker.user_name(),
+                DataType.PASSWORD: lambda: faker.password(),
+                DataType.CREDIT_CARD: lambda: faker.credit_card_number(),
+                # 时间数据
+                DataType.DATE: lambda: faker.date(),
+                DataType.TIME: lambda: faker.time(),
+                DataType.DATETIME: lambda: faker.iso8601(),
+                DataType.TIMESTAMP: lambda: int(datetime.now().timestamp()),
+                # 文本数据
+                DataType.TEXT: lambda: faker.text(),
+                DataType.SENTENCE: lambda: faker.sentence(),
+                DataType.PARAGRAPH: lambda: faker.paragraph(),
+                DataType.WORD: lambda: faker.word(),
+                # 数值数据
+                DataType.INTEGER: lambda: self._rng.randint(
+                    self.INTEGER_MIN, self.INTEGER_MAX
+                ),
+                DataType.FLOAT: lambda: round(
+                    self._rng.uniform(self.FLOAT_MIN, self.FLOAT_MAX), 2
+                ),
+                DataType.BOOLEAN: lambda: self._rng.choice([True, False]),
+            }
 
-        generator = generators.get(data_type)
+        generator = self._faker_generators.get(data_type)
         if generator:
             try:
                 return generator()
@@ -247,62 +270,73 @@ class DataGenerator:
 
     def _generate_fallback(self, data_type: DataType) -> Any:
         """Faker不可用时的备用生成逻辑"""
-        fallbacks = {
-            DataType.NAME: lambda: self._rng.choice(
-                ["张三", "李四", "王五", "赵六", "钱七"]
-            ),
-            DataType.CHINESE_NAME: lambda: self._rng.choice(
-                ["张三", "李四", "王五", "赵六", "钱七"]
-            ),
-            DataType.ENGLISH_NAME: lambda: self._rng.choice(
-                ["John", "Jane", "Bob", "Alice", "Tom"]
-            ),
-            DataType.PHONE: lambda: (
-                f"1{self._rng.choice([3, 4, 5, 7, 8, 9])}{self._rng.randint(100000000, 999999999)}"
-            ),
-            DataType.EMAIL: lambda: f"user{self._rng.randint(1, 10000)}@example.com",
-            DataType.ADDRESS: lambda: f"北京市朝阳区{self._rng.randint(1, 100)}号",
-            DataType.ID_CARD: lambda: (
-                f"{self._rng.randint(100000, 999999)}{self._rng.randint(10000000, 99999999)}{self._rng.randint(1000, 9999)}"
-            ),
-            DataType.UUID: lambda: str(uuid.uuid4()),
-            DataType.URL: lambda: f"https://example{self._rng.randint(1, 100)}.com",
-            DataType.IP: lambda: (
-                f"{self._rng.randint(1, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}"
-            ),
-            DataType.IPV4: lambda: (
-                f"{self._rng.randint(1, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}"
-            ),
-            DataType.IPV6: lambda: "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
-            DataType.DOMAIN: lambda: f"example{self._rng.randint(1, 100)}.com",
-            DataType.MAC_ADDRESS: lambda: "00:1B:44:11:3A:B7",
-            DataType.COMPANY: lambda: self._rng.choice(
-                ["科技有限公司", "网络公司", "软件公司"]
-            ),
-            DataType.JOB: lambda: self._rng.choice(["工程师", "经理", "总监", "专员"]),
-            DataType.USERNAME: lambda: f"user{self._rng.randint(1, 10000)}",
-            DataType.PASSWORD: lambda: f"Pass{self._rng.randint(1000, 9999)}!",
-            DataType.CREDIT_CARD: lambda: (
-                f"{self._rng.randint(1000, 9999)}-{self._rng.randint(1000, 9999)}-{self._rng.randint(1000, 9999)}-{self._rng.randint(1000, 9999)}"
-            ),
-            DataType.DATE: lambda: (
-                datetime.now() - timedelta(days=self._rng.randint(0, 365))
-            ).strftime("%Y-%m-%d"),
-            DataType.TIME: lambda: (
-                f"{self._rng.randint(0, 23):02d}:{self._rng.randint(0, 59):02d}:{self._rng.randint(0, 59):02d}"
-            ),
-            DataType.DATETIME: lambda: datetime.now().isoformat(),
-            DataType.TIMESTAMP: lambda: int(datetime.now().timestamp()),
-            DataType.TEXT: lambda: "这是一段示例文本内容。",
-            DataType.SENTENCE: lambda: "这是一个示例句子。",
-            DataType.PARAGRAPH: lambda: "这是一个示例段落。包含多句话的内容。",
-            DataType.WORD: lambda: self._rng.choice(["测试", "数据", "示例", "内容"]),
-            DataType.INTEGER: lambda: self._rng.randint(1, 1000),
-            DataType.FLOAT: lambda: round(self._rng.uniform(1.0, 1000.0), 2),
-            DataType.BOOLEAN: lambda: self._rng.choice([True, False]),
-        }
+        if not self._fallback_generators:
+            self._fallback_generators = {
+                DataType.NAME: lambda: self._rng.choice(
+                    ["张三", "李四", "王五", "赵六", "钱七"]
+                ),
+                DataType.CHINESE_NAME: lambda: self._rng.choice(
+                    ["张三", "李四", "王五", "赵六", "钱七"]
+                ),
+                DataType.ENGLISH_NAME: lambda: self._rng.choice(
+                    ["John", "Jane", "Bob", "Alice", "Tom"]
+                ),
+                DataType.PHONE: lambda: (
+                    f"1{self._rng.choice([3, 4, 5, 7, 8, 9])}{self._rng.randint(100000000, 999999999)}"
+                ),
+                DataType.EMAIL: lambda: (
+                    f"user{self._rng.randint(1, 10000)}@example.com"
+                ),
+                DataType.ADDRESS: lambda: f"北京市朝阳区{self._rng.randint(1, 100)}号",
+                DataType.ID_CARD: lambda: (
+                    f"{self._rng.randint(100000, 999999)}{self._rng.randint(10000000, 99999999)}{self._rng.randint(1000, 9999)}"
+                ),
+                DataType.UUID: lambda: str(uuid.uuid4()),
+                DataType.URL: lambda: f"https://example{self._rng.randint(1, 100)}.com",
+                DataType.IP: lambda: (
+                    f"{self._rng.randint(1, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}"
+                ),
+                DataType.IPV4: lambda: (
+                    f"{self._rng.randint(1, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}.{self._rng.randint(0, 255)}"
+                ),
+                DataType.IPV6: lambda: "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+                DataType.DOMAIN: lambda: f"example{self._rng.randint(1, 100)}.com",
+                DataType.MAC_ADDRESS: lambda: "00:1B:44:11:3A:B7",
+                DataType.COMPANY: lambda: self._rng.choice(
+                    ["科技有限公司", "网络公司", "软件公司"]
+                ),
+                DataType.JOB: lambda: self._rng.choice(
+                    ["工程师", "经理", "总监", "专员"]
+                ),
+                DataType.USERNAME: lambda: f"user{self._rng.randint(1, 10000)}",
+                DataType.PASSWORD: lambda: f"Pass{self._rng.randint(1000, 9999)}!",
+                DataType.CREDIT_CARD: lambda: (
+                    f"{self._rng.randint(1000, 9999)}-{self._rng.randint(1000, 9999)}-{self._rng.randint(1000, 9999)}-{self._rng.randint(1000, 9999)}"
+                ),
+                DataType.DATE: lambda: (
+                    datetime.now() - timedelta(days=self._rng.randint(0, 365))
+                ).strftime("%Y-%m-%d"),
+                DataType.TIME: lambda: (
+                    f"{self._rng.randint(0, 23):02d}:{self._rng.randint(0, 59):02d}:{self._rng.randint(0, 59):02d}"
+                ),
+                DataType.DATETIME: lambda: datetime.now().isoformat(),
+                DataType.TIMESTAMP: lambda: int(datetime.now().timestamp()),
+                DataType.TEXT: lambda: "这是一段示例文本内容。",
+                DataType.SENTENCE: lambda: "这是一个示例句子。",
+                DataType.PARAGRAPH: lambda: "这是一个示例段落。包含多句话的内容。",
+                DataType.WORD: lambda: self._rng.choice(
+                    ["测试", "数据", "示例", "内容"]
+                ),
+                DataType.INTEGER: lambda: self._rng.randint(
+                    self.INTEGER_MIN, self.INTEGER_MAX
+                ),
+                DataType.FLOAT: lambda: round(
+                    self._rng.uniform(self.FLOAT_MIN, self.FLOAT_MAX), 2
+                ),
+                DataType.BOOLEAN: lambda: self._rng.choice([True, False]),
+            }
 
-        return fallbacks.get(data_type, lambda: "unknown")()
+        return self._fallback_generators.get(data_type, lambda: "unknown")()
 
     def _to_yaml(self, data: list[Any]) -> str:
         """转换为YAML格式"""
@@ -323,9 +357,6 @@ class DataGenerator:
             return ""
 
         if isinstance(data[0], dict):
-            import csv
-            import io
-
             output = io.StringIO()
             writer = csv.DictWriter(output, fieldnames=data[0].keys())
             writer.writeheader()
@@ -366,8 +397,6 @@ class DataGenerator:
 
     def _replace_variables(self, text: str) -> str:
         """替换模板变量 {{data_type}}"""
-        import re
-
         pattern = r"\{\{(\w+)\}\}"
 
         def replace_match(match):
