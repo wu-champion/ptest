@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ptest"
-version = "1.0.1"
+version = "1.1.0"
 description = "综合测试框架 - 用于管理测试环境、测试对象和测试用例的完整生命周期"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -16,6 +16,8 @@ dependencies = [
     "packaging>=26.0",
     "virtualenv>=20.0.0",
     "faker>=35.0.0",
+    "prance>=25.0.0",
+    "openapi-spec-validator>=0.7.0",
 ]
 
 [project.scripts]

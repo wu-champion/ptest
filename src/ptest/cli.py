@@ -1,13 +1,18 @@
+#!/usr/bin/env python3
 # ptest/cli.py
 import argparse
+import json
+import os
+import shlex
+from pathlib import Path
+from typing import Any
 
 from . import __version__
-from .environment import EnvironmentManager
 from .objects.manager import ObjectManager
 from .tools.manager import ToolManager
-from .cases.manager import CaseManager
-from .reports.generator import ReportGenerator
 from .data.cli import setup_data_subparser, handle_data_command
+from .contract.cli import setup_contract_subparser, handle_contract_command
+from .suites.cli import setup_suite_subparser, handle_suite_command
 from .utils import print_colored, get_colored_text
 
 
@@ -44,7 +49,36 @@ def setup_cli():
     config_parser = subparsers.add_parser(
         "config", help=get_colored_text("Configuration management", 92)
     )
-    config_parser.add_argument("--file", help="Configuration file path")
+    config_subparsers = config_parser.add_subparsers(
+        dest="config_action", help="Config actions"
+    )
+
+    config_init_parser = config_subparsers.add_parser(
+        "init", help="Initialize configuration file"
+    )
+    config_init_parser.add_argument(
+        "--template",
+        choices=["minimal", "full", "api", "database"],
+        default="minimal",
+        help="Configuration template",
+    )
+    config_init_parser.add_argument(
+        "--format",
+        choices=["json", "yaml"],
+        default="yaml",
+        help="Configuration file format",
+    )
+
+    config_subparsers.add_parser("validate", help="Validate current configuration")
+
+    config_edit_parser = config_subparsers.add_parser(
+        "edit", help="Edit configuration file"
+    )
+    config_edit_parser.add_argument(
+        "--editor", help="Editor to use (defaults to $EDITOR or 'vim')"
+    )
+
+    config_subparsers.add_parser("show", help="Show current configuration")
 
     # obj commands - 高优先级
     obj_parser = subparsers.add_parser(
@@ -79,38 +113,15 @@ def setup_cli():
     )
     uninstall_obj_parser.add_argument("name", help="Object name")
 
-    # Subparsers defined for help display (used by argparse automatically)
-    obj_subparsers.add_parser("status", help="Show object status")
-    obj_subparsers.add_parser("list", help="List all objects")
+    obj_subparsers.add_parser("list", help="List all test objects")
 
-    # tool commands - 中优先级
-    tool_parser = subparsers.add_parser(
-        "tool", help=get_colored_text("Manage tools", 93)
+    status_obj_parser = obj_subparsers.add_parser(
+        "status", help="Get test object status"
     )
-    tool_subparsers = tool_parser.add_subparsers(
-        dest="tool_action", help="Tool actions"
-    )
+    status_obj_parser.add_argument("name", help="Object name")
 
-    install_tool_parser = tool_subparsers.add_parser("install", help="Install a tool")
-    install_tool_parser.add_argument("name", help="Tool name")
-
-    start_tool_parser = tool_subparsers.add_parser("start", help="Start a tool")
-    start_tool_parser.add_argument("name", help="Tool name")
-
-    stop_tool_parser = tool_subparsers.add_parser("stop", help="Stop a tool")
-    stop_tool_parser.add_argument("name", help="Tool name")
-
-    uninstall_tool_parser = tool_subparsers.add_parser(
-        "uninstall", help="Uninstall a tool"
-    )
-    uninstall_tool_parser.add_argument("name", help="Tool name")
-
-    tool_subparsers.add_parser("status", help="Show tool status")
-    tool_subparsers.add_parser("list", help="List all tools")
-
-    # case commands - 中优先级
     case_parser = subparsers.add_parser(
-        "case", help=get_colored_text("Manage test cases", 93)
+        "case", help=get_colored_text("Test case management", 92)
     )
     case_subparsers = case_parser.add_subparsers(
         dest="case_action", help="Case actions"
@@ -118,69 +129,160 @@ def setup_cli():
 
     add_case_parser = case_subparsers.add_parser("add", help="Add a test case")
     add_case_parser.add_argument("id", help="Test case ID")
-    add_case_parser.add_argument("data", help="Test case data (JSON string)")
 
-    remove_case_parser = case_subparsers.add_parser("remove", help="Remove a test case")
-    remove_case_parser.add_argument("id", help="Test case ID")
+    edit_case_parser = case_subparsers.add_parser("edit", help="Edit a test case")
+    edit_case_parser.add_argument("id", help="Test case ID")
+
+    delete_case_parser = case_subparsers.add_parser("delete", help="Delete a test case")
+    delete_case_parser.add_argument("id", help="Test case ID")
 
     case_subparsers.add_parser("list", help="List all test cases")
 
-    run_case_parser = case_subparsers.add_parser("run", help="Run test cases")
-    run_case_parser.add_argument(
-        "id", nargs="?", default="all", help='Test case ID or "all"'
+    show_case_parser = case_subparsers.add_parser("show", help="Show test case details")
+    show_case_parser.add_argument("id", help="尝试添加：Test case ID")
+    show_case_parser.add_argument(
+        "--format",
+        choices=["json", "yaml"],
+        default="json",
+        help="Output format (json/yaml)",
     )
 
-    # run command - 高优先级
-    run_parser = subparsers.add_parser("run", help=get_colored_text("Run tests", 92))
+    run_parser = subparsers.add_parser(
+        "run", help=get_colored_text("Run test cases", 92)
+    )
+    run_parser.add_argument("--filter", help="Filter cases by tag")
     run_parser.add_argument(
-        "type",
-        choices=["all", "failed"],
-        default="all",
-        nargs="?",
-        help="Type of tests to run",
+        "--parallel", action="store_true", help="Enable parallel execution"
+    )
+    run_parser.add_argument(
+        "--format",
+        choices=["html", "json", "yaml"],
+        default="html",
+        help="Report format",
     )
 
-    # report command - 低优先级
+    # suite commands
+    setup_suite_subparser(subparsers)
+
+    # report command - 高优先级
     report_parser = subparsers.add_parser(
-        "report", help=get_colored_text("Generate test reports", 96)
+        "report", help=get_colored_text("Test report", 92)
     )
-    report_parser.add_argument(
-        "--format", choices=["html", "json"], default="html", help="Report format"
+    report_subparsers = report_parser.add_subparsers(
+        dest="report_action", help="Report actions"
     )
 
+    report_generate_parser = report_subparsers.add_parser(
+        "generate", help="Generate test report"
+    )
+    report_generate_parser.add_argument("--from-cases", help="Generate from cases")
+    report_generate_parser.add_argument(
+        "--format",
+        choices=["html", "json", "yaml"],
+        default="html",
+        help="Report format",
+    )
+
+    # data commands
     setup_data_subparser(subparsers)
 
-    # status command - 高优先级
-    subparsers.add_parser("status", help=get_colored_text("Show overall status", 92))
+    # contract commands
+    setup_contract_subparser(subparsers)
 
     return parser
 
 
-def _handle_init_command(env_manager, args):
+def handle_config_command(env_manager, args) -> bool:
+    """处理config命令"""
+    from .config import load_config, save_config, generate_config
+
+    if not hasattr(args, "config_action") or not args.config_action:
+        config_file = (
+            env_manager.test_path / "ptest_config.yaml"
+            if env_manager.test_path
+            else Path("ptest_config.yaml")
+        )
+        if config_file.exists():
+            env_manager.config = load_config(config_file)
+            print_colored(f"✓ Configuration loaded from: {config_file}", 92)
+            return True
+        else:
+            print_colored("✗ No configuration file found", 91)
+            return False
+
+    if args.config_action == "init":
+        config_file = (
+            env_manager.test_path / f"ptest_config.{args.format}"
+            if env_manager.test_path
+            else Path(f"ptest_config.{args.format}")
+        )
+        config = generate_config(args.template)
+        save_config(config, config_file)
+        print_colored(f"✓ Configuration file created: {config_file}", 92)
+        return True
+
+    elif args.config_action == "edit":
+        import subprocess
+
+        config_file = (
+            env_manager.test_path / "ptest_config.yaml"
+            if env_manager.test_path
+            else Path("ptest_config.yaml")
+        )
+        if not config_file.exists():
+            config_file = config_file.with_suffix(".json")
+
+        if not config_file.exists():
+            print_colored("✗ Configuration file not found", 91)
+            print_colored("  Run 'ptest config init' to create one", 93)
+            return False
+
+        editor = args.editor or os.environ.get("EDITOR", "vim")
+        print_colored(f"Opening {config_file} with {editor}...", 94)
+        try:
+            # 使用shlex.split处理编辑器命令，防止命令注入
+            # Use shlex.split to handle editor command and prevent command injection
+            editor_parts = shlex.split(editor)
+            subprocess.call([*editor_parts, str(config_file)])
+            print_colored("✓ Configuration edit complete", 92)
+            return True
+        except Exception as e:
+            print_colored(f"✗ Failed to open editor: {e}", 91)
+            return False
+
+    elif args.config_action == "show":
+        config_file = (
+            env_manager.test_path / "ptest_config.yaml"
+            if env_manager.test_path
+            else Path("ptest_config.yaml")
+        )
+        if not config_file.exists():
+            config_file = config_file.with_suffix(".json")
+
+        if not config_file.exists():
+            print_colored("✗ Configuration file not found", 91)
+            print_colored("  Run 'ptest config init' to create one", 93)
+            return False
+
+        config = load_config(config_file)
+        print_colored("Current configuration:", 96)
+        print(json.dumps(config, indent=2, ensure_ascii=False))
+        return True
+
+    return False
+
+
+def _handle_init_command(env_manager, args) -> bool:
     """处理init命令"""
     result = env_manager.init_environment(args.path)
     print_colored(result, 92)
-
-
-def _handle_config_command(env_manager, args):
-    """处理config命令"""
-    from .config import load_config
-
-    config_file = (
-        env_manager.test_path / "ptest_config.json"
-        if env_manager.test_path
-        else args.file
-    )
-    if config_file:
-        env_manager.config = load_config(config_file)
-        print_colored(f"✓ Configuration loaded from: {config_file}", 92)
-    else:
-        print_colored("✗ No configuration file specified", 91)
+    return True
 
 
 def _handle_entity_command(entity_manager, args, action: str, entity_type: str):
     """
     通用的实体命令处理器
+
     统一处理install/start/stop/restart/uninstall/list/status命令
 
     Args:
@@ -191,7 +293,7 @@ def _handle_entity_command(entity_manager, args, action: str, entity_type: str):
     """
     # 定义通用的操作映射
     action_map = {
-        "install": lambda: (
+        "install": lambda: _print_result(
             entity_manager.install(
                 args.name,
                 {"version": args.version}
@@ -201,144 +303,275 @@ def _handle_entity_command(entity_manager, args, action: str, entity_type: str):
             if hasattr(args, "version")
             else entity_manager.install(args.name)
         ),
-        "start": lambda: entity_manager.start(args.name),
-        "stop": lambda: entity_manager.stop(args.name),
-        "restart": lambda: entity_manager.restart(args.name),
-        "uninstall": lambda: entity_manager.uninstall(args.name),
-        "list": lambda: (
-            entity_manager.list_tools()
-            if entity_type == "tool"
-            else entity_manager.list_objects()
+        "start": lambda: _print_result(entity_manager.start(args.name)),
+        "stop": lambda: _print_result(entity_manager.stop(args.name)),
+        "restart": lambda: _print_result(entity_manager.restart(args.name)),
+        "uninstall": lambda: _print_result(entity_manager.uninstall(args.name)),
+        "list": lambda: _print_result(
+            entity_manager.list_objects()
+            if hasattr(entity_manager, "list_objects")
+            else entity_manager.list_all()
         ),
-        "status": lambda: (
-            entity_manager.list_tools()
-            if entity_type == "tool"
-            else entity_manager.list_objects()
-        ),
+        "status": lambda: _print_result(entity_manager.status(args.name)),
     }
 
-    action_func = action_map.get(action)
-    if action_func:
-        result = action_func()
-        print(result if isinstance(result, str) else str(result))
+    handler = action_map.get(action)
+    if handler:
+        result = handler()
+        # 确保返回布尔值表示成功/失败
+        if isinstance(result, str):
+            return "error" not in result.lower() and "failed" not in result.lower()
+        return bool(result)
     else:
         print_colored(f"✗ Unknown {entity_type} action: {action}", 91)
+        return False
 
 
-def _handle_obj_command(obj_manager, args):
-    """处理obj命令 - 使用通用处理器"""
-    _handle_entity_command(obj_manager, args, args.obj_action, "object")
+def _print_result(result: Any) -> Any:
+    """打印结果并返回"""
+    if isinstance(result, str):
+        print(result)
+    elif isinstance(result, (list, dict)):
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    return result
 
 
-def _handle_tool_command(tool_manager, args):
-    """处理tool命令 - 使用通用处理器"""
-    _handle_entity_command(tool_manager, args, args.tool_action, "tool")
+def _handle_data_command(env_manager, args) -> bool:
+    """处理data命令"""
+    return handle_data_command(args)
 
 
-def _format_test_result(result) -> str:
-    """格式化测试结果为可读字符串"""
-    if hasattr(result, "status"):
-        if result.status == "passed":
-            return f"✓ Test case '{result.case_id}' {get_colored_text('PASSED', 92)} ({result.duration:.2f}s)"
-        elif result.status == "failed":
-            return f"✗ Test case '{result.case_id}' {get_colored_text('FAILED', 91)} ({result.duration:.2f}s): {result.error_message}"
-        else:
-            return f"✗ Test case '{result.case_id}' {get_colored_text('ERROR', 93)} ({result.duration:.2f}s): {result.error_message}"
-    return str(result)
+def _handle_contract_command(env_manager, args) -> bool:
+    """处理contract命令"""
+    return handle_contract_command(args)
 
 
-def _handle_case_command(case_manager, args):
-    """处理case命令"""
-    if args.case_action == "add":
-        import json
-
-        try:
-            data = json.loads(args.data)
-        except json.JSONDecodeError:
-            print_colored("✗ Invalid JSON format for test case data", 91)
-            return
-        print(case_manager.add_case(args.id, data))
-    elif args.case_action == "remove":
-        print(case_manager.remove_case(args.id))
-    elif args.case_action == "list":
-        print(case_manager.list_cases())
-    elif args.case_action == "run":
-        if args.id == "all":
-            print(case_manager.run_all_cases())
-        else:
-            result = case_manager.run_case(args.id)
-            print(_format_test_result(result))
-
-
-def _handle_run_command(case_manager, args):
-    """处理run命令"""
-    if args.type == "all":
-        print(case_manager.run_all_cases())
-    elif args.type == "failed":
-        print(case_manager.run_failed_cases())
-
-
-def _handle_report_command(env_manager, case_manager, args):
-    """处理report命令"""
-    report_gen = ReportGenerator(env_manager, case_manager)
-    report_path = report_gen.generate_report(args.format)
-    print_colored(f"✓ Report generated: {report_path}", 92)
-
-
-def _handle_status_command(env_manager):
-    """处理status命令"""
-    status = env_manager.get_env_status()
-    print_colored("=== ptest Framework Status ===", 95)
-    if isinstance(status, str):
-        print_colored(status, 91)
-    else:
-        print(f"Test Environment: {status['path']}")
-        print(f"{get_colored_text('Objects:', 92)} {status['objects']} managed")
-        print(f"{get_colored_text('Tools:', 93)} {status['tools']} managed")
-        print(f"{get_colored_text('Test Cases:', 94)} {status['cases']} registered")
-        print(f"{get_colored_text('Reports:', 96)} {status['reports']} generated")
+def _handle_suite_command(env_manager, args) -> bool:
+    """处理suite命令"""
+    return handle_suite_command(env_manager, args)
 
 
 def main():
-    """主入口函数"""
+    """主入口"""
+    from .environment import EnvironmentManager
+
     parser = setup_cli()
     args = parser.parse_args()
 
-    if not args.command:
-        parser.print_help()
-        return
-
+    # 初始化环境管理器
     env_manager = EnvironmentManager()
-    obj_manager = ObjectManager(env_manager)
-    tool_manager = ToolManager(env_manager)
-    case_manager = CaseManager(env_manager)
 
     command_handlers = {
         "init": lambda: _handle_init_command(env_manager, args),
-        "config": lambda: _handle_config_command(env_manager, args),
-        "obj": lambda: _handle_obj_command(obj_manager, args),
-        "tool": lambda: _handle_tool_command(tool_manager, args),
-        "case": lambda: _handle_case_command(case_manager, args),
-        "run": lambda: _handle_run_command(case_manager, args),
-        "report": lambda: _handle_report_command(env_manager, case_manager, args),
-        "data": lambda: handle_data_command(args),
-        "status": lambda: _handle_status_command(env_manager),
+        "config": lambda: handle_config_command(env_manager, args),
+        "obj": lambda: (
+            _handle_entity_command(
+                ObjectManager(env_manager),
+                args,
+                args.obj_action,
+                "obj",
+            )
+            if hasattr(args, "obj_action") and args.obj_action
+            else (
+                print_colored(
+                    "请指定操作: install/start/stop/restart/uninstall/list/status", 93
+                )
+                or False
+            )
+        ),
+        "tool": lambda: (
+            _handle_entity_command(
+                ToolManager(env_manager),
+                args,
+                args.tool_action,
+                "tool",
+            )
+            if hasattr(args, "tool_action") and args.tool_action
+            else (
+                print_colored(
+                    "请指定操作: install/start/stop/restart/uninstall/list/status", 93
+                )
+                or False
+            )
+        ),
+        "case": lambda: _handle_case_command(env_manager, args),
+        "run": lambda: _handle_run_command(env_manager, args),
+        "data": lambda: _handle_data_command(env_manager, args),
+        "contract": lambda: _handle_contract_command(env_manager, args),
+        "suite": lambda: _handle_suite_command(env_manager, args),
+        "status": lambda: _handle_status_command(env_manager, args),
     }
 
-    try:
-        handler = command_handlers.get(args.command)
-        if handler:
-            result = handler()
-            if result is False:
-                import sys
+    handler = command_handlers.get(args.command)
+    if handler:
+        result = handler()
+        # 确保返回整数退出码 / Ensure integer exit code
+        if isinstance(result, bool):
+            return 0 if result else 1
+        return result if isinstance(result, int) else 0
+    else:
+        print_colored(f"✗ Unknown command: {args.command}", 91)
+        return 1
 
-                sys.exit(1)
-    except Exception as e:
-        print_colored(f"✗ Error: {str(e)}", 91)
-        if args.debug:
-            import traceback
 
-            traceback.print_exc()
-        import sys
+def _handle_case_command(env_manager, args) -> bool:
+    """处理case命令"""
+    from .cases.manager import CaseManager
 
-        sys.exit(1)
+    case_manager = CaseManager(env_manager)
+
+    if not hasattr(args, "case_action") or not args.case_action:
+        print_colored("请指定 case 操作: add/list/show/delete/run", 91)
+        return False
+
+    if args.case_action == "add":
+        # 添加用例
+        if hasattr(args, "case_data") and args.case_data:
+            try:
+                case_data = json.loads(args.case_data)
+                case_id = (
+                    case_data.get("id", "unknown")
+                    if isinstance(case_data, dict)
+                    else "unknown"
+                )
+                case_manager.add_case(case_id, case_data)
+                print_colored(f"✓ 用例已添加: {case_id}", 92)
+                return True
+            except json.JSONDecodeError as e:
+                print_colored(f"✗ 无效的 JSON: {e}", 91)
+                return False
+        else:
+            print_colored("✗ 请提供用例数据 (--data)", 91)
+            return False
+
+    elif args.case_action == "list":
+        # 列出所有用例
+        cases_output = case_manager.list_cases()
+        print(cases_output)
+        return True
+
+    elif args.case_action == "show":
+        # 显示用例详情
+        if hasattr(args, "id") and args.id:
+            case = case_manager.get_case(args.id)
+            if case:
+                print_colored(f"用例: {args.id}", 96)
+                print(json.dumps(case, indent=2, ensure_ascii=False))
+                return True
+            else:
+                print_colored(f"✗ 用例不存在: {args.id}", 91)
+                return False
+        else:
+            print_colored("✗ 请提供用例 ID", 91)
+            return False
+
+    elif args.case_action == "delete":
+        # 删除用例
+        if hasattr(args, "id") and args.id:
+            if case_manager.delete_case(args.id):
+                print_colored(f"✓ 用例已删除: {args.id}", 92)
+                return True
+            else:
+                print_colored(f"✗ 删除失败: {args.id}", 91)
+                return False
+        else:
+            print_colored("✗ 请提供用例 ID", 91)
+            return False
+
+    elif args.case_action == "run":
+        # 运行用例
+        if hasattr(args, "id") and args.id:
+            case = case_manager.get_case(args.id)
+            if case:
+                result = case_manager.run_case(case)
+                status = "通过" if result.success else "失败"
+                color = 92 if result.success else 91
+                print_colored(
+                    f"用例 {args.id}: {status} ({result.duration:.2f}s)", color
+                )
+                if not result.success and result.error:
+                    print_colored(f"错误: {result.error}", 91)
+                return result.success
+            else:
+                print_colored(f"✗ 用例不存在: {args.id}", 91)
+                return False
+        else:
+            print_colored("✗ 请提供用例 ID", 91)
+            return False
+
+    else:
+        print_colored(f"✗ 未知的 case 操作: {args.case_action}", 91)
+        return False
+
+
+def _handle_run_command(env_manager, args) -> bool:
+    """处理run命令 - 运行所有或过滤后的用例"""
+    from .cases.manager import CaseManager
+
+    case_manager = CaseManager(env_manager)
+
+    # 获取所有用例ID
+    case_ids = list(case_manager.cases.keys())
+
+    # 如果有过滤条件，进行过滤
+    if hasattr(args, "filter") and args.filter:
+        case_ids = [cid for cid in case_ids if args.filter in cid]
+        print_colored(f"过滤后: {len(case_ids)} 个用例", 94)
+
+    if not case_ids:
+        print_colored("没有要运行的用例", 93)
+        return True
+
+    print_colored(f"开始运行 {len(case_ids)} 个用例...", 96)
+
+    passed = 0
+    failed = 0
+
+    for case_id in case_ids:
+        result = case_manager.run_case(case_id)
+        if result.success:
+            passed += 1
+            status_icon = "✓"
+            color = 92
+        else:
+            failed += 1
+            status_icon = "✗"
+            color = 91
+
+        print_colored(f"{status_icon} {case_id}: {result.duration:.2f}s", color)
+
+    print_colored(f"\n完成: {passed} 通过, {failed} 失败", 96 if failed == 0 else 91)
+    return failed == 0
+
+
+def _handle_status_command(env_manager, args) -> bool:
+    """处理status命令 - 显示整体状态"""
+    from .objects.manager import ObjectManager
+    from .tools.manager import ToolManager
+    from .cases.manager import CaseManager
+
+    print_colored("=== ptest 状态 ===", 96)
+
+    # 环境状态
+    if env_manager.test_path:
+        print(f"测试环境路径: {env_manager.test_path}")
+        print("测试环境已初始化: ✓")
+    else:
+        print_colored("测试环境未初始化", 93)
+
+    # 对象状态
+    obj_manager = ObjectManager(env_manager)
+    objects = obj_manager.list_objects()
+    print(f"\n测试对象: {len(objects)} 个")
+
+    # 工具状态
+    tool_manager = ToolManager(env_manager)
+    tools = tool_manager.list_tools()
+    print(f"\n测试工具: {len(tools)} 个")
+
+    # 用例状态
+    case_manager = CaseManager(env_manager)
+    cases = case_manager.list_cases()
+    print(f"\n测试用例: {len(cases)} 个")
+
+    return True

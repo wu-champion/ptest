@@ -122,7 +122,7 @@ class ObjectManager:
 
     def start(self, name: str):
         """启动对象"""
-        self.env_manager.logger.info(f"Starting test object: {name}")
+        self.logger.info(f"Starting test object: {name}")
         if name not in self.objects:
             return f"✗ Object '{name}' does not exist"
 
@@ -131,7 +131,7 @@ class ObjectManager:
 
     def stop(self, name: str):
         """停止对象"""
-        self.env_manager.logger.info(f"Stopping test object: {name}")
+        self.logger.info(f"Stopping test object: {name}")
         if name not in self.objects:
             return f"✗ Object '{name}' does not exist"
 
@@ -140,7 +140,7 @@ class ObjectManager:
 
     def restart(self, name: str):
         """重启对象"""
-        self.env_manager.logger.info(f"Restarting test object: {name}")
+        self.logger.info(f"Restarting test object: {name}")
         if name not in self.objects:
             return f"✗ Object '{name}' does not exist"
 

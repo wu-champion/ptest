@@ -1,5 +1,7 @@
 # ptest/cases/manager.py
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any
 from .result import TestCaseResult
 from .executor import TestExecutor
@@ -7,7 +9,7 @@ from .executor import TestExecutor
 try:
     from ..utils import get_colored_text
 except ImportError:
-    # 简单的颜色输出函数，当无法导入时使用
+
     def get_colored_text(text: Any, color_code: Any) -> str:
         return str(text)
 
@@ -15,13 +17,55 @@ except ImportError:
 class CaseManager:
     """测试用例管理器"""
 
-    def __init__(self, env_manager):
+    def __init__(self, env_manager, auto_save: bool = True):
         self.env_manager = env_manager
-        self.cases = {}
-        self.results = {}
-        self.failed_cases = []
-        self.passed_cases = []
+        self.cases: dict[str, Any] = {}
+        self.results: dict[str, TestCaseResult] = {}
+        self.failed_cases: list[str] = []
+        self.passed_cases: list[str] = []
         self.executor = TestExecutor(env_manager)
+        self.auto_save = auto_save
+        self._storage_file = self._get_storage_path()
+
+        if self.auto_save:
+            self._load_cases()
+
+    def _get_storage_path(self) -> Path:
+        """获取用例存储路径"""
+        if self.env_manager.test_path:
+            storage_dir = Path(self.env_manager.test_path) / ".ptest"
+        else:
+            storage_dir = Path.home() / ".ptest"
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        return storage_dir / "cases.json"
+
+    def _load_cases(self) -> None:
+        """从文件加载用例"""
+        if self._storage_file.exists():
+            try:
+                with open(self._storage_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.cases = data.get("cases", {})
+                    self.failed_cases = data.get("failed_cases", [])
+                    self.passed_cases = data.get("passed_cases", [])
+            except Exception:
+                self.cases = {}
+
+    def _save_cases(self) -> None:
+        """保存用例到文件"""
+        if not self.auto_save:
+            return
+        try:
+            data = {
+                "cases": self.cases,
+                "failed_cases": self.failed_cases,
+                "passed_cases": self.passed_cases,
+                "saved_at": datetime.now().isoformat(),
+            }
+            with open(self._storage_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.env_manager.logger.warning(f"Failed to save cases: {e}")
 
     def add_case(self, case_id: str, case_data: dict):
         self.cases[case_id] = {
@@ -31,6 +75,7 @@ class CaseManager:
             "last_run": None,
             "status": "pending",
         }
+        self._save_cases()
         self.env_manager.logger.info(f"Test case '{case_id}' added")
         return f"✓ Test case '{case_id}' added"
 
@@ -39,9 +84,23 @@ class CaseManager:
             del self.cases[case_id]
             if case_id in self.results:
                 del self.results[case_id]
+            if case_id in self.passed_cases:
+                self.passed_cases.remove(case_id)
+            if case_id in self.failed_cases:
+                self.failed_cases.remove(case_id)
+            self._save_cases()
             self.env_manager.logger.info(f"Test case '{case_id}' removed")
             return f"✓ Test case '{case_id}' removed"
         return f"✗ Test case '{case_id}' does not exist"
+
+    def get_case(self, case_id: str):
+        """获取用例（兼容别名）"""
+        return self.cases.get(case_id)
+
+    def delete_case(self, case_id: str) -> bool:
+        """删除用例（兼容别名）"""
+        result = self.remove_case(case_id)
+        return "✓" in result
 
     def list_cases(self):
         """列出所有测试用例"""
@@ -96,7 +155,7 @@ class CaseManager:
             self.env_manager.logger.error(
                 f"Test case '{case_id}' FAILED: {result_obj.error_message}"
             )
-        else:  # error
+        else:
             if case_id not in self.failed_cases:
                 self.failed_cases.append(case_id)
             if case_id in self.passed_cases:
@@ -105,6 +164,7 @@ class CaseManager:
                 f"Test case '{case_id}' ERROR: {result_obj.error_message}"
             )
 
+        self._save_cases()
         return result_obj
 
     def run_all_cases(self) -> Dict[str, Any]:

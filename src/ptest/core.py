@@ -9,6 +9,7 @@ ptest 框架核心配置和工具模块
 import sys
 import json
 import logging
+import shlex
 import subprocess
 import threading
 from pathlib import Path
@@ -310,7 +311,9 @@ class CommandExecutor:
         if isinstance(command, str) and not shell:
             command = command.split()
         elif isinstance(command, list) and shell:
-            command = " ".join(command)
+            # 使用shlex.quote对命令进行转义，防止命令注入
+            # Escape command elements to prevent injection
+            command = " ".join(shlex.quote(str(arg)) for arg in command)
 
         self.logger.debug(f"Executing command: {command}")
 

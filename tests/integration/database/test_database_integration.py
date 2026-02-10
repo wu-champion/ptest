@@ -23,6 +23,8 @@ class MockEnvManager:
 
     def __init__(self):
         import logging
+        from pathlib import Path
+        import tempfile
 
         self.logger = logging.getLogger("ptest")
         self.logger.setLevel(logging.INFO)
@@ -32,6 +34,9 @@ class MockEnvManager:
             handler = logging.StreamHandler()
             handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
             self.logger.addHandler(handler)
+
+        # 添加 test_path 属性
+        self.test_path = Path(tempfile.mkdtemp(prefix="ptest_test_"))
 
         self.obj_manager = ObjectManager(self)
 

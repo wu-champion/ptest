@@ -42,6 +42,16 @@ class TestCaseResult:
         """获取错误信息"""
         return self.error_message
 
+    @property
+    def success(self) -> bool:
+        """是否成功（兼容属性）"""
+        return self.is_success()
+
+    @property
+    def error(self) -> str:
+        """错误信息（兼容属性）"""
+        return self.error_message
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return {
