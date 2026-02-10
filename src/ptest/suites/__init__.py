@@ -34,7 +34,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from ..core import get_logger
 

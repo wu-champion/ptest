@@ -128,7 +128,7 @@ class TestParallelExecution:
 
     def test_execution_result(self):
         """测试执行结果"""
-        from ptest.execution import ExecutionResult, TaskStatus
+        from ptest.execution import ExecutionResult
 
         result = ExecutionResult(
             task_id="test_task",

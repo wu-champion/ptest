@@ -118,7 +118,7 @@ class TestSuiteManagerPerformance:
 
     def test_create_large_suite_performance(self):
         """测试创建大套件性能"""
-        from ptest.suites import SuiteManager, TestSuite, CaseRef
+        from ptest.suites import SuiteManager
 
         import tempfile
 
