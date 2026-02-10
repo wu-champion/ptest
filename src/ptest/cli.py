@@ -559,19 +559,19 @@ def _handle_status_command(env_manager, args) -> bool:
     # 环境状态
     if env_manager.test_path:
         print(f"测试环境路径: {env_manager.test_path}")
-        print(f"测试环境已初始化: ✓")
+        print("测试环境已初始化: ✓")
     else:
         print_colored("测试环境未初始化", 93)
 
     # 对象状态
     obj_manager = ObjectManager()
-    print(f"\n测试对象:")
-    # 显示对象数量
+    objects = obj_manager.list_objects()
+    print(f"\n测试对象: {len(objects)} 个")
 
     # 工具状态
     tool_manager = ToolManager()
-    print(f"\n测试工具:")
-    # 显示工具数量
+    tools = tool_manager.list_tools()
+    print(f"\n测试工具: {len(tools)} 个")
 
     # 用例状态
     case_manager = CaseManager(env_manager)

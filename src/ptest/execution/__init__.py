@@ -152,8 +152,8 @@ class DependencyResolver:
             分层执行顺序 [[layer1_tasks], [layer2_tasks], ...]
         """
         # 构建依赖图
-        in_degree = {task_id: 0 for task_id in task_ids}
-        graph = {task_id: [] for task_id in task_ids}
+        in_degree: dict[str, int] = {task_id: 0 for task_id in task_ids}
+        graph: dict[str, list[str]] = {task_id: [] for task_id in task_ids}
 
         for task_id, deps in self.dependencies.items():
             if task_id not in in_degree:

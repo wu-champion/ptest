@@ -144,7 +144,7 @@ class MockServer:
         self._server_thread: threading.Thread | None = None
         self._request_history: list[MockRequest] = []
         self._history_lock = threading.Lock()
-        self._app = None
+        self._app: Any = None
 
     def add_route(
         self,
@@ -283,7 +283,7 @@ class MockServer:
             return
 
         try:
-            from flask import Flask, request, jsonify
+            from flask import Flask, request, jsonify  # type: ignore[import-not-found]
         except ImportError:
             raise ImportError(
                 "Flask is required for mock server. Install with: pip install flask"
@@ -332,8 +332,6 @@ class MockServer:
         @self._app.route("/shutdown", methods=["POST"])
         def shutdown():
             """关闭服务器 / Shutdown server"""
-            from flask import request
-
             func = request.environ.get("werkzeug.server.shutdown")
             if func is None:
                 return jsonify({"error": "Not running with Werkzeug Server"}), 500
