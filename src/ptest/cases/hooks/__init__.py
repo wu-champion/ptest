@@ -252,7 +252,7 @@ class HookExecutor:
                 )
             elif db_type == "mysql":
                 try:
-                    import pymysql
+                    import pymysql  # type: ignore[import-untyped]
                 except ImportError:
                     return HookResult(success=False, error="pymysql not installed")
 

@@ -34,7 +34,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 from ..core import get_logger
 
@@ -303,6 +303,7 @@ class SuiteManager:
             return {"success": True, "total": 0, "passed": 0, "failed": 0}
 
         # 选择执行器
+        executor: ParallelExecutor | SequentialExecutor
         if parallel or suite.execution_mode.value == "parallel":
             executor = ParallelExecutor(max_workers=max_workers)
         else:

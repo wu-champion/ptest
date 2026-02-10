@@ -93,6 +93,15 @@ class CaseManager:
             return f"✓ Test case '{case_id}' removed"
         return f"✗ Test case '{case_id}' does not exist"
 
+    def get_case(self, case_id: str):
+        """获取用例（兼容别名）"""
+        return self.cases.get(case_id)
+
+    def delete_case(self, case_id: str) -> bool:
+        """删除用例（兼容别名）"""
+        result = self.remove_case(case_id)
+        return "✓" in result
+
     def list_cases(self):
         """列出所有测试用例"""
         if not self.cases:

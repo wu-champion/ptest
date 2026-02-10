@@ -102,7 +102,7 @@ def _handle_create(env_manager, suite_manager, args) -> bool:
             with open(file_path, "r", encoding="utf-8") as f:
                 if file_path.suffix in [".yaml", ".yml"]:
                     try:
-                        import yaml
+                        import yaml  # type: ignore[import-untyped]
 
                         suite_data = yaml.safe_load(f)
                     except ImportError:

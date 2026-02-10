@@ -348,7 +348,7 @@ def _handle_contract_command(env_manager, args) -> bool:
 
 def _handle_suite_command(env_manager, args) -> bool:
     """处理suite命令"""
-    return handle_suite_command(args)
+    return handle_suite_command(env_manager, args)
 
 
 def main():
@@ -366,7 +366,7 @@ def main():
         "config": lambda: handle_config_command(env_manager, args),
         "obj": lambda: (
             _handle_entity_command(
-                ObjectManager(),
+                ObjectManager(env_manager),
                 args,
                 args.obj_action,
                 "obj",
@@ -381,7 +381,7 @@ def main():
         ),
         "tool": lambda: (
             _handle_entity_command(
-                ToolManager(),
+                ToolManager(env_manager),
                 args,
                 args.tool_action,
                 "tool",
@@ -429,8 +429,13 @@ def _handle_case_command(env_manager, args) -> bool:
         if hasattr(args, "case_data") and args.case_data:
             try:
                 case_data = json.loads(args.case_data)
-                case_manager.add_case(case_data)
-                print_colored(f"✓ 用例已添加: {case_data.get('id', 'unknown')}", 92)
+                case_id = (
+                    case_data.get("id", "unknown")
+                    if isinstance(case_data, dict)
+                    else "unknown"
+                )
+                case_manager.add_case(case_id, case_data)
+                print_colored(f"✓ 用例已添加: {case_id}", 92)
                 return True
             except json.JSONDecodeError as e:
                 print_colored(f"✗ 无效的 JSON: {e}", 91)
@@ -441,15 +446,8 @@ def _handle_case_command(env_manager, args) -> bool:
 
     elif args.case_action == "list":
         # 列出所有用例
-        cases = case_manager.list_cases()
-        if cases:
-            print_colored(f"共有 {len(cases)} 个用例:", 96)
-            for case in cases:
-                print(
-                    f"  • {case.get('id', 'unknown')}: {case.get('description', '无描述')}"
-                )
-        else:
-            print_colored("没有找到用例", 93)
+        cases_output = case_manager.list_cases()
+        print(cases_output)
         return True
 
     elif args.case_action == "show":
@@ -512,25 +510,25 @@ def _handle_run_command(env_manager, args) -> bool:
 
     case_manager = CaseManager(env_manager)
 
-    # 获取所有用例
-    cases = case_manager.list_cases()
+    # 获取所有用例ID
+    case_ids = list(case_manager.cases.keys())
 
     # 如果有过滤条件，进行过滤
     if hasattr(args, "filter") and args.filter:
-        cases = [c for c in cases if args.filter in str(c)]
-        print_colored(f"过滤后: {len(cases)} 个用例", 94)
+        case_ids = [cid for cid in case_ids if args.filter in cid]
+        print_colored(f"过滤后: {len(case_ids)} 个用例", 94)
 
-    if not cases:
+    if not case_ids:
         print_colored("没有要运行的用例", 93)
         return True
 
-    print_colored(f"开始运行 {len(cases)} 个用例...", 96)
+    print_colored(f"开始运行 {len(case_ids)} 个用例...", 96)
 
     passed = 0
     failed = 0
 
-    for case in cases:
-        result = case_manager.run_case(case)
+    for case_id in case_ids:
+        result = case_manager.run_case(case_id)
         if result.success:
             passed += 1
             status_icon = "✓"
@@ -540,9 +538,7 @@ def _handle_run_command(env_manager, args) -> bool:
             status_icon = "✗"
             color = 91
 
-        print_colored(
-            f"{status_icon} {case.get('id', 'unknown')}: {result.duration:.2f}s", color
-        )
+        print_colored(f"{status_icon} {case_id}: {result.duration:.2f}s", color)
 
     print_colored(f"\n完成: {passed} 通过, {failed} 失败", 96 if failed == 0 else 91)
     return failed == 0
@@ -564,12 +560,12 @@ def _handle_status_command(env_manager, args) -> bool:
         print_colored("测试环境未初始化", 93)
 
     # 对象状态
-    obj_manager = ObjectManager()
+    obj_manager = ObjectManager(env_manager)
     objects = obj_manager.list_objects()
     print(f"\n测试对象: {len(objects)} 个")
 
     # 工具状态
-    tool_manager = ToolManager()
+    tool_manager = ToolManager(env_manager)
     tools = tool_manager.list_tools()
     print(f"\n测试工具: {len(tools)} 个")
 
