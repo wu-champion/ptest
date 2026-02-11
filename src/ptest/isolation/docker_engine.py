@@ -98,43 +98,26 @@ def _parse_image_name(image_name: str, default_tag: str = "latest") -> str:
     - image:tag -> image:tag
     - registry:port/image -> registry:port/image:latest
     - registry:port/image:tag -> registry:port/image:tag
+
+    使用 Docker SDK 的官方解析函数处理复杂的 registry:port 格式
     """
     if not image_name:
         return f"unknown:{default_tag}"
 
-    # 检查是否已包含tag（最后一个:后面不是数字/端口格式）
-    # 使用Docker风格的解析：从右往找第一个不是端口的部分
-    parts = image_name.rsplit(":", 1)
+    try:
+        # 使用 Docker SDK 的官方解析函数
+        from docker.utils import parse_repository_tag
 
-    if len(parts) == 1:
-        # 没有冒号，添加默认tag
-        return f"{image_name}:{default_tag}"
-
-    # 有冒号，检查是否是端口
-    potential_tag = parts[1]
-
-    # 如果冒号后面全是数字，可能是端口；但镜像tag也可以是数字
-    # 使用更可靠的判断：检查是否包含/
-    if "/" in parts[0]:
-        # 有命名空间，说明是完整路径
-        # registry:5000/image 或 registry:5000/image:tag
-        # 需要进一步判断parts[1]是端口还是tag
-
-        # 如果有多个/，说明是namespace/image格式
-        # 如果parts[1]包含非数字字符，一定是tag
-        if not potential_tag.isdigit():
-            return image_name
-
-        # potential_tag全是数字，可能是端口也可能是tag
-        # 检查是否有@digest（sha256:xxx格式已经在前面被排除）
-        # 简化处理：如果只有数字且前面有:，假设是端口，添加默认tag
-        return f"{image_name}:{default_tag}"
-    else:
-        # 没有/，简单格式：image 或 image:tag
-        if potential_tag.isdigit():
-            # 全是数字，可能是版本号（tag），也可能是错误的端口格式
-            # 假设简单名称没有端口概念，直接返回
-            return image_name
+        repository, tag = parse_repository_tag(image_name)
+        # 如果原镜像没有 tag，使用默认 tag
+        if not tag:
+            tag = default_tag
+        return f"{repository}:{tag}" if tag else repository
+    except Exception:
+        # 降级到简单处理
+        parts = image_name.rsplit(":", 1)
+        if len(parts) == 1:
+            return f"{image_name}:{default_tag}"
         return image_name
 
 
@@ -266,6 +249,11 @@ class DockerEnvironment(IsolatedEnvironment):
         return {
             "image": self.image_name,
             "name": self.container_name,
+            "command": [
+                "/bin/sh",
+                "-c",
+                "while true; do sleep 3600; done",
+            ],  # 保持容器运行
             "detach": True,
             "volumes": self.volumes,
             "ports": {
