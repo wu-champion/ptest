@@ -798,51 +798,21 @@ class DockerEnvironment(IsolatedEnvironment):
                     command=cmd,
                 )
 
-            engine = self.isolation_engine
-            if not hasattr(engine, "docker_client") or not engine.docker_client:
-                logger.error("Docker client not available")
-                return ProcessResult(
-                    returncode=-1,
-                    stdout="",
-                    stderr="Docker client not available",
-                    command=cmd,
-                )
-
-            container_id = self.container_id
-            if not container_id and isinstance(self._container, dict):
-                container_id = self._container.get("Id")
-
-            if not container_id:
-                logger.error("Container ID not available")
-                return ProcessResult(
-                    returncode=-1,
-                    stdout="",
-                    stderr="Container ID not available",
-                    command=cmd,
-                )
-
-            try:
-                container = engine.docker_client.containers.get(container_id)
-            except Exception as e:
-                logger.error(f"Failed to get container: {e}")
-                return ProcessResult(
-                    returncode=-1,
-                    stdout="",
-                    stderr=f"Failed to get container: {e}",
-                    command=cmd,
-                )
-
-            exec_config: dict = {"detach": not interactive and not tty}
-            if tty:
-                exec_config["tty"] = True
+            exec_config: dict = {
+                "detach": False,
+                "tty": tty,
+            }
             if cwd:
                 exec_config["workdir"] = str(cwd)
-
             if env_vars:
                 exec_config["environment"] = env_vars
 
+            logger.debug(f"Executing command in container: {cmd}")
             exit_code, output = container.exec_run(cmd, **exec_config)
             stdout = output.decode("utf-8") if isinstance(output, bytes) else output
+            logger.debug(
+                f"Command result: exit_code={exit_code}, stdout={stdout[:100] if stdout else ''}"
+            )
 
             return ProcessResult(
                 returncode=exit_code,
