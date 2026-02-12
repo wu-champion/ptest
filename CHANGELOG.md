@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - 2026-02-10
 
+> **注意**: 从 v1.1.0 开始，PyPI 包名由 `ptest` 改为 `ptestx`，
+> 原因是 `ptest` 已被其他项目占用。
+> 
+> 安装命令: `pip install ptestx==1.1.0`
+> 
+> 所有功能保持不变：
+> - CLI 命令: `ptest` / `p`
+> - Python 导入: `import ptest`
+
 ### Added - 新增功能
 
 #### Week 1: 测试数据生成器
