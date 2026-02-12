@@ -163,7 +163,7 @@ def measure_memory_and_time(func, *args, **kwargs) -> Tuple[Any, float, float]:
 def generate_large_data(
     generator, data_type: str, total_count: int, batch_size: int = 10000
 ):
-    """分批生成大规模数据（绕过单次10K限制）"""
+    """分批生成大规模数据（支持超过单次 MAX_GENERATION_COUNT 限制的数据生成）"""
     import tracemalloc
 
     tracemalloc.start()
