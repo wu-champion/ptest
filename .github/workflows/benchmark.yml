@@ -12,6 +12,13 @@ jobs:
     name: 性能基准测试
     runs-on: ubuntu-latest
     
+    permissions:
+      contents: read
+    
+    env:
+      UV_INDEX_URL: https://pypi.org/simple
+      UV_EXTRA_INDEX_URL: ""
+    
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -32,33 +39,19 @@ jobs:
         run: |
           uv run python tests/performance/run_benchmarks.py
 
+      - name: 显示性能报告摘要
+        run: |
+          echo "📊 Performance Benchmark Summary"
+          echo "================================"
+          if [ -f benchmark_results/*.md ]; then
+            head -50 benchmark_results/*.md
+          else
+            echo "未找到 Markdown 报告"
+          fi
+
       - name: 上传基准测试结果
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results
           path: benchmark_results/
           retention-days: 30
-
-      - name: 评论 PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = 'benchmark_results';
-            
-            // 查找最新的 markdown 报告
-            const files = fs.readdirSync(path);
-            const mdFiles = files.filter(f => f.endsWith('.md'));
-            
-            if (mdFiles.length > 0) {
-              const latestFile = mdFiles.sort().reverse()[0];
-              const content = fs.readFileSync(`${path}/${latestFile}`, 'utf8');
-              
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: `## 📊 Performance Benchmark Results\n\n${content.substring(0, 3000)}...`
-              });
-            }
