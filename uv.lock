@@ -953,7 +953,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ptest"
+name = "ptestx"
 version = "1.1.0"
 source = { editable = "." }
 dependencies = [
