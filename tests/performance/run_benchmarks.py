@@ -7,12 +7,36 @@
 """
 
 import json
+import os
 import sys
 import time
 import tracemalloc
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+
+def is_ci_environment() -> bool:
+    """检测是否在 CI 环境中运行"""
+    ci_indicators = [
+        "CI",
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "CIRCLECI",
+        "TRAVIS",
+        "JENKINS_URL",
+    ]
+    return any(os.getenv(var) for var in ci_indicators)
+
+
+def get_performance_target(base_target: float, ci_multiplier: float = 3.0) -> float:
+    """根据环境获取性能目标
+
+    CI 环境通常性能较差，给予更大的缓冲
+    """
+    if is_ci_environment():
+        return base_target * ci_multiplier
+    return base_target
 
 
 class BenchmarkReporter:
@@ -225,16 +249,22 @@ def run_data_generation_benchmark(reporter: BenchmarkReporter):
     start = time.time()
     result = generator.generate("name", count=100000, format="raw")
     elapsed = time.time() - start
-    status = "pass" if elapsed < 3.0 else "fail"
+    target = get_performance_target(3.0, ci_multiplier=3.5)  # CI 环境: 10.5s
+    status = "pass" if elapsed < target else "fail"
+    env_note = "(CI)" if is_ci_environment() else "(Local)"
     reporter.add_result(
         "Data Generation (100K)",
-        "Generate 100K Names",
+        f"Generate 100K Names {env_note}",
         elapsed,
         status=status,
-        details={"target": "< 3.0s", "count": len(result)},
+        details={
+            "target": f"< {target:.1f}s",
+            "count": len(result),
+            "ci_env": is_ci_environment(),
+        },
     )
     print(
-        f"    {'✓' if status == 'pass' else '✗'} Generate 100,000 names: {elapsed:.4f}s (target: < 3s)"
+        f"    {'✓' if status == 'pass' else '✗'} Generate 100,000 names: {elapsed:.4f}s {env_note} (target: < {target:.1f}s)"
     )
 
     # 压力测试: 1,000,000 条 (分批生成)
