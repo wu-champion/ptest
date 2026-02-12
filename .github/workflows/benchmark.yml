@@ -1,0 +1,65 @@
+name: Performance Benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    name: 性能基准测试
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 同步依赖
+        run: |
+          rm -f uv.lock
+          uv sync
+
+      - name: 运行性能基准测试
+        run: |
+          uv run python tests/performance/run_benchmarks.py
+
+      - name: 上传基准测试结果
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark_results/
+          retention-days: 30
+
+      - name: 评论 PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'benchmark_results';
+            
+            // 查找最新的 markdown 报告
+            const files = fs.readdirSync(path);
+            const mdFiles = files.filter(f => f.endsWith('.md'));
+            
+            if (mdFiles.length > 0) {
+              const latestFile = mdFiles.sort().reverse()[0];
+              const content = fs.readFileSync(`${path}/${latestFile}`, 'utf8');
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 📊 Performance Benchmark Results\n\n${content.substring(0, 3000)}...`
+              });
+            }

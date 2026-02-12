@@ -130,7 +130,7 @@ class DataGenerator:
     INTEGER_MAX = 1000
     FLOAT_MIN = 1.0
     FLOAT_MAX = 1000.0
-    MAX_GENERATION_COUNT = 10000  # 最大生成数量限制
+    MAX_GENERATION_COUNT = 100000  # 最大生成数量限制提高到100K
 
     def __init__(self, config: DataGenerationConfig | None = None):
         self.config = config or DataGenerationConfig()
