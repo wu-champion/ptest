@@ -749,7 +749,7 @@ def run_all_benchmarks():
                 print(f"    - Average: {stats['avg']:.4f}s")
 
         print(f"\n{'=' * 70}")
-        print(f"✅ All benchmarks completed!")
+        print("✅ All benchmarks completed!")
         print(f"   Total: {total_tests} tests (✓ {total_passed}, ✗ {total_failed})")
         print(f"📁 Results saved to: {reporter.output_dir}")
         print(f"📊 JSON: {json_path.name}")
