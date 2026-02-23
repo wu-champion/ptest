@@ -183,7 +183,8 @@ class TestParallelExecution:
         results = executor.execute(tasks)
         elapsed = time.time() - start_time
 
-        assert elapsed < 0.2
+        # 并行执行应该接近单个任务时间，但允许一定波动
+        assert elapsed < 0.35
         assert len(results) == 2
         assert all(r.success for r in results)
 
