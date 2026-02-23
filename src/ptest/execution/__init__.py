@@ -415,16 +415,19 @@ class SequentialExecutor:
     def _execute_task(self, task: ExecutionTask, timeout: float = 0) -> None:
         """执行单个任务"""
         import signal
-
-        # 定义超时处理函数
-        def timeout_handler(signum, frame):
-            raise TimeoutError(f"Task {task.task_id} timed out after {timeout} seconds")
+        import sys
 
         task.status = TaskStatus.RUNNING
         task.start_time = time.time()
 
-        # 如果设置了超时，使用信号处理
-        if timeout > 0:
+        # 信号处理仅在 Unix 主线程上可用
+        use_signal_timeout = timeout > 0 and sys.platform != "win32"
+
+        if use_signal_timeout:
+            # 定义超时处理函数
+            def timeout_handler(signum, frame):
+                raise TimeoutError(f"Task {task.task_id} timed out after {timeout} seconds")
+
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(int(timeout))
 
@@ -475,7 +478,7 @@ class SequentialExecutor:
 
         finally:
             # 取消超时信号
-            if timeout > 0:
+            if use_signal_timeout:
                 signal.alarm(0)
 
 

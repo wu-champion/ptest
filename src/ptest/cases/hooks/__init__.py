@@ -336,7 +336,7 @@ class HookExecutor:
 
         try:
             # 延迟导入避免循环依赖
-            from ..cases.manager import CaseManager
+            from ..manager import CaseManager
 
             start_time = time.time()
 

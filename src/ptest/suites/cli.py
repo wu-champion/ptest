@@ -361,9 +361,6 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
         if result.get("errors"):
             for error in result.get("errors"):
                 print_colored(f"  • {error}", 91)
-        if result.get("errors"):
-            for error in result.get("errors"):
-                print_colored(f"  • {error}", 91)
 
         # 生成报告
         report_format = getattr(args, 'report_format', None)
