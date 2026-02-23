@@ -14,32 +14,32 @@ except ImportError:
 @dataclass
 class DatabaseConfig:
     """数据库配置类 - 提供类型安全的配置管理"""
-    
+
     # 连接参数
     driver_module: str = ""  # 驱动模块名 (如: pymysql, psycopg2)
-    driver_class: str = ""   # 驱动类名 (如: Connection, Client)
+    driver_class: str = ""  # 驱动类名 (如: Connection, Client)
     host: str = "localhost"
     port: int = 0
     username: str = ""
     password: str = ""
     database: str = ""
-    
+
     # 额外参数
     charset: str = "utf8mb4"
     timeout: int = 30
-    
+
     # 连接池配置
     pool_size: int = 5
     max_overflow: int = 10
-    
+
     # 其他选项
     options: Dict[str, Any] = field(default_factory=dict)
-    
+
     @classmethod
     def from_dict(cls, config: Dict[str, Any]) -> "DatabaseConfig":
         """从字典创建配置"""
         return cls(**{k: v for k, v in config.items() if k in cls.__annotations__})
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return {
@@ -56,7 +56,7 @@ class DatabaseConfig:
             "max_overflow": self.max_overflow,
             "options": self.options,
         }
-    
+
     def get_connection_params(self) -> Dict[str, Any]:
         """获取连接参数（不包含密码）"""
         params = self.to_dict()

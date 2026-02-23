@@ -404,10 +404,12 @@ class SequentialExecutor:
                 # 使用全局 timeout 或任务自身的 timeout
                 task_timeout = self.timeout if self.timeout > 0 else task.timeout
                 self._execute_task(task, task_timeout)
-                
-                if not self._results.get(task_id, ExecutionResult(task_id="", success=False)).success:
+
+                if not self._results.get(
+                    task_id, ExecutionResult(task_id="", success=False)
+                ).success:
                     failed_count += 1
-                
+
                 resolver.mark_completed(task_id)
 
         return [self._results[task_id] for task_id in task_ids]
@@ -426,7 +428,9 @@ class SequentialExecutor:
         if use_signal_timeout:
             # 定义超时处理函数
             def timeout_handler(signum, frame):
-                raise TimeoutError(f"Task {task.task_id} timed out after {timeout} seconds")
+                raise TimeoutError(
+                    f"Task {task.task_id} timed out after {timeout} seconds"
+                )
 
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(int(timeout))

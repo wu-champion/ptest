@@ -49,13 +49,30 @@ def setup_suite_subparser(subparsers):
     run_parser.add_argument("name", help="套件名称")
     run_parser.add_argument("--verbose", action="store_true", help="显示详细输出")
     run_parser.add_argument("--parallel", action="store_true", help="启用并行执行")
-    run_parser.add_argument("--workers", type=int, default=4, help="并行执行的最大工作线程数")
-    run_parser.add_argument("--stop-on-failure", action="store_true", help="失败时停止执行")
-    run_parser.add_argument("--timeout", type=int, default=0, help="用例执行超时时间(秒)")
-    run_parser.add_argument("--retry-failed", type=int, default=0, help="失败用例重试次数")
-    run_parser.add_argument("--dry-run", action="store_true", help="预览执行顺序，不实际执行")
-    run_parser.add_argument("--report-format", choices=["html", "json", "md"], default=None, help="生成报告格式")
-    run_parser.add_argument("--report-output", type=str, default=None, help="报告输出路径")
+    run_parser.add_argument(
+        "--workers", type=int, default=4, help="并行执行的最大工作线程数"
+    )
+    run_parser.add_argument(
+        "--stop-on-failure", action="store_true", help="失败时停止执行"
+    )
+    run_parser.add_argument(
+        "--timeout", type=int, default=0, help="用例执行超时时间(秒)"
+    )
+    run_parser.add_argument(
+        "--retry-failed", type=int, default=0, help="失败用例重试次数"
+    )
+    run_parser.add_argument(
+        "--dry-run", action="store_true", help="预览执行顺序，不实际执行"
+    )
+    run_parser.add_argument(
+        "--report-format",
+        choices=["html", "json", "md"],
+        default=None,
+        help="生成报告格式",
+    )
+    run_parser.add_argument(
+        "--report-output", type=str, default=None, help="报告输出路径"
+    )
 
     return suite_parser
 
@@ -267,36 +284,37 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
         return False
 
     # 检查 dry-run
-    dry_run = getattr(args, 'dry_run', False)
-    
+    dry_run = getattr(args, "dry_run", False)
+
     # 检查 retry-failed
-    retry_count = getattr(args, 'retry_failed', 0)
-    
+    retry_count = getattr(args, "retry_failed", 0)
+
     # 检查执行模式
     parallel = False
-    if hasattr(args, 'parallel') and args.parallel:
+    if hasattr(args, "parallel") and args.parallel:
         parallel = True
-    
-    max_workers = getattr(args, 'workers', suite.max_workers)
-    
+
+    max_workers = getattr(args, "workers", suite.max_workers)
+
     # 检查 stop_on_failure
-    stop_on_failure = getattr(args, 'stop_on_failure', False) or suite.stop_on_failure
-    
+    stop_on_failure = getattr(args, "stop_on_failure", False) or suite.stop_on_failure
+
     # 检查 timeout
-    timeout = getattr(args, 'timeout', 0) or suite.timeout
-    
+    timeout = getattr(args, "timeout", 0) or suite.timeout
+
     if dry_run:
         print_colored("[Dry Run] 预览执行顺序:", 96)
         # 显示执行顺序
         from ..execution import DependencyResolver
+
         sorted_cases = suite.get_sorted_cases()
         task_ids = [case.case_id for case in sorted_cases]
-        
+
         dependencies = {}
         for case in suite.cases:
             if case.depends_on:
                 dependencies[case.case_id] = case.depends_on
-        
+
         resolver = DependencyResolver(dependencies)
         try:
             layers = resolver.get_execution_order(task_ids)
@@ -304,10 +322,10 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
                 print(f"  第 {idx + 1} 层: {', '.join(layer)}")
         except ValueError as e:
             print_colored(f"✗ 依赖解析失败: {e}", 91)
-        
+
         print_colored("\n[Dry Run] 不执行实际测试", 93)
         return True
-    
+
     if stop_on_failure:
         print_colored("失败时停止执行", 92)
     if timeout > 0:
@@ -318,6 +336,7 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
     # 创建 CaseManager
     try:
         from ..cases.manager import CaseManager
+
         case_manager = CaseManager(env_manager)
     except Exception as e:
         print_colored(f"✗ 创建 CaseManager 失败: {e}", 91)
@@ -363,19 +382,22 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
                 print_colored(f"  • {error}", 91)
 
         # 生成报告
-        report_format = getattr(args, 'report_format', None)
+        report_format = getattr(args, "report_format", None)
         if report_format:
             from pathlib import Path
             from datetime import datetime
             import json
-            
-            report_output = getattr(args, 'report_output', None)
+
+            report_output = getattr(args, "report_output", None)
             if report_output:
                 output_path = Path(report_output)
             else:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                output_path = Path.cwd() / f"suite_report_{suite.name}_{timestamp}.{report_format}"
-            
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_path = (
+                    Path.cwd()
+                    / f"suite_report_{suite.name}_{timestamp}.{report_format}"
+                )
+
             if report_format == "json":
                 report_data = {
                     "suite_name": suite.name,
@@ -413,9 +435,9 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
     <div class="summary">
         <h2>摘要 / Summary</h2>
         <p><strong>套件名称:</strong> {suite.name}</p>
-        <p><strong>执行时间:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-        <p><strong>状态:</strong> <span class="{'passed' if result.get('success') else 'failed'}">
-            {'✓ 成功 / SUCCESS' if result.get('success') else '✗ 失败 / FAILED'}
+        <p><strong>执行时间:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+        <p><strong>状态:</strong> <span class="{"passed" if result.get("success") else "failed"}">
+            {"✓ 成功 / SUCCESS" if result.get("success") else "✗ 失败 / FAILED"}
         </span></p>
         <p><strong>总计:</strong> {total} | <span class="passed">通过: {passed}</span> | <span class="failed">失败: {failed}</span></p>
     </div>
@@ -423,18 +445,18 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
     <table>
         <tr><th>用例 ID / Case ID</th><th>状态 / Status</th><th>耗时 / Duration</th></tr>
 """
-                
+
                 for r in result.get("results", []):
                     status = "PASSED" if r.get("success") else "FAILED"
                     status_class = "passed" if r.get("success") else "failed"
                     duration = r.get("duration", "N/A")
                     case_id = r.get("task_id", r.get("case_id", "Unknown"))
-                    html_content += f"        <tr><td>{case_id}</td><td class=\"{status_class}\">{status}</td><td>{duration}s</td></tr>\n"
-                
+                    html_content += f'        <tr><td>{case_id}</td><td class="{status_class}">{status}</td><td>{duration}s</td></tr>\n'
+
                 html_content += """    </table>
 </body>
 </html>"""
-                
+
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(output_path, "w", encoding="utf-8") as f:
                     f.write(html_content)
@@ -446,8 +468,8 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
 ## 摘要 / Summary
 
 - **套件名称**: {suite.name}
-- **执行时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- **状态**: {'✓ 成功 / SUCCESS' if result.get('success') else '✗ 失败 / FAILED'}
+- **执行时间**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+- **状态**: {"✓ 成功 / SUCCESS" if result.get("success") else "✗ 失败 / FAILED"}
 - **总计**: {total} | 通过: {passed} | 失败: {failed}
 
 ## 测试结果 / Test Results
@@ -460,7 +482,7 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
                     duration = r.get("duration", "N/A")
                     case_id = r.get("task_id", r.get("case_id", "Unknown"))
                     md_content += f"| {case_id} | {status} | {duration}s |\n"
-                
+
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(output_path, "w", encoding="utf-8") as f:
                     f.write(md_content)
@@ -473,5 +495,6 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
     except Exception as e:
         print_colored(f"✗ 执行套件时发生错误: {e}", 91)
         import traceback
+
         traceback.print_exc()
         return False

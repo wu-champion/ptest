@@ -559,6 +559,7 @@ def _run_sequential(case_manager, case_ids, timeout) -> bool:
     # 创建任务
     tasks = []
     for case_id in case_ids:
+
         def run_case_task(case_id=case_id):
             result = case_manager.run_case(case_id)
             return result
@@ -598,6 +599,7 @@ def _run_parallel(case_manager, case_ids, max_workers, timeout) -> bool:
     # 创建任务
     tasks = []
     for case_id in case_ids:
+
         def run_case_task(case_id=case_id):
             result = case_manager.run_case(case_id)
             return result

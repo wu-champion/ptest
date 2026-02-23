@@ -458,7 +458,6 @@ class HookManager:
 
         return setup_hooks, teardown_hooks
 
-
     @staticmethod
     def parse_use_case_references(
         case_data: dict[str, Any],

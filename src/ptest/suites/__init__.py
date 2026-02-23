@@ -292,7 +292,7 @@ class SuiteManager:
             return {
                 "success": False,
                 "error": "Setup failed",
-                "setup_error": failed_setup.error if failed_setup else "Unknown error"
+                "setup_error": failed_setup.error if failed_setup else "Unknown error",
             }
 
         # ========== 构建依赖图并执行用例 ==========
@@ -341,10 +341,10 @@ class SuiteManager:
             all_results = {}
             remaining_retry = retry_count
             failed_case_ids: set[str] = set()
-            
+
             # 初始执行
             logger.info(f"执行测试套件 (重试次数: {retry_count})")
-            
+
             while remaining_retry >= 0:
                 # 构建当前轮次需要执行的任务
                 current_tasks = []
@@ -353,20 +353,22 @@ class SuiteManager:
                     if failed_case_ids and task.task_id not in failed_case_ids:
                         continue
                     current_tasks.append(task)
-                
+
                 if not current_tasks:
                     logger.info("所有用例已通过，跳过剩余重试")
                     break
-                    
-                logger.info(f"执行轮次 {retry_count - remaining_retry + 1}, 待重选用例: {len(current_tasks)}")
-                
+
+                logger.info(
+                    f"执行轮次 {retry_count - remaining_retry + 1}, 待重选用例: {len(current_tasks)}"
+                )
+
                 # 执行
                 results = executor.execute(current_tasks, dependencies)
-                
+
                 # 记录结果
                 for r in results:
                     all_results[r.task_id] = r
-                
+
                 # 检查失败
                 current_failed = {r.task_id for r in results if not r.success}
                 if current_failed:
@@ -377,7 +379,7 @@ class SuiteManager:
                     logger.info("所有用例通过")
                     failed_case_ids = set()
                     break
-            
+
             # 汇总所有结果
             results = list(all_results.values())
             # 统计结果
@@ -415,13 +417,14 @@ class SuiteManager:
         """执行 setup hooks / Execute setup hooks"""
         if not setup_hooks:
             return []
-        
+
         logger.info(f"执行套件 Setup: {len(setup_hooks)} 个 hook")
         results = []
-        
+
         from ..cases.hooks import HookExecutor, Hook, HookWhen, HookType
+
         hook_executor = HookExecutor(case_manager.env_manager if case_manager else None)
-        
+
         for hook_def in setup_hooks:
             try:
                 # hook_def 可以是 Hook 对象或字典
@@ -435,9 +438,9 @@ class SuiteManager:
                         type=HookType.COMMAND,
                         when=HookWhen.SETUP,
                         config={"command": str(hook_def)},
-                        name=str(hook_def)
+                        name=str(hook_def),
                     )
-                
+
                 result = hook_executor.execute_hook(hook)
                 results.append(result)
                 if not result.success:
@@ -445,20 +448,21 @@ class SuiteManager:
                     return results  # 失败后停止
             except Exception as e:
                 logger.warning(f"执行 Setup hook 跳过: {hook_def} - {e}")
-        
+
         return results
 
     def _execute_teardown(self, teardown_hooks: list, case_manager) -> list:
         """执行 teardown hooks / Execute teardown hooks"""
         if not teardown_hooks:
             return []
-        
+
         logger.info(f"执行套件 Teardown: {len(teardown_hooks)} 个 hook")
         results = []
-        
+
         from ..cases.hooks import HookExecutor, Hook, HookWhen, HookType
+
         hook_executor = HookExecutor(case_manager.env_manager if case_manager else None)
-        
+
         for hook_def in teardown_hooks:
             try:
                 # hook_def 可以是 Hook 对象或字典
@@ -472,14 +476,14 @@ class SuiteManager:
                         type=HookType.COMMAND,
                         when=HookWhen.TEARDOWN,
                         config={"command": str(hook_def), "always_run": True},
-                        name=str(hook_def)
+                        name=str(hook_def),
                     )
-                
+
                 result = hook_executor.execute_hook(hook)
                 results.append(result)
                 if not result.success:
                     logger.warning(f"Teardown hook 警告: {hook.name} - {result.error}")
             except Exception as e:
                 logger.warning(f"执行 Teardown hook 跳过: {hook_def} - {e}")
-        
+
         return results

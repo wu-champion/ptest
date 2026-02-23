@@ -13,18 +13,20 @@ except ImportError:
     def get_colored_text(text: Any, color_code: Any) -> str:
         return str(text)
 
+
 # 尝试导入 YAML
 try:
     import yaml
+
     YAML_AVAILABLE = True
 except ImportError:
     YAML_AVAILABLE = False
 
 
-
 def _is_ci_environment() -> bool:
     """检测是否在 CI 环境中运行"""
     import os
+
     ci_indicators = [
         "CI",
         "GITHUB_ACTIONS",
@@ -36,6 +38,7 @@ def _is_ci_environment() -> bool:
         "BUILDKITE",
     ]
     return any(os.environ.get(indicator) for indicator in ci_indicators)
+
 
 class CaseManager:
     """测试用例管理器"""
@@ -136,7 +139,9 @@ class CaseManager:
     def _save_cases_yaml(self) -> None:
         """保存用例为 YAML 格式"""
         if not YAML_AVAILABLE:
-            self.env_manager.logger.warning("PyYAML not available, saving as JSON instead")
+            self.env_manager.logger.warning(
+                "PyYAML not available, saving as JSON instead"
+            )
             self._save_cases_json()
             return
         try:
@@ -151,9 +156,10 @@ class CaseManager:
         except Exception as e:
             self.env_manager.logger.warning(f"Failed to save YAML cases: {e}")
 
-
     @staticmethod
-    def convert_yaml_to_json(yaml_path: str | Path, json_path: str | Path | None = None) -> str:
+    def convert_yaml_to_json(
+        yaml_path: str | Path, json_path: str | Path | None = None
+    ) -> str:
         """
         将 YAML 文件转换为 JSON 文件
 
@@ -169,7 +175,9 @@ class CaseManager:
             ValueError: YAML 格式错误
         """
         if not YAML_AVAILABLE:
-            raise ImportError("PyYAML is required for YAML conversion. Install it with: pip install pyyaml")
+            raise ImportError(
+                "PyYAML is required for YAML conversion. Install it with: pip install pyyaml"
+            )
 
         yaml_path = Path(yaml_path)
         if not yaml_path.exists():
@@ -192,7 +200,9 @@ class CaseManager:
         return str(json_path)
 
     @staticmethod
-    def convert_json_to_yaml(json_path: str | Path, yaml_path: str | Path | None = None) -> str:
+    def convert_json_to_yaml(
+        json_path: str | Path, yaml_path: str | Path | None = None
+    ) -> str:
         """
         将 JSON 文件转换为 YAML 文件
 
@@ -207,7 +217,9 @@ class CaseManager:
             FileNotFoundError: JSON 文件不存在
         """
         if not YAML_AVAILABLE:
-            raise ImportError("PyYAML is required for YAML conversion. Install it with: pip install pyyaml")
+            raise ImportError(
+                "PyYAML is required for YAML conversion. Install it with: pip install pyyaml"
+            )
 
         json_path = Path(json_path)
         if not json_path.exists():
@@ -269,7 +281,6 @@ class CaseManager:
             return f"✓ Test case '{case_id}' removed"
         return f"✗ Test case '{case_id}' does not exist"
 
-
     def _merge_params(
         self, case_data: dict[str, Any], params: dict[str, Any]
     ) -> dict[str, Any]:
@@ -291,7 +302,11 @@ class CaseManager:
         def _deep_merge(base: dict, overlay: dict) -> dict:
             result = copy.deepcopy(base)
             for key, value in overlay.items():
-                if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                if (
+                    key in result
+                    and isinstance(result[key], dict)
+                    and isinstance(value, dict)
+                ):
                     result[key] = _deep_merge(result[key], value)
                 else:
                     result[key] = copy.deepcopy(value)
@@ -424,6 +439,7 @@ class CaseManager:
         # 尝试导入 tqdm
         try:
             from tqdm import tqdm
+
             has_tqdm = True
         except ImportError:
             has_tqdm = False
