@@ -1,3 +1,27 @@
+## [1.2.0] - 2026-02-24
+
+> **注意**: v1.2.0 是 CLI 完善与功能补全版本
+> 安装命令: `pip install ptestx==1.2.0`
+
+### Added - 新增功能
+
+#### Sprint 1: CLI 完善
+ 测试套件执行 (ptest suite run)
+ Mock CLI 集成 (ptest mock start/stop/list)
+ 并行执行 (ptest case run --parallel)
+
+#### Sprint 2: 功能补全
+ SQL INSERT 格式 (ptest data generate --format sql)
+ YAML 用例持久化
+ 用例引用作为 Setup
+
+#### Sprint 3: 体验优化
+ 快速开始示例 (5个)
+ 执行进度显示
+ 数据库通用接口
+
+---
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
