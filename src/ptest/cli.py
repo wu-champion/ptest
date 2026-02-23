@@ -13,6 +13,7 @@ from .tools.manager import ToolManager
 from .data.cli import setup_data_subparser, handle_data_command
 from .contract.cli import setup_contract_subparser, handle_contract_command
 from .suites.cli import setup_suite_subparser, handle_suite_command
+from .mock.cli import setup_mock_subparser, handle_mock_command
 from .utils import print_colored, get_colored_text
 
 
@@ -155,6 +156,12 @@ def setup_cli():
         "--parallel", action="store_true", help="Enable parallel execution"
     )
     run_parser.add_argument(
+        "--workers", type=int, default=4, help="Number of parallel workers"
+    )
+    run_parser.add_argument(
+        "--timeout", type=int, default=0, help="Case execution timeout in seconds"
+    )
+    run_parser.add_argument(
         "--format",
         choices=["html", "json", "yaml"],
         default="html",
@@ -188,6 +195,9 @@ def setup_cli():
 
     # contract commands
     setup_contract_subparser(subparsers)
+
+    # mock commands
+    setup_mock_subparser(subparsers)
 
     return parser
 
@@ -399,6 +409,7 @@ def main():
         "data": lambda: _handle_data_command(env_manager, args),
         "contract": lambda: _handle_contract_command(env_manager, args),
         "suite": lambda: _handle_suite_command(env_manager, args),
+        "mock": lambda: handle_mock_command(args),
         "status": lambda: _handle_status_command(env_manager, args),
     }
 
@@ -522,13 +533,44 @@ def _handle_run_command(env_manager, args) -> bool:
         print_colored("没有要运行的用例", 93)
         return True
 
-    print_colored(f"开始运行 {len(case_ids)} 个用例...", 96)
+    # 获取执行参数
+    parallel = getattr(args, "parallel", False)
+    max_workers = getattr(args, "workers", 4)
+    timeout = getattr(args, "timeout", 0)
+
+    if parallel:
+        print_colored(f"并行运行 {len(case_ids)} 个用例 (workers={max_workers})...", 96)
+        return _run_parallel(case_manager, case_ids, max_workers, timeout)
+    else:
+        print_colored(f"开始运行 {len(case_ids)} 个用例...", 96)
+        return _run_sequential(case_manager, case_ids, timeout)
+
+
+def _run_sequential(case_manager, case_ids, timeout) -> bool:
+    """串行执行用例"""
+    from .execution import SequentialExecutor, ExecutionTask
 
     passed = 0
     failed = 0
 
+    # 创建执行器
+    executor = SequentialExecutor(stop_on_failure=False, timeout=timeout)
+
+    # 创建任务
+    tasks = []
     for case_id in case_ids:
-        result = case_manager.run_case(case_id)
+
+        def run_case_task(case_id=case_id):
+            result = case_manager.run_case(case_id)
+            return result
+
+        task = ExecutionTask(task_id=case_id, func=run_case_task)
+        tasks.append(task)
+
+    # 执行
+    results = executor.execute(tasks)
+
+    for result in results:
         if result.success:
             passed += 1
             status_icon = "✓"
@@ -538,7 +580,49 @@ def _handle_run_command(env_manager, args) -> bool:
             status_icon = "✗"
             color = 91
 
-        print_colored(f"{status_icon} {case_id}: {result.duration:.2f}s", color)
+        print_colored(f"{status_icon} {result.task_id}: {result.duration:.2f}s", color)
+
+    print_colored(f"\n完成: {passed} 通过, {failed} 失败", 96 if failed == 0 else 91)
+    return failed == 0
+
+
+def _run_parallel(case_manager, case_ids, max_workers, timeout) -> bool:
+    """并行执行用例"""
+    from .execution import ParallelExecutor, ExecutionTask
+
+    passed = 0
+    failed = 0
+
+    # 创建执行器
+    executor = ParallelExecutor(max_workers=max_workers)
+
+    # 创建任务
+    tasks = []
+    for case_id in case_ids:
+
+        def run_case_task(case_id=case_id):
+            result = case_manager.run_case(case_id)
+            return result
+
+        task = ExecutionTask(task_id=case_id, func=run_case_task, timeout=timeout)
+        tasks.append(task)
+
+    # 执行
+    results = executor.execute(tasks)
+
+    for result in results:
+        if result.success:
+            passed += 1
+            status_icon = "✓"
+            color = 92
+        else:
+            failed += 1
+            status_icon = "✗"
+            color = 91
+
+        print_colored(f"{status_icon} {result.task_id}: {result.duration:.2f}s", color)
+
+    executor.shutdown()
 
     print_colored(f"\n完成: {passed} 通过, {failed} 失败", 96 if failed == 0 else 91)
     return failed == 0

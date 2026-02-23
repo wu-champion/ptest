@@ -1,0 +1,29 @@
+# Mock 服务配置文件
+# 定义 Mock 服务的响应
+
+mocks:
+  # 支付服务 Mock
+  - name: payment_api
+    url: https://api.payment.com/v1/charge
+    method: POST
+    response:
+      status: 200
+      headers:
+        Content-Type: application/json
+      body:
+        transaction_id: "TXN_${random}"
+        status: "success"
+        amount: "${request.body.amount}"
+        currency: "USD"
+        created_at: "${timestamp}"
+    
+  # 退款服务 Mock
+  - name: refund_api
+    url: https://api.payment.com/v1/refund
+    method: POST
+    response:
+      status: 200
+      body:
+        refund_id: "REF_${random}"
+        status: "refunded"
+        original_transaction_id: "${request.body.transaction_id}"

@@ -48,6 +48,7 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     TIMEOUT = "timeout"
+    SKIPPED = "skipped"
 
 
 @dataclass
@@ -333,8 +334,16 @@ class ParallelExecutor:
 class SequentialExecutor:
     """串行执行器 / Sequential executor"""
 
-    def __init__(self):
-        """初始化串行执行器"""
+    def __init__(self, stop_on_failure: bool = False, timeout: float = 0):
+        """
+        初始化串行执行器
+
+        Args:
+            stop_on_failure: 失败时是否停止执行
+            timeout: 超时时间(秒), 0 表示无超时
+        """
+        self.stop_on_failure = stop_on_failure
+        self.timeout = timeout
         self._results: dict[str, ExecutionResult] = {}
 
     def shutdown(self) -> None:
@@ -372,19 +381,59 @@ class SequentialExecutor:
             logger.error(f"依赖解析失败: {e}")
             raise
 
+        failed_count = 0
+
         # 按顺序执行任务
         for layer in layers:
             for task_id in layer:
+                # 检查 stop_on_failure
+                if self.stop_on_failure and failed_count > 0:
+                    # 标记剩余任务为跳过
+                    logger.info(f"因前面的失败，跳过任务: {task_id}")
+                    task = task_map[task_id]
+                    self._results[task_id] = ExecutionResult(
+                        task_id=task_id,
+                        success=False,
+                        error="Skipped due to previous failure",
+                        status=TaskStatus.SKIPPED,
+                    )
+                    resolver.mark_completed(task_id)
+                    continue
+
                 task = task_map[task_id]
-                self._execute_task(task)
+                # 使用全局 timeout 或任务自身的 timeout
+                task_timeout = self.timeout if self.timeout > 0 else task.timeout
+                self._execute_task(task, task_timeout)
+
+                if not self._results.get(
+                    task_id, ExecutionResult(task_id="", success=False)
+                ).success:
+                    failed_count += 1
+
                 resolver.mark_completed(task_id)
 
         return [self._results[task_id] for task_id in task_ids]
 
-    def _execute_task(self, task: ExecutionTask) -> None:
+    def _execute_task(self, task: ExecutionTask, timeout: float = 0) -> None:
         """执行单个任务"""
+        import signal
+        import sys
+
         task.status = TaskStatus.RUNNING
         task.start_time = time.time()
+
+        # 信号处理仅在 Unix 主线程上可用
+        use_signal_timeout = timeout > 0 and sys.platform != "win32"
+
+        if use_signal_timeout:
+            # 定义超时处理函数
+            def timeout_handler(signum, frame):
+                raise TimeoutError(
+                    f"Task {task.task_id} timed out after {timeout} seconds"
+                )
+
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(int(timeout))
 
         try:
             result = task.func(*task.args, **task.kwargs)
@@ -401,6 +450,21 @@ class SequentialExecutor:
 
             logger.info(f"任务完成: {task.task_id}")
 
+        except TimeoutError as e:
+            task.end_time = time.time()
+            task.status = TaskStatus.TIMEOUT
+            task.error = str(e)
+
+            self._results[task.task_id] = ExecutionResult(
+                task_id=task.task_id,
+                success=False,
+                error=str(e),
+                duration=task.end_time - task.start_time,
+                status=TaskStatus.TIMEOUT,
+            )
+
+            logger.error(f"任务超时: {task.task_id} - {e}")
+
         except Exception as e:
             task.end_time = time.time()
             task.status = TaskStatus.FAILED
@@ -415,6 +479,11 @@ class SequentialExecutor:
             )
 
             logger.error(f"任务失败: {task.task_id} - {e}")
+
+        finally:
+            # 取消超时信号
+            if use_signal_timeout:
+                signal.alarm(0)
 
 
 def create_executor(

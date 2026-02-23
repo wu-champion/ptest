@@ -1,0 +1,26 @@
+# ptest 配置文件
+# 基础 API 测试示例配置
+
+# 日志配置
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# 报告配置
+reporting:
+  enabled: true
+  format: json
+  output_dir: ./reports
+
+# 测试执行配置
+execution:
+  retry_failed: false
+  parallel: false
+  timeout: 30
+
+# 默认请求配置
+defaults:
+  request:
+    timeout: 30
+    headers:
+      User-Agent: ptest/1.0

@@ -1,0 +1,25 @@
+# test_case_2.yaml
+# POST 请求测试
+# 标签: regression
+
+test_case_2:
+  description: POST 请求测试
+  type: api
+  tags:
+    - regression
+  
+  request:
+    method: POST
+    url: https://httpbin.org/post
+    headers:
+      Content-Type: application/json
+    body:
+      name: test_user
+      email: test@example.com
+  
+  assertions:
+    - type: status_code
+      expected: 200
+    - type: json_path
+      path: "$.json.name"
+      expected: "test_user"

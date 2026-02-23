@@ -1,0 +1,62 @@
+# test_payment.yaml
+# 支付流程测试 - 使用 Mock 服务
+#
+# 本测试用例演示:
+# 1. 如何使用 Mock 服务模拟外部依赖
+# 2. 如何测试支付流程
+# 3. 如何验证 Mock 响应
+
+test_payment_success:
+  description: 测试支付成功流程
+  type: api
+  # 启用 Mock
+  use_mock: true
+  mock_config: mock_config.yaml
+  
+  request:
+    method: POST
+    url: https://api.payment.com/v1/charge
+    headers:
+      Content-Type: application/json
+      Authorization: Bearer test_token
+    body:
+      amount: 100.00
+      currency: USD
+      customer_id: cust_12345
+  
+  assertions:
+    - type: status_code
+      expected: 200
+    - type: json_path
+      path: "$.status"
+      expected: "success"
+    - type: json_path
+      path: "$.transaction_id"
+      expected_exists: true
+    - type: json_path
+      path: "$.amount"
+      expected: 100.00
+
+test_payment_refund:
+  description: 测试退款流程
+  type: api
+  use_mock: true
+  mock_config: mock_config.yaml
+  
+  setup:
+    # 先执行支付
+    - use_case: test_payment_success
+  
+  request:
+    method: POST
+    url: https://api.payment.com/v1/refund
+    body:
+      transaction_id: "TXN_12345"
+      amount: 50.00
+  
+  assertions:
+    - type: status_code
+      expected: 200
+    - type: json_path
+      path: "$.status"
+      expected: "refunded"

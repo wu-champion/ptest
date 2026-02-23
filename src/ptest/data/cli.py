@@ -46,9 +46,26 @@ def setup_data_subparser(subparsers):
     generate_parser.add_argument(
         "--format",
         "-f",
-        choices=["json", "yaml", "csv", "raw"],
+        choices=["json", "yaml", "csv", "raw", "sql"],
         default="json",
         help="Output format (default: json)",
+    )
+    generate_parser.add_argument(
+        "--table", "-t", help="Table name for SQL format (required if format=sql)"
+    )
+    generate_parser.add_argument(
+        "--dialect",
+        "-d",
+        choices=["mysql", "postgresql", "sqlite", "generic"],
+        default="generic",
+        help="SQL dialect for SQL format (default: generic)",
+    )
+    generate_parser.add_argument(
+        "--batch-size",
+        "-b",
+        type=int,
+        default=100,
+        help="Batch size for SQL INSERT (default: 100)",
     )
     generate_parser.add_argument("--output", "-o", help="Output file path")
     generate_parser.add_argument(
@@ -121,15 +138,31 @@ def _handle_generate(args) -> bool:
             print_colored("  Use 'ptest data types' to see supported types", 93)
             return False
 
+        # SQL format requires table name
+        if args.format == "sql" and not args.table:
+            print_colored("✗ --table is required when using SQL format", 91)
+            return False
+
         # 创建生成器
         config = DataGenerationConfig(locale=args.locale, seed=args.seed)
         generator = DataGenerator(config)
 
         # 生成数据
         print_colored(f"Generating {args.count} item(s) of type '{args.type}'...", 94)
-        result = generator.generate(
-            data_type=args.type, count=args.count, format=args.format
-        )
+
+        # 根据格式调用不同的生成方法
+        if args.format == "sql":
+            result = generator.generate_sql(
+                data_type=args.type,
+                count=args.count,
+                table=args.table,
+                dialect=args.dialect,
+                batch_size=args.batch_size,
+            )
+        else:
+            result = generator.generate(
+                data_type=args.type, count=args.count, format=args.format
+            )
 
         # 输出结果
         if args.output:
