@@ -1,6 +1,7 @@
 # ptest/objects/db.py
 from .base import BaseManagedObject
 from typing import Dict, Any, Optional, Tuple
+from dataclasses import dataclass, field
 
 try:
     from ..utils import get_colored_text
@@ -8,6 +9,66 @@ except ImportError:
 
     def get_colored_text(text: Any, color_code: Any) -> str:
         return str(text)
+
+
+@dataclass
+class DatabaseConfig:
+    """数据库配置类 - 提供类型安全的配置管理"""
+    
+    # 连接参数
+    driver_module: str = ""  # 驱动模块名 (如: pymysql, psycopg2)
+    driver_class: str = ""   # 驱动类名 (如: Connection, Client)
+    host: str = "localhost"
+    port: int = 0
+    username: str = ""
+    password: str = ""
+    database: str = ""
+    
+    # 额外参数
+    charset: str = "utf8mb4"
+    timeout: int = 30
+    
+    # 连接池配置
+    pool_size: int = 5
+    max_overflow: int = 10
+    
+    # 其他选项
+    options: Dict[str, Any] = field(default_factory=dict)
+    
+    @classmethod
+    def from_dict(cls, config: Dict[str, Any]) -> "DatabaseConfig":
+        """从字典创建配置"""
+        return cls(**{k: v for k, v in config.items() if k in cls.__annotations__})
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            "driver_module": self.driver_module,
+            "driver_class": self.driver_class,
+            "host": self.host,
+            "port": self.port,
+            "username": self.username,
+            "password": self.password,
+            "database": self.database,
+            "charset": self.charset,
+            "timeout": self.timeout,
+            "pool_size": self.pool_size,
+            "max_overflow": self.max_overflow,
+            "options": self.options,
+        }
+    
+    def get_connection_params(self) -> Dict[str, Any]:
+        """获取连接参数（不包含密码）"""
+        params = self.to_dict()
+        params.pop("password", None)
+        params.pop("driver_module", None)
+        params.pop("driver_class", None)
+        params.pop("options", None)
+        return {k: v for k, v in params.items() if v}
+
+
+# 内置数据库连接器已通过底部的注册完成
+# DatabaseRegistry.register 在文件末尾统一注册
 
 
 class DatabaseConnector:

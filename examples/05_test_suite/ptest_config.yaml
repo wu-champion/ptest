@@ -1,0 +1,19 @@
+# ptest 配置文件
+# 测试套件示例配置
+
+logging:
+  level: INFO
+
+reporting:
+  enabled: true
+  format: json
+  output_dir: ./reports
+
+execution:
+  retry_failed: false
+  parallel: false
+  timeout: 60
+
+# 测试套件配置
+suites:
+  default_suite: suites/regression_suite.yaml

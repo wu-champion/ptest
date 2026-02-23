@@ -351,6 +351,83 @@ class DataGenerator:
                 lines.append(f"- {item}")
             return "\n".join(lines)
 
+    def generate_sql(
+        self,
+        data_type: str | DataType,
+        count: int = 1,
+        table: str = "",
+        dialect: str = "generic",
+        batch_size: int = 100,
+    ) -> str:
+        """生成 SQL INSERT 语句"""
+        if count <= 0:
+            raise ValueError(f"count must be positive, got {count}")
+        if count > self.MAX_GENERATION_COUNT:
+            raise ValueError(
+                f"count cannot exceed {self.MAX_GENERATION_COUNT}, got {count}"
+            )
+        if not table:
+            raise ValueError("table name is required for SQL format")
+
+        data_type = DataType(data_type) if isinstance(data_type, str) else data_type
+
+        results = []
+        for _ in range(count):
+            value = self._generate_single(data_type)
+            results.append(value)
+
+        return self._format_sql_insert(results, table, dialect, batch_size)
+
+    def _format_sql_insert(
+        self, data: list[Any], table: str, dialect: str, batch_size: int
+    ) -> str:
+        """格式化 SQL INSERT 语句"""
+        if not data:
+            return ""
+
+        column_name = self._get_column_name_from_datatype(data[0])
+        sql_parts = []
+
+        for i in range(0, len(data), batch_size):
+            batch = data[i : i + batch_size]
+            values = []
+            for value in batch:
+                formatted_value = self._format_sql_value(value, dialect)
+                values.append(formatted_value)
+
+            # 每个值需要用括号包裹
+            values_clause = ", ".join(f"({v})" for v in values)
+            sql = f"INSERT INTO {table} ({column_name}) VALUES {values_clause};"
+            sql_parts.append(sql)
+
+        return "\n".join(sql_parts)
+
+    def _get_column_name_from_datatype(self, value: Any) -> str:
+        """根据数据类型获取默认列名"""
+        value_type = type(value).__name__.lower()
+        type_to_column = {
+            "str": "name",
+            "int": "value",
+            "float": "amount",
+            "bool": "flag",
+            "datetime": "created_at",
+        }
+        return type_to_column.get(value_type, "data")
+
+    def _format_sql_value(self, value: Any, dialect: str) -> str:
+        """格式化 SQL 值"""
+        if value is None:
+            return "NULL"
+        elif isinstance(value, bool):
+            return "1" if value else "0"
+        elif isinstance(value, (int, float)):
+            return str(value)
+        elif isinstance(value, datetime):
+            return f"'{value.isoformat()}'"
+        else:
+            escaped = str(value).replace("'", "''")
+            return f"'{escaped}'"
+
     def _to_csv(self, data: list[Any]) -> str:
         """转换为CSV格式"""
         if not data:

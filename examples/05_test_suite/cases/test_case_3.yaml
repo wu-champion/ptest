@@ -1,0 +1,20 @@
+# test_case_3.yaml
+# 响应时间测试
+# 标签: smoke, performance
+
+test_case_3:
+  description: 响应时间测试
+  type: api
+  tags:
+    - smoke
+    - performance
+  
+  request:
+    method: GET
+    url: https://httpbin.org/delay/1
+  
+  assertions:
+    - type: status_code
+      expected: 200
+    - type: response_time
+      max_ms: 3000

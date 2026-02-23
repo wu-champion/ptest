@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 
-from . import SuiteManager, ExecutionMode
+from . import SuiteManager
 from ..utils import print_colored, get_colored_text
 from ..core import get_logger
 
@@ -48,6 +48,14 @@ def setup_suite_subparser(subparsers):
     run_parser = suite_subparsers.add_parser("run", help="运行测试套件")
     run_parser.add_argument("name", help="套件名称")
     run_parser.add_argument("--verbose", action="store_true", help="显示详细输出")
+    run_parser.add_argument("--parallel", action="store_true", help="启用并行执行")
+    run_parser.add_argument("--workers", type=int, default=4, help="并行执行的最大工作线程数")
+    run_parser.add_argument("--stop-on-failure", action="store_true", help="失败时停止执行")
+    run_parser.add_argument("--timeout", type=int, default=0, help="用例执行超时时间(秒)")
+    run_parser.add_argument("--retry-failed", type=int, default=0, help="失败用例重试次数")
+    run_parser.add_argument("--dry-run", action="store_true", help="预览执行顺序，不实际执行")
+    run_parser.add_argument("--report-format", choices=["html", "json", "md"], default=None, help="生成报告格式")
+    run_parser.add_argument("--report-output", type=str, default=None, help="报告输出路径")
 
     return suite_parser
 
@@ -258,15 +266,215 @@ def _handle_run(env_manager, suite_manager, args) -> bool:
             print_colored(f"  • {error}", 91)
         return False
 
-    if suite.execution_mode == ExecutionMode.PARALLEL and suite.max_workers > 1:
-        print_colored("注意: 并行执行功能需要进一步实现", 93)
-        print_colored("当前只支持串行执行", 93)
-    print()
+    # 检查 dry-run
+    dry_run = getattr(args, 'dry_run', False)
+    
+    # 检查 retry-failed
+    retry_count = getattr(args, 'retry_failed', 0)
+    
+    # 检查执行模式
+    parallel = False
+    if hasattr(args, 'parallel') and args.parallel:
+        parallel = True
+    
+    max_workers = getattr(args, 'workers', suite.max_workers)
+    
+    # 检查 stop_on_failure
+    stop_on_failure = getattr(args, 'stop_on_failure', False) or suite.stop_on_failure
+    
+    # 检查 timeout
+    timeout = getattr(args, 'timeout', 0) or suite.timeout
+    
+    if dry_run:
+        print_colored("[Dry Run] 预览执行顺序:", 96)
+        # 显示执行顺序
+        from ..execution import DependencyResolver
+        sorted_cases = suite.get_sorted_cases()
+        task_ids = [case.case_id for case in sorted_cases]
+        
+        dependencies = {}
+        for case in suite.cases:
+            if case.depends_on:
+                dependencies[case.case_id] = case.depends_on
+        
+        resolver = DependencyResolver(dependencies)
+        try:
+            layers = resolver.get_execution_order(task_ids)
+            for idx, layer in enumerate(layers):
+                print(f"  第 {idx + 1} 层: {', '.join(layer)}")
+        except ValueError as e:
+            print_colored(f"✗ 依赖解析失败: {e}", 91)
+        
+        print_colored("\n[Dry Run] 不执行实际测试", 93)
+        return True
+    
+    if stop_on_failure:
+        print_colored("失败时停止执行", 92)
+    if timeout > 0:
+        print_colored(f"超时时间: {timeout}秒", 92)
+    if retry_count > 0:
+        print_colored(f"失败重试次数: {retry_count}", 92)
 
-    # TODO: 实现并行执行逻辑
-    # for case in suite.get_sorted_cases():
-    #     if not case.skip:
-    #         case_manager.run_case(case.case_id)
+    # 创建 CaseManager
+    try:
+        from ..cases.manager import CaseManager
+        case_manager = CaseManager(env_manager)
+    except Exception as e:
+        print_colored(f"✗ 创建 CaseManager 失败: {e}", 91)
+        return False
 
-    print_colored("串行执行功能待实现", 93)
-    return True
+    # 检查用例是否存在
+    if not case_manager.cases:
+        print_colored("✗ 没有可用的测试用例", 91)
+        print_colored("请先添加测试用例: ptest case add <case_id> <json>", 93)
+        return False
+
+    # 执行套件 (支持重试)
+    try:
+        result = suite_manager.execute_suite(
+            suite_name=suite.name,
+            case_manager=case_manager,
+            parallel=parallel,
+            max_workers=max_workers,
+            stop_on_failure=stop_on_failure,
+            timeout=timeout,
+            retry_count=retry_count,
+        )
+
+        # 显示执行结果
+        print()
+        if result.get("success"):
+            print_colored("✓ 套件执行成功", 92)
+        else:
+            print_colored("✗ 套件执行失败", 91)
+
+        total = result.get("total", 0)
+        passed = result.get("passed", 0)
+        failed = result.get("failed", 0)
+
+        print(f"总计: {total}, 通过: {passed}, 失败: {failed}")
+
+        # 显示错误信息
+        if result.get("error"):
+            print_colored(f"错误: {result.get('error')}", 91)
+
+        if result.get("errors"):
+            for error in result.get("errors"):
+                print_colored(f"  • {error}", 91)
+        if result.get("errors"):
+            for error in result.get("errors"):
+                print_colored(f"  • {error}", 91)
+
+        # 生成报告
+        report_format = getattr(args, 'report_format', None)
+        if report_format:
+            from pathlib import Path
+            from datetime import datetime
+            import json
+            
+            report_output = getattr(args, 'report_output', None)
+            if report_output:
+                output_path = Path(report_output)
+            else:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                output_path = Path.cwd() / f"suite_report_{suite.name}_{timestamp}.{report_format}"
+            
+            if report_format == "json":
+                report_data = {
+                    "suite_name": suite.name,
+                    "generated_at": datetime.now().isoformat(),
+                    "success": result.get("success", False),
+                    "total": total,
+                    "passed": passed,
+                    "failed": failed,
+                    "results": result.get("results", []),
+                    "teardown_results": result.get("teardown_results", []),
+                }
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, "w", encoding="utf-8") as f:
+                    json.dump(report_data, f, indent=2, ensure_ascii=False)
+                print_colored(f"✓ 报告已生成: {output_path}", 92)
+            elif report_format == "html":
+                # 生成简单HTML报告
+                html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Suite Report - {suite.name}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        .summary {{ background: #f5f5f5; padding: 15px; border-radius: 5px; }}
+        .passed {{ color: green; }}
+        .failed {{ color: red; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 20px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        th {{ background-color: #4CAF50; color: white; }}
+    </style>
+</head>
+<body>
+    <h1>测试套件报告 / Test Suite Report</h1>
+    <div class="summary">
+        <h2>摘要 / Summary</h2>
+        <p><strong>套件名称:</strong> {suite.name}</p>
+        <p><strong>执行时间:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <p><strong>状态:</strong> <span class="{'passed' if result.get('success') else 'failed'}">
+            {'✓ 成功 / SUCCESS' if result.get('success') else '✗ 失败 / FAILED'}
+        </span></p>
+        <p><strong>总计:</strong> {total} | <span class="passed">通过: {passed}</span> | <span class="failed">失败: {failed}</span></p>
+    </div>
+    <h2>测试结果 / Test Results</h2>
+    <table>
+        <tr><th>用例 ID / Case ID</th><th>状态 / Status</th><th>耗时 / Duration</th></tr>
+"""
+                
+                for r in result.get("results", []):
+                    status = "PASSED" if r.get("success") else "FAILED"
+                    status_class = "passed" if r.get("success") else "failed"
+                    duration = r.get("duration", "N/A")
+                    case_id = r.get("task_id", r.get("case_id", "Unknown"))
+                    html_content += f"        <tr><td>{case_id}</td><td class=\"{status_class}\">{status}</td><td>{duration}s</td></tr>\n"
+                
+                html_content += """    </table>
+</body>
+</html>"""
+                
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(html_content)
+                print_colored(f"✓ 报告已生成: {output_path}", 92)
+            elif report_format == "md":
+                # 生成 Markdown 报告
+                md_content = f"""# 测试套件报告 / Test Suite Report
+
+## 摘要 / Summary
+
+- **套件名称**: {suite.name}
+- **执行时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- **状态**: {'✓ 成功 / SUCCESS' if result.get('success') else '✗ 失败 / FAILED'}
+- **总计**: {total} | 通过: {passed} | 失败: {failed}
+
+## 测试结果 / Test Results
+
+| 用例 ID / Case ID | 状态 / Status | 耗时 / Duration |
+|---|---|---|
+"""
+                for r in result.get("results", []):
+                    status = "✓ PASSED" if r.get("success") else "✗ FAILED"
+                    duration = r.get("duration", "N/A")
+                    case_id = r.get("task_id", r.get("case_id", "Unknown"))
+                    md_content += f"| {case_id} | {status} | {duration}s |\n"
+                
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(md_content)
+                print_colored(f"✓ 报告已生成: {output_path}", 92)
+
+        return result.get("success", False)
+
+        return result.get("success", False)
+
+    except Exception as e:
+        print_colored(f"✗ 执行套件时发生错误: {e}", 91)
+        import traceback
+        traceback.print_exc()
+        return False

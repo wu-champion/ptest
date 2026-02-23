@@ -91,6 +91,8 @@ class TestSuite:
     teardown: list[str] = field(default_factory=list)
     execution_mode: ExecutionMode = ExecutionMode.SEQUENTIAL
     max_workers: int = 4
+    stop_on_failure: bool = False
+    timeout: int = 0  # 0 means no timeout
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典 / Convert to dictionary"""
@@ -102,6 +104,8 @@ class TestSuite:
             "teardown": self.teardown,
             "execution_mode": self.execution_mode.value,
             "max_workers": self.max_workers,
+            "stop_on_failure": self.stop_on_failure,
+            "timeout": self.timeout,
         }
 
     @classmethod
@@ -116,6 +120,8 @@ class TestSuite:
             teardown=data.get("teardown", []),
             execution_mode=ExecutionMode(data.get("execution_mode", "sequential")),
             max_workers=data.get("max_workers", 4),
+            stop_on_failure=data.get("stop_on_failure", False),
+            timeout=data.get("timeout", 0),
         )
 
     def validate(self) -> tuple[bool, list[str]]:
@@ -240,6 +246,9 @@ class SuiteManager:
         case_manager=None,
         parallel: bool = False,
         max_workers: int = 4,
+        stop_on_failure: bool = False,
+        timeout: int = 0,
+        retry_count: int = 0,
     ) -> dict[str, Any]:
         """
         执行测试套件 / Execute test suite
@@ -249,6 +258,9 @@ class SuiteManager:
             case_manager: 用例管理器（用于执行用例）
             parallel: 是否并行执行
             max_workers: 最大并行工作数
+            stop_on_failure: 失败时是否停止
+            timeout: 执行超时时间(秒), 0表示无超时
+            retry_count: 失败用例重试次数
 
         Returns:
             执行结果统计
@@ -272,7 +284,18 @@ class SuiteManager:
 
         logger.info(f"开始执行套件: {suite_name} (并行={parallel})")
 
-        # 构建依赖图
+        # ========== 执行 Suite Setup ==========
+        setup_results = self._execute_setup(suite.setup, case_manager)
+        # 检查 setup 是否失败
+        if setup_results and not all(r.success for r in setup_results):
+            failed_setup = next((r for r in setup_results if not r.success), None)
+            return {
+                "success": False,
+                "error": "Setup failed",
+                "setup_error": failed_setup.error if failed_setup else "Unknown error"
+            }
+
+        # ========== 构建依赖图并执行用例 ==========
         dependencies = {}
         for case in suite.cases:
             if case.depends_on:
@@ -287,9 +310,8 @@ class SuiteManager:
 
             def execute_case(case_id=case.case_id):
                 if case_manager:
-                    case_data = case_manager.get_case(case_id)
-                    if case_data:
-                        return case_manager.run_case(case_data)
+                    # 修复: 传 case_id 而非 case_data
+                    return case_manager.run_case(case_id)
                 return {"case_id": case_id, "status": "executed"}
 
             task = ExecutionTask(
@@ -300,6 +322,8 @@ class SuiteManager:
 
         if not tasks:
             logger.warning("没有可执行的用例")
+            # 仍然执行 teardown
+            self._execute_teardown(suite.teardown, case_manager)
             return {"success": True, "total": 0, "passed": 0, "failed": 0}
 
         # 选择执行器
@@ -307,12 +331,55 @@ class SuiteManager:
         if parallel or suite.execution_mode.value == "parallel":
             executor = ParallelExecutor(max_workers=max_workers)
         else:
-            executor = SequentialExecutor()
+            executor = SequentialExecutor(
+                stop_on_failure=stop_on_failure,
+                timeout=timeout,
+            )
 
         try:
-            # 执行
-            results = executor.execute(tasks, dependencies)
-
+            # ========== 执行测试（支持重试）==========
+            all_results = {}
+            remaining_retry = retry_count
+            failed_case_ids = set()
+            
+            # 初始执行
+            logger.info(f"执行测试套件 (重试次数: {retry_count})")
+            
+            while remaining_retry >= 0:
+                # 构建当前轮次需要执行的任务
+                current_tasks = []
+                for task in tasks:
+                    # 如果有失败记录且不是重试轮次，跳过已通过的
+                    if failed_case_ids and task.task_id not in failed_case_ids:
+                        continue
+                    current_tasks.append(task)
+                
+                if not current_tasks:
+                    logger.info("所有用例已通过，跳过剩余重试")
+                    break
+                    
+                logger.info(f"执行轮次 {retry_count - remaining_retry + 1}, 待重选用例: {len(current_tasks)}")
+                
+                # 执行
+                results = executor.execute(current_tasks, dependencies)
+                
+                # 记录结果
+                for r in results:
+                    all_results[r.task_id] = r
+                
+                # 检查失败
+                current_failed = {r.task_id for r in results if not r.success}
+                if current_failed:
+                    logger.warning(f"本轮失败用例: {current_failed}")
+                    failed_case_ids = current_failed
+                    remaining_retry -= 1
+                else:
+                    logger.info("所有用例通过")
+                    failed_case_ids = set()
+                    break
+            
+            # 汇总所有结果
+            results = list(all_results.values())
             # 统计结果
             total = len(results)
             passed = sum(1 for r in results if r.success)
@@ -322,18 +389,97 @@ class SuiteManager:
                 f"套件执行完成: {suite_name} - 总计={total}, 通过={passed}, 失败={failed}"
             )
 
+            # ========== 执行 Suite Teardown (always_run) ==========
+            teardown_results = self._execute_teardown(suite.teardown, case_manager)
+
             return {
                 "success": failed == 0,
                 "total": total,
                 "passed": passed,
                 "failed": failed,
                 "results": [r.to_dict() for r in results],
+                "teardown_results": teardown_results,
             }
 
         except Exception as e:
             logger.error(f"套件执行失败: {e}")
+            # 即使失败也执行 teardown
+            self._execute_teardown(suite.teardown, case_manager)
             return {"success": False, "error": str(e)}
 
         finally:
             if hasattr(executor, "shutdown"):
                 executor.shutdown()
+
+    def _execute_setup(self, setup_hooks: list, case_manager) -> list:
+        """执行 setup hooks / Execute setup hooks"""
+        if not setup_hooks:
+            return []
+        
+        logger.info(f"执行套件 Setup: {len(setup_hooks)} 个 hook")
+        results = []
+        
+        from ..cases.hooks import HookExecutor, Hook, HookWhen, HookType
+        hook_executor = HookExecutor(case_manager.env_manager if case_manager else None)
+        
+        for hook_def in setup_hooks:
+            try:
+                # hook_def 可以是 Hook 对象或字典
+                if isinstance(hook_def, Hook):
+                    hook = hook_def
+                elif isinstance(hook_def, dict):
+                    hook = Hook.from_dict(hook_def)
+                else:
+                    # 如果是字符串，尝试作为命令执行
+                    hook = Hook(
+                        type=HookType.COMMAND,
+                        when=HookWhen.SETUP,
+                        config={"command": str(hook_def)},
+                        name=str(hook_def)
+                    )
+                
+                result = hook_executor.execute_hook(hook)
+                results.append(result)
+                if not result.success:
+                    logger.error(f"Setup hook 失败: {hook.name} - {result.error}")
+                    return results  # 失败后停止
+            except Exception as e:
+                logger.warning(f"执行 Setup hook 跳过: {hook_def} - {e}")
+        
+        return results
+
+    def _execute_teardown(self, teardown_hooks: list, case_manager) -> list:
+        """执行 teardown hooks / Execute teardown hooks"""
+        if not teardown_hooks:
+            return []
+        
+        logger.info(f"执行套件 Teardown: {len(teardown_hooks)} 个 hook")
+        results = []
+        
+        from ..cases.hooks import HookExecutor, Hook, HookWhen, HookType
+        hook_executor = HookExecutor(case_manager.env_manager if case_manager else None)
+        
+        for hook_def in teardown_hooks:
+            try:
+                # hook_def 可以是 Hook 对象或字典
+                if isinstance(hook_def, Hook):
+                    hook = hook_def
+                elif isinstance(hook_def, dict):
+                    hook = Hook.from_dict(hook_def)
+                else:
+                    # 如果是字符串，尝试作为命令执行
+                    hook = Hook(
+                        type=HookType.COMMAND,
+                        when=HookWhen.TEARDOWN,
+                        config={"command": str(hook_def), "always_run": True},
+                        name=str(hook_def)
+                    )
+                
+                result = hook_executor.execute_hook(hook)
+                results.append(result)
+                if not result.success:
+                    logger.warning(f"Teardown hook 警告: {hook.name} - {result.error}")
+            except Exception as e:
+                logger.warning(f"执行 Teardown hook 跳过: {hook_def} - {e}")
+        
+        return results

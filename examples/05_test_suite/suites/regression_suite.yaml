@@ -1,0 +1,59 @@
+# regression_suite.yaml
+# 回归测试套件配置
+#
+# 本套件展示:
+# 1. 如何定义测试套件
+# 2. 如何组织多个测试用例
+# 3. 如何配置并行执行
+
+name: regression_suite
+description: 完整回归测试套件
+version: 1.0
+
+# 要执行的测试用例列表
+cases:
+  - cases/test_case_1.yaml
+  - cases/test_case_2.yaml
+  - cases/test_case_3.yaml
+
+# 执行配置
+execution:
+  # 是否并行执行
+  parallel: false
+  # 并行 worker 数量
+  workers: 4
+  # 失败时是否停止
+  stop_on_failure: false
+  # 超时时间（秒）
+  timeout: 300
+
+# 标签过滤（可选）
+tags:
+  # 只包含这些标签的用例
+  include:
+    - smoke
+    - regression
+  # 排除这些标签的用例
+  exclude:
+    - manual
+    - slow
+
+# 环境配置覆盖
+environment:
+  base_url: https://httpbin.org
+  timeout: 30
+
+# 报告配置
+reporting:
+  format: json
+  output: ./reports/regression_results.json
+  include_passed: true
+
+# Hooks
+setup:
+  - type: command
+    command: echo "套件开始执行"
+
+teardown:
+  - type: command
+    command: echo "套件执行完成"

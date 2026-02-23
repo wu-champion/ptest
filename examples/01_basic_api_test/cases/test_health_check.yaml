@@ -1,0 +1,31 @@
+# test_health_check.yaml
+# 基础 API 测试 - 健康检查接口测试
+# 
+# 本测试用例演示:
+# 1. 如何定义一个简单的 API 测试
+# 2. 如何使用 status_code 断言
+# 3. 如何使用 json_path 断言
+
+test_health_check:
+  description: 测试服务健康检查接口
+  type: api
+  # 定义 API 请求
+  request:
+    method: GET
+    url: https://httpbin.org/get
+    # 可选: 添加请求头
+    headers:
+      Accept: application/json
+  # 定义断言验证响应
+  assertions:
+    # 断言 1: 检查 HTTP 状态码
+    - type: status_code
+      expected: 200
+    # 断言 2: 使用 JSON Path 验证响应内容
+    - type: json_path
+      path: "$.url"
+      expected: "https://httpbin.org/get"
+    # 断言 3: 验证响应是 JSON 格式
+    - type: json_path
+      path: "$.origin"
+      expected_exists: true

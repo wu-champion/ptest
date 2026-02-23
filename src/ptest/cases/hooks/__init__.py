@@ -22,6 +22,7 @@ class HookType(str, Enum):
     API = "api"
     SQL = "sql"
     FUNCTION = "function"
+    USE_CASE = "use_case"  # 用例引用类型
 
 
 class HookWhen(str, Enum):
@@ -104,6 +105,8 @@ class HookExecutor:
                 return self._execute_sql(hook, context)
             elif hook.type == HookType.FUNCTION:
                 return self._execute_function(hook, context)
+            elif hook.type == HookType.USE_CASE:
+                return self._execute_use_case(hook, context)
             else:
                 return HookResult(
                     success=False, error=f"Unknown hook type: {hook.type}"
@@ -309,6 +312,81 @@ class HookExecutor:
             logger.error(f"Function hook error: {e}")
             return HookResult(success=False, error=str(e))
 
+    def _execute_use_case(
+        self, hook: Hook, context: dict[str, Any] | None = None
+    ) -> HookResult:
+        """执行用例引用类型 hook"""
+        # 获取被引用的用例 ID
+        use_case_id = hook.config.get("use_case") or hook.config.get("case_id")
+        if not use_case_id:
+            return HookResult(success=False, error="use_case ID not specified")
+
+        # 检查循环引用
+        if context is None:
+            context = {}
+        execution_chain = context.get("_execution_chain", [])
+        if use_case_id in execution_chain:
+            return HookResult(
+                success=False,
+                error=f"Circular reference detected: {' -> '.join(execution_chain)} -> {use_case_id}",
+            )
+
+        # 获取参数
+        params = hook.config.get("params", {})
+
+        try:
+            # 延迟导入避免循环依赖
+            from ..cases.manager import CaseManager
+
+            start_time = time.time()
+
+            # 创建用例管理器并执行
+            case_manager = CaseManager(self.env_manager)
+            case = case_manager.get_case(use_case_id)
+
+            if not case:
+                return HookResult(
+                    success=False, error=f"Case '{use_case_id}' not found"
+                )
+
+            # 更新执行链以检测循环引用
+            new_context = dict(context) if context else {}
+            new_context["_execution_chain"] = execution_chain + [use_case_id]
+
+            # 执行被引用的用例（传递参数）
+            result = case_manager.run_case(use_case_id, params=params)
+            duration = time.time() - start_time
+
+            if result.status == "passed":
+                # 将输出存储到上下文中供后续使用
+                if new_context.get("_use_case_outputs") is None:
+                    new_context["_use_case_outputs"] = {}
+                new_context["_use_case_outputs"][use_case_id] = {
+                    "status": result.status,
+                    "output": result.output,
+                    "duration": duration,
+                }
+
+                logger.info(f"Use case hook succeeded: {use_case_id}")
+                return HookResult(
+                    success=True,
+                    output=result.output or "",
+                    duration=duration,
+                )
+            else:
+                error_msg = result.error_message or "Unknown error"
+                logger.error(f"Use case hook failed: {use_case_id} - {error_msg}")
+                return HookResult(
+                    success=False,
+                    output=result.output or "",
+                    error=error_msg,
+                    duration=duration,
+                )
+
+        except Exception as e:
+            logger.error(f"Use case hook error: {e}")
+            return HookResult(success=False, error=str(e))
+
     def execute_hooks(
         self,
         hooks: list[Hook],
@@ -377,6 +455,61 @@ class HookManager:
                     teardown_hooks.append(hook)
             except Exception as e:
                 logger.warning(f"Failed to parse hook: {e}")
+
+        return setup_hooks, teardown_hooks
+
+
+    @staticmethod
+    def parse_use_case_references(
+        case_data: dict[str, Any],
+    ) -> tuple[list[Hook], list[Hook]]:
+        """
+        解析 use_case 引用格式 (YAML 简化语法)
+
+        支持格式:
+        ```yaml
+        setup:
+          - use_case: test_user_login
+          - use_case: test_create_product
+            params:
+              product_name: "测试商品"
+          - use_case: test_setup_inventory
+            only_on_success: true
+        ```
+        """
+        setup_hooks = []
+        teardown_hooks = []
+
+        # 解析 setup 中的 use_case 引用
+        if "setup" in case_data:
+            setup_data = case_data["setup"]
+            if isinstance(setup_data, list):
+                for item in setup_data:
+                    if isinstance(item, dict) and "use_case" in item:
+                        hook = Hook(
+                            type=HookType.USE_CASE,
+                            when=HookWhen.SETUP,
+                            config=item,
+                            name=item.get("use_case", ""),
+                            only_on_success=item.get("only_on_success", False),
+                        )
+                        setup_hooks.append(hook)
+
+        # 解析 teardown 中的 use_case 引用
+        if "teardown" in case_data:
+            teardown_data = case_data["teardown"]
+            if isinstance(teardown_data, list):
+                for item in teardown_data:
+                    if isinstance(item, dict) and "use_case" in item:
+                        hook = Hook(
+                            type=HookType.USE_CASE,
+                            when=HookWhen.TEARDOWN,
+                            config=item,
+                            name=item.get("use_case", ""),
+                            only_on_success=item.get("only_on_success", False),
+                            always_run=item.get("always_run", True),
+                        )
+                        teardown_hooks.append(hook)
 
         return setup_hooks, teardown_hooks
 
