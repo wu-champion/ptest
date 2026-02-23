@@ -22,21 +22,20 @@ except ImportError:
 
 
 
-    @staticmethod
-    def _is_ci_environment() -> bool:
-        """检测是否在 CI 环境中运行"""
-        import os
-        ci_indicators = [
-            "CI",
-            "GITHUB_ACTIONS",
-            "GITLAB_CI",
-            "JENKINS",
-            "CIRCLECI",
-            "TRAVIS",
-            "BITBUCKET",
-            "BUILDKITE",
-        ]
-        return any(os.environ.get(indicator) for indicator in ci_indicators)
+def _is_ci_environment() -> bool:
+    """检测是否在 CI 环境中运行"""
+    import os
+    ci_indicators = [
+        "CI",
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "JENKINS",
+        "CIRCLECI",
+        "TRAVIS",
+        "BITBUCKET",
+        "BUILDKITE",
+    ]
+    return any(os.environ.get(indicator) for indicator in ci_indicators)
 
 class CaseManager:
     """测试用例管理器"""
@@ -400,7 +399,7 @@ class CaseManager:
             Dict[str, Any]: 包含测试结果摘要和详细结果列表
         """
         # 检测是否为 CI 环境
-        is_ci = self._is_ci_environment()
+        is_ci = _is_ci_environment()
         if is_ci:
             show_progress = False
 

@@ -340,7 +340,7 @@ class SuiteManager:
             # ========== 执行测试（支持重试）==========
             all_results = {}
             remaining_retry = retry_count
-            failed_case_ids = set()
+            failed_case_ids: set[str] = set()
             
             # 初始执行
             logger.info(f"执行测试套件 (重试次数: {retry_count})")
