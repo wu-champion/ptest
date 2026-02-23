@@ -41,13 +41,24 @@ dev = [
     "bandit>=1.7.5",
     "twine>=4.0.0",
     "build>=1.0.0",
+    # 类型存根 - 避免 MyPy 报错
+    "types-PyYAML>=0.1.17",
+    "types-tqdm>=0.1.0",
+    "types-jsonschema>=4.22.0",
+    "types-requests>=2.32.0",
+    "types-colorama>=0.4.6",
 ]
 
+# mypy 配置
+# 使用: uv run mypy src/
 [mypy]
 ignore_errors = false
 warn_return_any = false
 warn_unused_ignores = false
 show_error_codes = true
+
+# CI 中使用: uv run mypy src/ --ignore-missing-imports --show-error-codes
+# 本地运行如遇第三方库类型存根问题，可使用 --ignore-missing-imports 参数
 
 [[tool.mypy.overrides]]
 module = [
