@@ -9,7 +9,8 @@ try:
     from . import db as db_module
     from . import db_enhanced as db_enhanced_module
 except ImportError as e:
-    print(f"Warning: Could not import object classes: {e}")
+    import logging
+    logging.warning(f"Could not import object classes: {e}")
 
     class _FallbackObject:
         """Fallback对象基类"""
