@@ -1,0 +1,442 @@
+{
+  "metadata": {
+    "version": "1.1.0",
+    "timestamp": "2026-02-12T20:51:47.809520",
+    "python_version": "3.12.3",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "processor": "x86_64"
+  },
+  "results": {
+    "Data Generation (1K)": [
+      {
+        "name": "Generate 1K Names",
+        "value": 0.014235734939575195,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:15.136862"
+      }
+    ],
+    "Data Generation (10K)": [
+      {
+        "name": "Generate 10K Emails",
+        "value": 0.05994534492492676,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:15.196841",
+        "details": {
+          "target": "< 1.0s"
+        }
+      }
+    ],
+    "Data Generation (100K)": [
+      {
+        "name": "Generate 100K Names (CI)",
+        "value": 1.4432597160339355,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:16.640165",
+        "details": {
+          "target": "< 10.5s",
+          "count": 100000,
+          "ci_env": true
+        }
+      }
+    ],
+    "Data Generation (1M)": [
+      {
+        "name": "Generate 1M UUIDs (batched)",
+        "value": 13.456237554550171,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.096803",
+        "details": {
+          "total_generated": 1000000,
+          "memory_mb": 1.6316852569580078,
+          "target": "< 60s"
+        }
+      }
+    ],
+    "Suite Management (100)": [
+      {
+        "name": "Create Suite (100 cases)",
+        "value": 0.0005538463592529297,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.101565"
+      }
+    ],
+    "Suite Management (1K)": [
+      {
+        "name": "Create Suite (1K cases)",
+        "value": 0.0034170150756835938,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.105090",
+        "details": {
+          "target": "< 1.0s"
+        }
+      }
+    ],
+    "Suite Management (1K with deps)": [
+      {
+        "name": "Create Suite (1K with dependencies)",
+        "value": 0.0028295516967773438,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.108058",
+        "details": {
+          "target": "< 2.0s"
+        }
+      }
+    ],
+    "Suite Management (Topology)": [
+      {
+        "name": "Validate Suite (1K cases avg)",
+        "value": 4.8336982727050783e-05,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.113186",
+        "details": {
+          "target": "< 0.01s",
+          "iterations": 100
+        }
+      }
+    ],
+    "Suite Management (Real-world)": [
+      {
+        "name": "High Density Script (100 Cases/file)",
+        "value": 0.00044918060302734375,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.113664",
+        "details": {
+          "target": "< 0.5s",
+          "scenario": "Python file with 100 test methods"
+        }
+      },
+      {
+        "name": "Integration Test Script (500 Cases/file)",
+        "value": 0.0014739036560058594,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.115210",
+        "details": {
+          "target": "< 2.0s",
+          "scenario": "Complex business flow test"
+        }
+      },
+      {
+        "name": "SQL Batch Script (1000 SQL/file)",
+        "value": 0.002911806106567383,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.118358",
+        "details": {
+          "target": "< 3.0s",
+          "scenario": "Database validation script"
+        }
+      },
+      {
+        "name": "Version Iteration Redundancy (300 Cases)",
+        "value": 0.000982522964477539,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.119437",
+        "details": {
+          "target": "< 3.0s",
+          "scenario": "Multi-version with redundant cases",
+          "total_cases": 300,
+          "effective_coverage": "~200"
+        }
+      }
+    ],
+    "Execution (10)": [
+      {
+        "name": "Sequential (10 tasks)",
+        "value": 0.10559678077697754,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.227960"
+      },
+      {
+        "name": "Parallel (10 tasks)",
+        "value": 0.03130364418029785,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:30.259682",
+        "details": {
+          "speedup": 3.3733063207841765,
+          "target_speedup": "> 1.5x"
+        }
+      }
+    ],
+    "Execution (100)": [
+      {
+        "name": "Sequential (100 tasks)",
+        "value": 5.052829265594482,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:35.312604"
+      },
+      {
+        "name": "Parallel (100 tasks, 4 workers)",
+        "value": 1.260612964630127,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:36.573961",
+        "details": {
+          "speedup": 4.008232032642168,
+          "target_time": "< 30s",
+          "target_speedup": "> 2x"
+        }
+      }
+    ],
+    "Report Generation (100)": [
+      {
+        "name": "Generate Report (100 results)",
+        "value": 0.0002338886260986328,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:36.586166"
+      }
+    ],
+    "Report Generation (1K)": [
+      {
+        "name": "Generate Report (1K results)",
+        "value": 0.003052949905395508,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:36.590263",
+        "details": {
+          "memory_mb": 1.9317665100097656,
+          "target_time": "< 2s",
+          "target_memory": "< 500MB"
+        }
+      }
+    ],
+    "Isolation (basic)": [
+      {
+        "name": "Environment Creation",
+        "value": 0.0009369850158691406,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:47.809195",
+        "details": {
+          "target": "< 1.0s"
+        }
+      },
+      {
+        "name": "Environment Activation",
+        "value": 6.4849853515625e-05,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:47.809210"
+      },
+      {
+        "name": "Command Execution",
+        "value": 0.0012798309326171875,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:47.809213"
+      }
+    ],
+    "Isolation (virtualenv)": [
+      {
+        "name": "Environment Creation",
+        "value": 0.2587399482727051,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:47.809218",
+        "details": {
+          "target": "< 5.0s"
+        }
+      },
+      {
+        "name": "Environment Activation",
+        "value": 0.013964653015136719,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:47.809220"
+      },
+      {
+        "name": "Command Execution",
+        "value": 0.0013790130615234375,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:47.809222"
+      }
+    ],
+    "Isolation (docker)": [
+      {
+        "name": "Environment Creation",
+        "value": 0.1755990982055664,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:47.809225",
+        "details": {
+          "target": "< 10.0s"
+        }
+      },
+      {
+        "name": "Environment Activation",
+        "value": 0.30861473083496094,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:47.809227"
+      },
+      {
+        "name": "Command Execution",
+        "value": 0.05158829689025879,
+        "unit": "s",
+        "status": "pass",
+        "timestamp": "2026-02-12T20:51:47.809228"
+      }
+    ]
+  },
+  "summary": {
+    "Data Generation (1K)": {
+      "count": 1,
+      "passed": 1,
+      "failed": 0,
+      "total": 0.014235734939575195,
+      "avg": 0.014235734939575195,
+      "min": 0.014235734939575195,
+      "max": 0.014235734939575195
+    },
+    "Data Generation (10K)": {
+      "count": 1,
+      "passed": 1,
+      "failed": 0,
+      "total": 0.05994534492492676,
+      "avg": 0.05994534492492676,
+      "min": 0.05994534492492676,
+      "max": 0.05994534492492676
+    },
+    "Data Generation (100K)": {
+      "count": 1,
+      "passed": 1,
+      "failed": 0,
+      "total": 1.4432597160339355,
+      "avg": 1.4432597160339355,
+      "min": 1.4432597160339355,
+      "max": 1.4432597160339355
+    },
+    "Data Generation (1M)": {
+      "count": 1,
+      "passed": 1,
+      "failed": 0,
+      "total": 13.456237554550171,
+      "avg": 13.456237554550171,
+      "min": 13.456237554550171,
+      "max": 13.456237554550171
+    },
+    "Suite Management (100)": {
+      "count": 1,
+      "passed": 1,
+      "failed": 0,
+      "total": 0.0005538463592529297,
+      "avg": 0.0005538463592529297,
+      "min": 0.0005538463592529297,
+      "max": 0.0005538463592529297
+    },
+    "Suite Management (1K)": {
+      "count": 1,
+      "passed": 1,
+      "failed": 0,
+      "total": 0.0034170150756835938,
+      "avg": 0.0034170150756835938,
+      "min": 0.0034170150756835938,
+      "max": 0.0034170150756835938
+    },
+    "Suite Management (1K with deps)": {
+      "count": 1,
+      "passed": 1,
+      "failed": 0,
+      "total": 0.0028295516967773438,
+      "avg": 0.0028295516967773438,
+      "min": 0.0028295516967773438,
+      "max": 0.0028295516967773438
+    },
+    "Suite Management (Topology)": {
+      "count": 1,
+      "passed": 1,
+      "failed": 0,
+      "total": 4.8336982727050783e-05,
+      "avg": 4.8336982727050783e-05,
+      "min": 4.8336982727050783e-05,
+      "max": 4.8336982727050783e-05
+    },
+    "Suite Management (Real-world)": {
+      "count": 4,
+      "passed": 4,
+      "failed": 0,
+      "total": 0.005817413330078125,
+      "avg": 0.0014543533325195312,
+      "min": 0.00044918060302734375,
+      "max": 0.002911806106567383
+    },
+    "Execution (10)": {
+      "count": 2,
+      "passed": 2,
+      "failed": 0,
+      "total": 0.1369004249572754,
+      "avg": 0.0684502124786377,
+      "min": 0.03130364418029785,
+      "max": 0.10559678077697754
+    },
+    "Execution (100)": {
+      "count": 2,
+      "passed": 2,
+      "failed": 0,
+      "total": 6.313442230224609,
+      "avg": 3.1567211151123047,
+      "min": 1.260612964630127,
+      "max": 5.052829265594482
+    },
+    "Report Generation (100)": {
+      "count": 1,
+      "passed": 1,
+      "failed": 0,
+      "total": 0.0002338886260986328,
+      "avg": 0.0002338886260986328,
+      "min": 0.0002338886260986328,
+      "max": 0.0002338886260986328
+    },
+    "Report Generation (1K)": {
+      "count": 1,
+      "passed": 1,
+      "failed": 0,
+      "total": 0.003052949905395508,
+      "avg": 0.003052949905395508,
+      "min": 0.003052949905395508,
+      "max": 0.003052949905395508
+    },
+    "Isolation (basic)": {
+      "count": 3,
+      "passed": 3,
+      "failed": 0,
+      "total": 0.002281665802001953,
+      "avg": 0.0007605552673339844,
+      "min": 6.4849853515625e-05,
+      "max": 0.0012798309326171875
+    },
+    "Isolation (virtualenv)": {
+      "count": 3,
+      "passed": 3,
+      "failed": 0,
+      "total": 0.27408361434936523,
+      "avg": 0.09136120478312175,
+      "min": 0.0013790130615234375,
+      "max": 0.2587399482727051
+    },
+    "Isolation (docker)": {
+      "count": 3,
+      "passed": 3,
+      "failed": 0,
+      "total": 0.5358021259307861,
+      "avg": 0.17860070864359537,
+      "min": 0.05158829689025879,
+      "max": 0.30861473083496094
+    }
+  }
+}

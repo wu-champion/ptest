@@ -12,6 +12,7 @@ wheels/
 
 # 开发工具和环境
 .opencode/
+.opencode_sessions
 oh-my-opencode
 *.opencode/
 .opencode_sessions
