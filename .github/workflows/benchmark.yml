@@ -1,0 +1,57 @@
+name: Performance Benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    name: 性能基准测试
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+    
+    env:
+      UV_INDEX_URL: https://pypi.org/simple
+      UV_EXTRA_INDEX_URL: ""
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 同步依赖
+        run: |
+          uv sync
+
+      - name: 运行性能基准测试
+        run: |
+          uv run python tests/performance/run_benchmarks.py
+
+      - name: 显示性能报告摘要
+        run: |
+          echo "📊 Performance Benchmark Summary"
+          echo "================================"
+          if [ -f benchmark_results/*.md ]; then
+            head -50 benchmark_results/*.md
+          else
+            echo "未找到 Markdown 报告"
+          fi
+
+      - name: 上传基准测试结果
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark_results/
+          retention-days: 30

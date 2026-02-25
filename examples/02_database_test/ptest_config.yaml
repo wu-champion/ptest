@@ -1,0 +1,26 @@
+# ptest 配置文件
+# 数据库测试示例配置
+
+logging:
+  level: INFO
+
+reporting:
+  enabled: true
+  format: json
+  output_dir: ./reports
+
+execution:
+  retry_failed: false
+  parallel: false
+  timeout: 60
+
+# 数据库连接配置
+databases:
+  mysql_test:
+    type: mysql
+    host: localhost
+    port: 3306
+    database: test_db
+    username: test_user
+    password: test_pass
+    charset: utf8mb4

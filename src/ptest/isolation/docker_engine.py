@@ -90,6 +90,37 @@ from .managers import ImageManager, NetworkManager, VolumeManager
 logger = get_logger("docker_engine")
 
 
+def _parse_image_name(image_name: str, default_tag: str = "latest") -> str:
+    """解析镜像名称，正确处理带端口的registry地址
+
+    根据Docker镜像命名规范解析：
+    - image -> image:latest
+    - image:tag -> image:tag
+    - registry:port/image -> registry:port/image:latest
+    - registry:port/image:tag -> registry:port/image:tag
+
+    使用 Docker SDK 的官方解析函数处理复杂的 registry:port 格式
+    """
+    if not image_name:
+        return f"unknown:{default_tag}"
+
+    try:
+        # 使用 Docker SDK 的官方解析函数
+        from docker.utils import parse_repository_tag
+
+        repository, tag = parse_repository_tag(image_name)
+        # 如果原镜像没有 tag，使用默认 tag
+        if not tag:
+            tag = default_tag
+        return f"{repository}:{tag}" if tag else repository
+    except Exception:
+        # 降级到简单处理
+        parts = image_name.rsplit(":", 1)
+        if len(parts) == 1:
+            return f"{image_name}:{default_tag}"
+        return image_name
+
+
 class DockerEnvironment(IsolatedEnvironment):
     """Docker隔离环境实现"""
 
@@ -140,6 +171,34 @@ class DockerEnvironment(IsolatedEnvironment):
         self.status = EnvironmentStatus.CREATED
         self._is_active = False
 
+    def _get_container(self) -> Any | None:
+        """获取Docker容器对象
+
+        Returns:
+            容器对象或None（如果无法获取）
+        """
+        if not self._container:
+            return None
+
+        engine = self.isolation_engine
+        if not hasattr(engine, "docker_client") or not engine.docker_client:
+            logger.error("Docker client not available")
+            return None
+
+        container_id = self.container_id
+        if not container_id and isinstance(self._container, dict):
+            container_id = self._container.get("Id")
+
+        if not container_id:
+            logger.error("Container ID not available")
+            return None
+
+        try:
+            return engine.docker_client.containers.get(container_id)
+        except Exception as e:
+            logger.error(f"Failed to get container: {e}")
+            return None
+
     def _parse_memory(self, memory_str: str) -> int:
         """解析内存限制字符串为字节数"""
         try:
@@ -159,28 +218,30 @@ class DockerEnvironment(IsolatedEnvironment):
             logger.warning(f"Invalid memory limit format: {memory_str}, using default")
             return 512 * 1024 * 1024
 
-    def _build_resource_host_config(self, limits: Dict[str, Any]) -> Dict[str, Any]:
-        """构建资源限制host配置"""
-        host_config = {}
+    def _build_resource_host_resource_limits(
+        self, limits: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """构建资源限制配置（用于低级API）"""
+        host_config: Dict[str, Any] = {}
+
         resource_mapping = {
             "cpus": lambda v: {
-                "cpu_quota": int(float(v) * 100000),
-                "cpu_period": 100000,
+                "CpuQuota": int(float(v) * 100000),
+                "CpuPeriod": 100000,
             },
-            "memory": lambda v: {"mem_limit": self._parse_memory(v)},
-            "memory_swap": lambda v: {"memswap_limit": self._parse_memory(v)},
-            "memory_reservation": lambda v: {"mem_reservation": self._parse_memory(v)},
-            "oom_kill_disable": lambda v: {"oom_kill_disable": v},
-            "pids_limit": lambda v: {"pids_limit": v},
-            "blkio_weight": lambda v: {"blkio_weight": v},
-            "blkio_read_bps": lambda v: {"blkio_device_read_bps": v},
-            "blkio_write_bps": lambda v: {"blkio_device_write_bps": v},
-            "blkio_read_iops": lambda v: {"blkio_device_read_iops": v},
-            "blkio_write_iops": lambda v: {"blkio_device_write_iops": v},
+            "memory": lambda v: {"Memory": self._parse_memory(v)},
+            "memory_swap": lambda v: {"MemorySwap": self._parse_memory(v)},
+            "memory_reservation": lambda v: {
+                "MemoryReservation": self._parse_memory(v)
+            },
+            "oom_kill_disable": lambda v: {"OomKillDisable": v},
+            "pids_limit": lambda v: {"PidsLimit": v},
         }
+
         for key, mapper in resource_mapping.items():
             if limits.get(key):
                 host_config.update(mapper(limits[key]))
+
         return host_config
 
     def _initialize_container_config(self) -> Dict[str, Any]:
@@ -188,6 +249,11 @@ class DockerEnvironment(IsolatedEnvironment):
         return {
             "image": self.image_name,
             "name": self.container_name,
+            "command": [
+                "/bin/sh",
+                "-c",
+                "while true; do sleep 3600; done",
+            ],  # 保持容器运行
             "detach": True,
             "volumes": self.volumes,
             "ports": {
@@ -214,14 +280,34 @@ class DockerEnvironment(IsolatedEnvironment):
                 logger.error("Failed to initialize Docker client")
                 return False
 
+            if not engine.docker_client:
+                logger.error("Docker client not available")
+                return False
+
             container_config = self._initialize_container_config()
 
-            if self.resource_limits:
-                host_config = self._build_resource_host_config(self.resource_limits)
+            api_client = getattr(engine, "api_client", None)
+            if api_client and self.resource_limits:
+                host_config = self._build_resource_host_resource_limits(
+                    self.resource_limits
+                )
                 if host_config:
                     container_config["host_config"] = host_config
                     logger.debug(f"Resource limits applied: {self.resource_limits}")
 
+            if api_client:
+                self._container = api_client.create_container(**container_config)
+            else:
+                logger.error("Docker API client not available")
+                return False
+            if self._container:
+                self.container_id = self._container.get("Id")
+                logger.info(f"Container created: {self.container_id}")
+            else:
+                logger.error("Container creation returned None")
+                return False
+
+            self._emit_event(IsolationEvent.ENVIRONMENT_CREATED)
             return True
 
         except Exception as e:
@@ -248,15 +334,21 @@ class DockerEnvironment(IsolatedEnvironment):
                 self._emit_event(IsolationEvent.ENVIRONMENT_ACTIVATED)
                 return True
 
-            if not self._container:
+            container = self._get_container()
+            if not container:
                 logger.warning("Container not created, cannot start")
                 return False
 
-            if self._container.status in ["running", "restarting"]:
-                logger.info("Container already running")
-                return True
+            try:
+                if container.status in ["running", "restarting"]:
+                    logger.info("Container already running")
+                    return True
+                container.start()
+                self._container = container
+            except Exception as e:
+                logger.error(f"Failed to start container: {e}")
+                return False
 
-            self._container.start()
             self.status = EnvironmentStatus.ACTIVE
             self._emit_event(IsolationEvent.ENVIRONMENT_ACTIVATED)
             logger.info(f"Container started: {self.container_id}")
@@ -284,15 +376,21 @@ class DockerEnvironment(IsolatedEnvironment):
                 self._emit_event(IsolationEvent.ENVIRONMENT_DEACTIVATED)
                 return True
 
-            if not self._container:
+            container = self._get_container()
+            if not container:
                 logger.warning("Container not created, cannot stop")
                 return False
 
-            if self._container.status == "exited":
-                logger.info("Container already stopped")
-                return True
+            try:
+                if container.status == "exited":
+                    logger.info("Container already stopped")
+                    return True
+                container.stop(timeout=10)
+                self._container = container
+            except Exception as e:
+                logger.error(f"Failed to stop container: {e}")
+                return False
 
-            self._container.stop(timeout=10)
             self.status = EnvironmentStatus.INACTIVE
             self._emit_event(IsolationEvent.ENVIRONMENT_DEACTIVATED)
             logger.info(f"Container stopped: {self.container_id}")
@@ -665,8 +763,6 @@ class DockerEnvironment(IsolatedEnvironment):
             return ProcessResult(returncode=0, stdout=stdout, stderr="", command=cmd)
 
         try:
-            from datetime import datetime
-
             if not DOCKER_AVAILABLE:
                 logger.warning("Docker SDK not available, simulating command execution")
                 # 模拟无效命令的错误处理
@@ -681,48 +777,38 @@ class DockerEnvironment(IsolatedEnvironment):
                     returncode=0, stdout=stdout, stderr="", command=cmd
                 )
 
-            if not self._container:
-                logger.warning("Container not created, cannot execute command")
+            container = self._get_container()
+            if not container:
                 return ProcessResult(
                     returncode=-1,
                     stdout="",
-                    stderr="Container not created",
+                    stderr="Container not available",
                     command=cmd,
                 )
 
-            exec_config: dict = {"detach": not interactive and not tty}
-            if tty:
-                exec_config["tty"] = True
+            exec_config: dict = {
+                "detach": False,
+                "tty": tty,
+            }
             if cwd:
                 exec_config["workdir"] = str(cwd)
-
             if env_vars:
                 exec_config["environment"] = env_vars
 
-            if interactive:
-                exit_code, output = self._container.exec_run(cmd, **exec_config)
-                stdout = output.decode("utf-8") if isinstance(output, bytes) else output
+            logger.debug(f"Executing command in container: {cmd}")
+            exit_code, output = container.exec_run(cmd, **exec_config)
+            stdout = output.decode("utf-8") if isinstance(output, bytes) else output
+            logger.debug(
+                f"Command result: exit_code={exit_code}, stdout={stdout[:100] if stdout else ''}"
+            )
 
-                return ProcessResult(
-                    returncode=exit_code,
-                    stdout=stdout,
-                    stderr="",
-                    command=cmd,
-                    timeout=timeout,
-                    start_time=datetime.now(),
-                    end_time=datetime.now(),
-                )
-            else:
-                exit_code, output = self._container.exec_run(cmd, **exec_config)
-                stdout = output.decode("utf-8") if isinstance(output, bytes) else output
-
-                return ProcessResult(
-                    returncode=exit_code,
-                    stdout=stdout,
-                    stderr="",
-                    command=cmd,
-                    timeout=timeout,
-                )
+            return ProcessResult(
+                returncode=exit_code,
+                stdout=stdout,
+                stderr="",
+                command=cmd,
+                timeout=timeout,
+            )
 
         except Exception as e:
             logger.error(f"Failed to execute command in Docker container: {e}")
@@ -1454,7 +1540,7 @@ class DockerIsolationEngine(IsolationEngine):
             if not self.docker_client:
                 return False
 
-            full_image_name = f"{image_name}:{tag}"
+            full_image_name = _parse_image_name(image_name, tag)
             logger.info(f"Pulling Docker image: {full_image_name}")
 
             # 检查镜像是否已存在
@@ -1510,7 +1596,7 @@ class DockerIsolationEngine(IsolationEngine):
             if not self.docker_client:
                 return False
 
-            full_image_name = f"{image_name}:{tag}"
+            full_image_name = _parse_image_name(image_name, tag)
             logger.info(f"Pushing Docker image: {full_image_name}")
 
             # 如果指定了registry，先标记镜像
@@ -1970,6 +2056,12 @@ class DockerIsolationEngine(IsolationEngine):
             }
             env.volume_name = volume_name
             env._volume = self.create_volume(volume_name)
+
+        # 实际创建Docker容器
+        if not is_simulation:
+            if not env.create_container():
+                logger.error(f"Failed to create container for environment: {env_id}")
+                return env
 
         self.created_environments[env_id] = env
         logger.info(f"Created Docker environment: {env_id} at {path}")

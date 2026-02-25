@@ -1,0 +1,18 @@
+# test_case_1.yaml
+# API 健康检查测试
+# 标签: smoke, regression
+
+test_case_1:
+  description: API 健康检查测试
+  type: api
+  tags:
+    - smoke
+    - regression
+  
+  request:
+    method: GET
+    url: https://httpbin.org/get
+  
+  assertions:
+    - type: status_code
+      expected: 200

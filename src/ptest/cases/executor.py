@@ -9,6 +9,7 @@ import sqlite3
 from typing import Dict, Any, Tuple, Union
 from datetime import datetime
 from .result import TestCaseResult
+from .hooks import HookExecutor, HookManager, HookWhen
 
 # 尝试导入可选依赖
 try:
@@ -31,45 +32,91 @@ class TestExecutor:
 
     def __init__(self, env_manager):
         self.env_manager = env_manager
+        self.hook_executor = HookExecutor(env_manager)
 
     def execute_case(self, case_id: str, case_data: Dict[str, Any]) -> TestCaseResult:
         """
-        执行测试用例
+        执行测试用例（包含 setup/teardown hooks）
         根据用例类型分发到具体的执行方法
         """
         result = TestCaseResult(case_id)
         result.start_time = datetime.now()
 
+        # 解析 hooks
+        setup_hooks, teardown_hooks = HookManager.parse_hooks(case_data)
+        legacy_setup, legacy_teardown = HookManager.parse_legacy_setup_teardown(
+            case_data
+        )
+        setup_hooks.extend(legacy_setup)
+        teardown_hooks.extend(legacy_teardown)
+
+        setup_success = True
+        test_success = True
+        setup_results = []
+        test_output = ""
+
         try:
-            test_type = case_data.get("type", "").lower()
+            # 1. 执行 setup hooks
+            if setup_hooks:
+                self.env_manager.logger.info(
+                    f"Executing {len(setup_hooks)} setup hooks for {case_id}"
+                )
+                setup_success, setup_results = self.hook_executor.execute_hooks(
+                    setup_hooks, HookWhen.SETUP, context=case_data
+                )
 
-            if test_type == "api":
-                success, output = self._execute_api_test(case_data)
-            elif test_type == "database":
-                success, output = self._execute_database_test(case_data)
-            elif test_type == "web":
-                success, output = self._execute_web_test(case_data)
-            elif test_type == "service":
-                success, output = self._execute_service_test(case_data)
-            else:
-                success, output = False, f"Unsupported test type: {test_type}"
-
-            result.end_time = datetime.now()
-            result.duration = (result.end_time - result.start_time).total_seconds()
-            result.output = str(output)
-
-            if success:
-                result.status = "passed"
-            else:
+            if not setup_success:
+                # Setup 失败，跳过测试
                 result.status = "failed"
-                result.error_message = str(output)
+                result.error_message = f"Setup hooks failed: {[r.error for r in setup_results if not r.success]}"
+                test_success = False
+            else:
+                # 2. 执行测试
+                test_type = case_data.get("type", "").lower()
+
+                if test_type == "api":
+                    test_success, test_output = self._execute_api_test(case_data)
+                elif test_type == "database":
+                    test_success, test_output = self._execute_database_test(case_data)
+                elif test_type == "web":
+                    test_success, test_output = self._execute_web_test(case_data)
+                elif test_type == "service":
+                    test_success, test_output = self._execute_service_test(case_data)
+                else:
+                    test_success, test_output = (
+                        False,
+                        f"Unsupported test type: {test_type}",
+                    )
+
+                if test_success:
+                    result.status = "passed"
+                else:
+                    result.status = "failed"
+                    result.error_message = str(test_output)
 
         except Exception as e:
-            result.end_time = datetime.now()
-            result.duration = (result.end_time - result.start_time).total_seconds()
+            test_success = False
             result.status = "error"
             result.error_message = f"Test execution error: {str(e)}"
             self.env_manager.logger.error(f"Case '{case_id}' execution error: {str(e)}")
+
+        finally:
+            # 3. 始终执行 teardown hooks
+            if teardown_hooks:
+                self.env_manager.logger.info(
+                    f"Executing {len(teardown_hooks)} teardown hooks for {case_id}"
+                )
+                _, teardown_results = self.hook_executor.execute_hooks(
+                    teardown_hooks,
+                    HookWhen.TEARDOWN,
+                    test_passed=test_success,
+                    context=case_data,
+                )
+
+            result.end_time = datetime.now()
+            result.duration = (result.end_time - result.start_time).total_seconds()
+            if not result.error_message:
+                result.output = str(test_output)
 
         return result
 

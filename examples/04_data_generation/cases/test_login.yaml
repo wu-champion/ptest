@@ -1,0 +1,50 @@
+# test_login.yaml
+# 登录测试 - 使用参数化数据
+#
+# 本测试用例演示:
+# 1. 如何使用数据生成器
+# 2. 如何进行参数化测试
+# 3. 如何从 CSV 文件读取测试数据
+
+test_login_data_driven:
+  description: 数据驱动登录测试
+  type: api
+  # 参数化: 从数据文件读取
+  data_source:
+    type: csv
+    path: data/users.csv
+  
+  # 循环执行，每行数据执行一次
+  request:
+    method: POST
+    url: https://httpbin.org/post
+    body:
+      username: "${row.username}"
+      password: "${row.password}"
+  
+  assertions:
+    - type: status_code
+      expected: 200
+
+test_login_generated:
+  description: 使用生成数据的登录测试
+  type: api
+  # 使用内置数据生成器
+  data_generation:
+    username:
+      type: name
+    email:
+      type: email
+    password:
+      type: password
+  
+  request:
+    method: POST
+    url: https://httpbin.org/post
+    body:
+      username: "${data.username}"
+      password: "${data.password}"
+  
+  assertions:
+    - type: status_code
+      expected: 200

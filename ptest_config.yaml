@@ -1,0 +1,8 @@
+default_isolation_level: basic
+log_level: INFO
+max_concurrent_tests: 10
+network:
+  default_port_range: 20000-21000
+  network_isolation: true
+report_format: html
+timeout_seconds: 300

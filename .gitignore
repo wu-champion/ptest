@@ -15,6 +15,7 @@ wheels/
 .opencode_sessions
 oh-my-opencode
 *.opencode/
+.opencode_sessions
 
 # 文档/计划 - 不上传GitHub
 docs/plan/
@@ -31,6 +32,9 @@ ptest_report_*.html
 ptest_report_*.json
 ptest_report_*.md
 test_reports/
+
+# 性能基准测试结果（由 CI 生成 artifacts）
+benchmark_results/
 
 # IDE
 .vscode/

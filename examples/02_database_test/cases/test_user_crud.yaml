@@ -1,0 +1,86 @@
+# test_user_crud.yaml
+# 数据库用户 CRUD 操作测试
+#
+# 本测试用例演示:
+# 1. 如何进行数据库 SQL 测试
+# 2. 如何执行 INSERT/SELECT/UPDATE/DELETE 操作
+# 3. 如何验证数据库操作结果
+
+test_user_crud:
+  description: 测试用户 CRUD 操作
+  type: sql
+  # 数据库连接配置
+  db_config:
+    type: mysql
+    host: localhost
+    port: 3306
+    database: test_db
+    username: test_user
+    password: test_pass
+  
+  # Setup: 创建测试表
+  setup:
+    - type: command
+      command: |
+        CREATE TABLE IF NOT EXISTS users (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          username VARCHAR(50) NOT NULL UNIQUE,
+          email VARCHAR(100) NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+  
+  # 测试步骤
+  steps:
+    # 步骤 1: 插入用户
+    - name: Create User
+      action:
+        type: sql
+        sql: INSERT INTO users (username, email) VALUES ('test_user', 'test@example.com')
+      assertions:
+        - type: row_count
+          expected: 1
+    
+    # 步骤 2: 查询用户
+    - name: Read User
+      action:
+        type: sql
+        sql: SELECT * FROM users WHERE username = 'test_user'
+      assertions:
+        - type: row_count
+          expected: 1
+        - type: column_value
+          column: email
+          expected: test@example.com
+    
+    # 步骤 3: 更新用户
+    - name: Update User
+      action:
+        type: sql
+        sql: UPDATE users SET email = 'updated@example.com' WHERE username = 'test_user'
+      assertions:
+        - type: row_count
+          expected: 1
+    
+    # 步骤 4: 验证更新
+    - name: Verify Update
+      action:
+        type: sql
+        sql: SELECT email FROM users WHERE username = 'test_user'
+      assertions:
+        - type: column_value
+          column: email
+          expected: updated@example.com
+    
+    # 步骤 5: 删除用户
+    - name: Delete User
+      action:
+        type: sql
+        sql: DELETE FROM users WHERE username = 'test_user'
+      assertions:
+        - type: row_count
+          expected: 1
+  
+  # Teardown: 清理测试表
+  teardown:
+    - type: command
+      command: DROP TABLE IF EXISTS users

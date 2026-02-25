@@ -64,7 +64,7 @@ jobs:
     if: github.event_name == 'release'
     environment:
       name: pypi
-      url: https://pypi.org/project/ptest/
+      url: https://pypi.org/project/ptestx/
     permissions:
       id-token: write
 
@@ -89,7 +89,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/ptest/
+      url: https://test.pypi.org/project/ptestx/
     permissions:
       id-token: write
 
@@ -145,7 +145,7 @@ jobs:
             
             ### 安装
             ```bash
-            pip install ptest==${{ steps.get_version.outputs.version }}
+            pip install ptestx==${{ steps.get_version.outputs.version }}
             ```
           files: dist/*
           draft: false

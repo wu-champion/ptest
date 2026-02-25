@@ -1,0 +1,26 @@
+# Docker Compose 配置
+# 用于启动测试用的 MySQL 数据库
+
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ptest_mysql_test
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pass
+      MYSQL_DATABASE: test_db
+      MYSQL_USER: test_user
+      MYSQL_PASSWORD: test_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  mysql_data:

@@ -1,6 +1,8 @@
 # ptest - 综合测试框架
 
-ptest是一个全面的测试框架，用于管理测试环境、测试对象和测试用例。
+> **注意**: v1.2+ 包名已改为 `ptestx`，安装命令: `pip install ptestx`
+
+ptest 是一个全面的测试框架，用于管理测试环境、测试对象、测试用例、测试套件和测试数据。
 
 ## 📚 完整文档
 
@@ -16,7 +18,17 @@ ptest是一个全面的测试框架，用于管理测试环境、测试对象和
 
 ### 安装
 ```bash
-pip install .
+pip install ptestx
+```
+
+### 快速开始示例
+```bash
+# 查看快速开始示例
+ls examples/
+
+# 运行基础 API 测试示例
+cd examples/01_basic_api_test
+pytest ...
 ```
 
 ### 初始化测试环境
@@ -47,6 +59,63 @@ ptest case run mysql_connection_test
 
 # 运行所有测试用例
 ptest run all
+
+# 并行执行
+ptest case run all --parallel --workers 4
+```
+
+### 测试套件管理 (v1.2+)
+```bash
+# 创建套件
+ptest suite create my_suite
+
+# 运行套件
+ptest suite run my_suite
+
+# 并行执行
+ptest suite run my_suite --parallel --workers 4
+
+# 失败停止
+ptest suite run my_suite --stop-on-failure
+
+# 预览模式
+ptest suite run my_suite --dry-run
+```
+
+### Mock 服务管理 (v1.2+)
+```bash
+# 启动 Mock 服务
+ptest mock start --config mock_config.yaml
+
+# 停止 Mock 服务
+ptest mock stop --name payment_gateway
+
+# 查看 Mock 列表
+ptest mock list
+```
+
+### 数据生成 (v1.2+)
+```bash
+# 生成测试数据
+ptest data generate user --count 100
+
+# 生成 SQL INSERT 语句
+ptest data generate user --format sql --table users --dialect mysql
+
+# 查看支持的数据类型
+ptest data types
+```
+
+### API 契约管理 (v1.2+)
+```bash
+# 导入 OpenAPI 契约
+ptest contract import --source https://api.example.com/openapi.json
+
+# 查看契约列表
+ptest contract list
+
+# 验证契约
+ptest contract validate my_contract
 ```
 
 ### 生成报告

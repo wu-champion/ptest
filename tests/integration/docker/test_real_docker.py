@@ -44,7 +44,7 @@ class TestRealDockerEnvironment(unittest.TestCase):
         self.temp_dir = Path(tempfile.mkdtemp())
         self.engine = DockerIsolationEngine(
             {
-                "default_image": "python:3.9-alpine",  # 使用轻量级镜像
+                "default_image": "python:3.9-slim",  # 使用标准镜像避免alpine兼容性问题
                 "container_timeout": 30,
                 "simulation_mode": False,  # 使用真实 Docker 模式
             }
@@ -82,6 +82,7 @@ class TestRealDockerEnvironment(unittest.TestCase):
         env = self.engine.create_isolation(self.temp_dir, self.test_env_id, {})
 
         # 激活环境
+        self.assertIsInstance(env, DockerEnvironment)
         success = env.start_container()
         self.assertTrue(success)
 
@@ -96,6 +97,7 @@ class TestRealDockerEnvironment(unittest.TestCase):
         # 1. 创建
         env = self.engine.create_isolation(self.temp_dir, self.test_env_id, {})
         self.assertIsNotNone(env)
+        self.assertIsInstance(env, DockerEnvironment)
         print("  1. 创建环境 ✓")
 
         # 2. 启动
@@ -121,6 +123,7 @@ class TestRealDockerEnvironment(unittest.TestCase):
     def test_05_container_isolation(self):
         """测试容器隔离性"""
         env = self.engine.create_isolation(self.temp_dir, self.test_env_id, {})
+        self.assertIsInstance(env, DockerEnvironment)
 
         # 启动容器
         env.start_container()
@@ -199,6 +202,7 @@ class TestRealDockerCleanup(unittest.TestCase):
         for i in range(3):
             env_id = f"test_cleanup_{i}_{int(time.time())}"
             env = self.engine.create_isolation(self.temp_dir / env_id, env_id, {})
+            self.assertIsInstance(env, DockerEnvironment)
             env.start_container()
             env_ids.append(env_id)
 

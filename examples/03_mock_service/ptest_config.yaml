@@ -1,0 +1,27 @@
+# ptest 配置文件
+# Mock 服务测试示例配置
+
+logging:
+  level: INFO
+
+reporting:
+  enabled: true
+  format: json
+  output_dir: ./reports
+
+execution:
+  retry_failed: false
+  parallel: false
+  timeout: 30
+
+# Mock 服务配置
+mocks:
+  payment_service:
+    type: requests_mock
+    url: https://api.payment.com/*
+    response:
+      status: 200
+      json:
+        transaction_id: "TXN_12345"
+        status: "success"
+        amount: 100.00
