@@ -69,6 +69,7 @@ class Assertion(ABC):
         actual: Any,
         expected: Any = None,
         extra: dict[str, Any] | None = None,
+        capture_location: bool = False,
     ) -> AssertionResult:
         """创建断言结果
 
@@ -77,28 +78,30 @@ class Assertion(ABC):
             actual: 实际值
             expected: 期望值
             extra: 额外数据
+            capture_location: 是否捕获调用位置（默认关闭以提升性能）
 
         Returns:
             断言结果
         """
-        # 捕获调用位置
-        frame = inspect.currentframe()
-        caller_frame = None
+        # 捕获调用位置（可选，默认关闭以提升性能）
         file_path = ""
         line_number = 0
         function_name = ""
 
-        if frame is not None:
-            # 跳过 _create_result 和 assert_value，找到真正的调用者
-            for f in inspect.getouterframes(frame):
-                if f.function not in ("_create_result", "assert_value", "__init__"):
-                    caller_frame = f
-                    break
+        if capture_location:
+            frame = inspect.currentframe()
+            caller_frame = None
 
-        if caller_frame is not None:
-            file_path = caller_frame.filename
-            line_number = caller_frame.lineno
-            function_name = caller_frame.function
+            if frame is not None:
+                for f in inspect.getouterframes(frame):
+                    if f.function not in ("_create_result", "assert_value", "__init__"):
+                        caller_frame = f
+                        break
+
+            if caller_frame is not None:
+                file_path = caller_frame.filename
+                line_number = caller_frame.lineno
+                function_name = caller_frame.function
 
         # 获取修复建议
         assertion_type = self.__class__.__name__
