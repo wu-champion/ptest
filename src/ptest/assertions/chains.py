@@ -100,28 +100,33 @@ class NotAssertion(Assertion):
 
 
 class ChainBuilder:
-    """链式断言构建器"""
+    """链式断言构建器
+
+    语义说明（避免链式调用时的歧义）:
+    - and_ / or_ 始终基于当前累积表达式进行组合，相当于不断构建:
+        expr = (((initial AND a1) OR a2) AND a3) ...
+    - not_ 取反的是整个当前链（已构建的表达式），而不是仅仅取反最后一个或第一个断言。
+    """
 
     def __init__(self, initial_assertion: Assertion):
-        self.assertions = [initial_assertion]
+        # 当前累积的断言表达式
+        self._current: Assertion = initial_assertion
 
-    def and_(self, assertion: Assertion) -> ChainBuilder:
-        self.assertions.append(assertion)
+    def and_(self, assertion: Assertion) -> "ChainBuilder":
+        """将当前表达式与新的断言通过 AndAssertion 组合。"""
+        self._current = AndAssertion(self._current, assertion)
         return self
 
-    def or_(self, assertion: Assertion) -> ChainBuilder:
-        combined = (
-            OrAssertion(*self.assertions)
-            if len(self.assertions) > 1
-            else self.assertions[0]
-        )
-        return ChainBuilder(OrAssertion(combined, assertion))
+    def or_(self, assertion: Assertion) -> "ChainBuilder":
+        """将当前表达式与新的断言通过 OrAssertion 组合，保持左结合分组。"""
+        self._current = OrAssertion(self._current, assertion)
+        return self
 
-    def not_(self) -> ChainBuilder:
-        self.assertions = [NotAssertion(self.assertions[0])]
+    def not_(self) -> "ChainBuilder":
+        """对当前完整链的结果取反，而不是只取反部分子表达式。"""
+        self._current = NotAssertion(self._current)
         return self
 
     def build(self) -> Assertion:
-        if len(self.assertions) == 1:
-            return self.assertions[0]
-        return AndAssertion(*self.assertions)
+        """返回构建完成的断言表达式。"""
+        return self._current

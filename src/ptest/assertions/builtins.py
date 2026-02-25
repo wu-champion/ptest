@@ -125,7 +125,7 @@ class HeaderAssertion(Assertion):
     def assert_value(
         self, actual: Any, expected: Any = None, **kwargs: Any
     ) -> AssertionResult:
-        header_name = kwargs.get("header", "").lower()
+        header_name = kwargs.get("header", "")
 
         if not isinstance(actual, dict):
             return self._create_result(
@@ -135,16 +135,19 @@ class HeaderAssertion(Assertion):
                 extra={"error": "Headers must be a dictionary"},
             )
 
-        actual_value = actual.get(header_name.lower())
+        # Normalize headers to lowercase keys for case-insensitive lookup
+        normalized_headers = {k.lower(): v for k, v in actual.items()}
+        header_key = header_name.lower()
 
         if expected is None:
-            passed = header_name.lower() in {k.lower() for k in actual.keys()}
+            passed = header_key in normalized_headers
         else:
+            actual_value = normalized_headers.get(header_key)
             passed = actual_value == expected
 
         return self._create_result(
             passed=passed,
-            actual=actual_value,
+            actual=normalized_headers.get(header_key),
             expected=expected,
             extra={"header": header_name},
         )

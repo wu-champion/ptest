@@ -104,7 +104,7 @@ def http_response_template(
 
 
 def api_success_template(
-    actual: Any, expected: Any = None, **kwargs: bool
+    actual: Any, expected: Any = None, **kwargs: Any
 ) -> AssertionResult:
     """API 成功响应断言模板"""
     from .factory import AssertionFactory

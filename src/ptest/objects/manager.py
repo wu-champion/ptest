@@ -10,6 +10,7 @@ try:
     from . import db_enhanced as db_enhanced_module
 except ImportError as e:
     import logging
+
     logging.warning(f"Could not import object classes: {e}")
 
     class _FallbackObject:
