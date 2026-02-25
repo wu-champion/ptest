@@ -13,10 +13,18 @@ from .result import AssertionResult
 from .base import Assertion
 from .factory import AssertionFactory
 from .registry import AssertionRegistry
+from .chains import AndAssertion, OrAssertion, NotAssertion, ChainBuilder
+from .templates import AssertionTemplate, TemplateAssertion
 
 __all__ = [
     "Assertion",
     "AssertionResult",
     "AssertionFactory",
     "AssertionRegistry",
+    "AndAssertion",
+    "OrAssertion",
+    "NotAssertion",
+    "ChainBuilder",
+    "AssertionTemplate",
+    "TemplateAssertion",
 ]

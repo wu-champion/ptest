@@ -10,6 +10,11 @@ from ptest.assertions import (  # noqa: E402
     AssertionResult,
     AssertionFactory,
     AssertionRegistry,
+    AndAssertion,
+    OrAssertion,
+    NotAssertion,
+    AssertionTemplate,
+    ChainBuilder,
 )
 
 
@@ -473,3 +478,231 @@ class TestAssertionRegistry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestChainAssertions(unittest.TestCase):
+    def test_and_all_pass(self):
+        eq = AssertionFactory.create("equal")
+        truthy = AssertionFactory.create("truthy")
+        and_assert = AndAssertion(eq, truthy)
+        result = and_assert.assert_value(42, 42)
+        self.assertTrue(result.passed)
+
+    def test_and_one_fails(self):
+        eq = AssertionFactory.create("equal")
+        truthy = AssertionFactory.create("truthy")
+        and_assert = AndAssertion(eq, truthy)
+        result = and_assert.assert_value(42, 43)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.extra.get("failed_count"), 1)
+
+    def test_or_one_passes(self):
+        eq = AssertionFactory.create("equal")
+        truthy = AssertionFactory.create("truthy")
+        or_assert = OrAssertion(eq, truthy)
+        result = or_assert.assert_value(42, 43)
+        self.assertTrue(result.passed)
+
+    def test_or_all_fail(self):
+        eq = AssertionFactory.create("equal")
+        falsy = AssertionFactory.create("falsy")
+        or_assert = OrAssertion(eq, falsy)
+        result = or_assert.assert_value(42, 43)
+        self.assertFalse(result.passed)
+
+    def test_not_passes_on_failure(self):
+        eq = AssertionFactory.create("equal")
+        not_assert = NotAssertion(eq)
+        result = not_assert.assert_value(42, 43)
+        self.assertTrue(result.passed)
+
+    def test_not_fails_on_pass(self):
+        eq = AssertionFactory.create("equal")
+        not_assert = NotAssertion(eq)
+        result = not_assert.assert_value(42, 42)
+        self.assertFalse(result.passed)
+
+
+class TestAssertionTemplates(unittest.TestCase):
+    def setUp(self):
+        AssertionTemplate.unregister("test_template")
+
+    def test_register_template(self):
+        def test_fn(actual, expected=None, **kwargs):
+            return AssertionResult(passed=True, actual=actual, expected=expected)
+
+        AssertionTemplate.register("test_template", test_fn)
+        self.assertIn("test_template", AssertionTemplate.list_templates())
+
+    def test_create_from_template(self):
+        def test_fn(actual, expected=None, **kwargs):
+            return AssertionResult(
+                passed=actual == expected, actual=actual, expected=expected
+            )
+
+        AssertionTemplate.register("eq_template", test_fn)
+        template = AssertionTemplate.create("eq_template")
+        result = template.assert_value(1, 1)
+        self.assertTrue(result.passed)
+
+    def test_unregister_template(self):
+        def test_fn(actual, expected=None, **kwargs):
+            return AssertionResult(passed=True)
+
+        AssertionTemplate.register("temp", test_fn)
+        self.assertTrue(AssertionTemplate.unregister("temp"))
+        self.assertNotIn("temp", AssertionTemplate.list_templates())
+
+    def test_builtin_templates(self):
+        templates = AssertionTemplate.list_templates()
+        self.assertIn("http_response", templates)
+        self.assertIn("api_success", templates)
+
+
+class TestChainBuilder(unittest.TestCase):
+    def test_build_single(self):
+        eq = AssertionFactory.create("equal")
+        builder = ChainBuilder(eq)
+        chain = builder.build()
+        result = chain.assert_value(1, 1)
+        self.assertTrue(result.passed)
+
+    def test_build_and_chain(self):
+        eq = AssertionFactory.create("equal")
+        truthy = AssertionFactory.create("truthy")
+        builder = ChainBuilder(eq)
+        chain = builder.and_(truthy).build()
+        result = chain.assert_value(42, 42)
+        self.assertTrue(result.passed)
+
+    def test_build_with_not(self):
+        eq = AssertionFactory.create("equal")
+        builder = ChainBuilder(eq)
+        chain = builder.not_().build()
+        result = chain.assert_value(1, 2)
+        self.assertTrue(result.passed)
+
+
+class TestNestedChains(unittest.TestCase):
+    def test_and_with_or(self):
+        eq = AssertionFactory.create("equal")
+        truthy = AssertionFactory.create("truthy")
+        falsy = AssertionFactory.create("falsy")
+
+        chain = AndAssertion(eq, OrAssertion(truthy, falsy))
+        result = chain.assert_value(42, 42)
+        self.assertTrue(result.passed)
+
+    def test_or_with_and(self):
+        eq = AssertionFactory.create("equal")
+        truthy = AssertionFactory.create("truthy")
+        falsy = AssertionFactory.create("falsy")
+
+        # Or: (eq AND truthy) OR falsy
+        # eq(42,42)=T, truthy(42)=T -> T AND T = T
+        # So Or(T, falsy(42)=F) = T
+        chain = OrAssertion(AndAssertion(eq, truthy), falsy)
+        result = chain.assert_value(42, 42)
+        self.assertTrue(result.passed)
+
+    def test_not_with_and(self):
+        eq = AssertionFactory.create("equal")
+        truthy = AssertionFactory.create("truthy")
+
+        chain = AndAssertion(NotAssertion(eq), truthy)
+        result = chain.assert_value(42, 43)
+        self.assertTrue(result.passed)
+
+
+class TestTemplateAdvanced(unittest.TestCase):
+    def setUp(self):
+        AssertionTemplate.unregister("test_param")
+
+    def test_template_with_params(self):
+        def param_template(actual, expected=None, **kwargs):
+            threshold = kwargs.get("threshold", 10)
+            return AssertionResult(
+                passed=actual >= threshold,
+                actual=actual,
+                expected=threshold,
+                assertion_type="ParamTemplate",
+            )
+
+        AssertionTemplate.register("test_param", param_template)
+        template = AssertionTemplate.create("test_param", {"threshold": 50})
+
+        result = template.assert_value(100)
+        self.assertTrue(result.passed)
+
+        result = template.assert_value(5)
+        self.assertFalse(result.passed)
+
+    def test_template_override_params(self):
+        def param_template(actual, expected=None, **kwargs):
+            threshold = kwargs.get("threshold", 10)
+            return AssertionResult(
+                passed=actual >= threshold,
+                actual=actual,
+                expected=threshold,
+                assertion_type="ParamTemplate",
+            )
+
+        AssertionTemplate.register("override_test", param_template)
+        template = AssertionTemplate.create("override_test", {"threshold": 50})
+
+        result = template.assert_value(30, threshold=20)
+        self.assertTrue(result.passed)
+
+    def test_template_invalid_name_raises(self):
+        with self.assertRaises(ValueError):
+            AssertionTemplate.create("nonexistent_template")
+
+    def test_template_with_description(self):
+        def desc_template(actual, expected=None, **kwargs):
+            return AssertionResult(
+                passed=True,
+                actual=actual,
+                expected=expected,
+                assertion_type="DescTemplate",
+            )
+
+        AssertionTemplate.register("desc_test", desc_template)
+        template = AssertionTemplate.create(
+            "desc_test", description="My custom assertion"
+        )
+        self.assertEqual(template.description, "My custom assertion")
+
+
+class TestChainEdgeCases(unittest.TestCase):
+    def test_and_single_assertion(self):
+        eq = AssertionFactory.create("equal")
+        and_chain = AndAssertion(eq)
+        result = and_chain.assert_value(1, 1)
+        self.assertTrue(result.passed)
+
+    def test_or_single_assertion(self):
+        eq = AssertionFactory.create("equal")
+        or_chain = OrAssertion(eq)
+        result = or_chain.assert_value(1, 1)
+        self.assertTrue(result.passed)
+
+    def test_not_none_assertion(self):
+        none_assert = AssertionFactory.create("none")
+        not_none = NotAssertion(none_assert)
+        result = not_none.assert_value("value")
+        self.assertTrue(result.passed)
+
+    def test_chain_with_extra_kwargs(self):
+        length = AssertionFactory.create("length")
+        chain = AndAssertion(length)
+
+        result = chain.assert_value("hello", 5, operator="==")
+        self.assertTrue(result.passed)
+
+    def test_or_with_both_passing(self):
+        eq = AssertionFactory.create("equal")
+        truthy = AssertionFactory.create("truthy")
+
+        or_chain = OrAssertion(eq, truthy)
+        result = or_chain.assert_value(42, 42)
+        self.assertTrue(result.passed)
