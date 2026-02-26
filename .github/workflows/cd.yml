@@ -16,29 +16,10 @@ on:
           - major
 
 jobs:
-  # ============ CI 检查 ============
+  # ============ CI 检查 (复用 ci.yml) ============
   ci-check:
     name: CI 检查
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 设置 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: 安装 uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: 同步依赖
-        run: |
-          rm -f uv.lock
-          uv sync
-
-      - name: 运行单元测试
-        run: uv run pytest tests/unit/ -v --tb=short
+    uses: ./.github/workflows/ci.yml
 
   # ============ 发布构建 ============
   build:
@@ -59,12 +40,13 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: 同步依赖
-        run: |
-          rm -f uv.lock
-          uv sync
+        run: uv sync
 
       - name: 运行测试
         run: uv run pytest tests/unit/ -v --tb=short
+
+      - name: 清理旧构建产物
+        run: rm -rf dist/ build/ *.egg-info
 
       - name: 构建包
         run: uv build
@@ -73,6 +55,14 @@ jobs:
         run: |
           ls -la dist/
           uv run twine check dist/*
+          for f in dist/*; do
+            echo "Checking $f"
+            base=$(basename "$f")
+            if ! echo "$base" | grep -q '^ptestx-'; then
+              echo "ERROR: built package name does not start with 'ptestx': $base"
+              exit 1
+            fi
+          done
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4

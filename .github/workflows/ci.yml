@@ -5,7 +5,6 @@ on:
     branches:
       - main
       - develop
-      - 'feature/**'
   pull_request:
     branches:
       - main
@@ -30,9 +29,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: 同步依赖
-        run: |
-          rm -f uv.lock
-          uv sync
+        run: uv sync
 
       - name: 检查代码格式 (ruff)
         run: |
@@ -70,9 +67,7 @@ jobs:
 
       - name: 同步依赖
         shell: bash
-        run: |
-          rm -f uv.lock
-          uv sync
+        run: uv sync
 
       - name: 运行单元测试
         env:
@@ -116,9 +111,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: 同步依赖
-        run: |
-          rm -f uv.lock
-          uv sync
+        run: uv sync
 
       - name: 等待 Docker 就绪
         run: |
@@ -148,9 +141,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: 同步依赖
-        run: |
-          rm -f uv.lock
-          uv sync
+        run: uv sync
 
       - name: 构建包
         run: |
@@ -184,9 +175,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: 同步依赖
-        run: |
-          rm -f uv.lock
-          uv sync
+        run: uv sync
 
       - name: 检查依赖安全漏洞 (pip-audit)
         run: |
