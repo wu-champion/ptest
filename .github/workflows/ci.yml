@@ -2,9 +2,14 @@ name: CI - 测试和代码质量
 
 on:
   push:
-    branches: [main, develop]
+    branches:
+      - main
+      - develop
+      - 'feature/**'
   pull_request:
-    branches: [main, develop]
+    branches:
+      - main
+      - develop
 
 jobs:
   # ============ 代码质量检查 ============

@@ -16,10 +16,35 @@ on:
           - major
 
 jobs:
+  # ============ CI 检查 ============
+  ci-check:
+    name: CI 检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 同步依赖
+        run: |
+          rm -f uv.lock
+          uv sync
+
+      - name: 运行单元测试
+        run: uv run pytest tests/unit/ -v --tb=short
+
   # ============ 发布构建 ============
   build:
     name: 构建发布包
     runs-on: ubuntu-latest
+    needs: [ci-check]
     
     steps:
       - name: 检出代码
