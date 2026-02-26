@@ -72,4 +72,4 @@ module = [
 ignore_errors = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["ptest"]
+packages = ["src/ptest"]
