@@ -23,7 +23,7 @@ FIX_SUGGESTIONS: dict[str, str] = {
     "RegexAssertion": "检查正则表达式是否正确匹配目标",
     "SchemaAssertion": "检查JSON结构是否符合schema定义",
     "LengthAssertion": "检查集合/字符串长度是否满足条件",
-    "TypeAssertion": "检查值的类型是否正确",
+    "TypeAssertion": "检查值的类型是否正确。支持字符串类型名(str,int,list等)或传入Python类型对象，如: is_instance(str)",
     "TruthyAssertion": "检查值是否为真值 (非零、非空、非None)",
     "FalsyAssertion": "检查值是否为假值 (零、空、None)",
     "NoneAssertion": "检查值是否为空 (None)",

@@ -129,6 +129,22 @@ class AssertThat:
     # ============ 类型断言 ============
 
     def is_instance(self, expected: Type | str) -> AssertThat:
+        """断言类型 (is_type 的改进)
+
+        支持两种写法:
+            assert_that(x).is_instance(str)   # Python 类型 (推荐)
+            assert_that(x).is_instance("str")  # 字符串类型名
+        """
+        # 如果传入的是 Python 类型（自定义类或内置类型），直接用 isinstance
+        if isinstance(expected, type):
+            passed = isinstance(self.actual, expected)
+            if not passed:
+                raise AssertionError(
+                    f"类型: TypeAssertion | 期望: {expected!r} | 实际: {type(self.actual).__name__}"
+                )
+            return self
+        # 如果是字符串类型名，使用 TypeAssertion
+        return self._execute("type", expected)
         """断言类型 (is_type 的改进)"""
         return self._execute("type", expected)
 
@@ -317,7 +333,7 @@ class SoftAssertThat:
     def in_(self, item: Any) -> SoftAssertThat:
         return self.is_in(item)
 
-    # ============ 真假值断言 ============
+        # ============ 真假值断言 ============
         return self._execute("contains", item)
 
     # ============ 真假值断言 ============

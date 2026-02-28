@@ -129,3 +129,91 @@ result = eq.assert_value(1, 2, capture_location=True)
 - 1000 次断言: < 100ms
 
 位置捕获默认关闭以保证性能，需要时通过 `capture_location=True` 启用。
+
+---
+
+## pytest/unittest 兼容层
+
+ptest 断言系统提供与 pytest/unittest 兼容的接口，方便渐进式迁移。
+
+### assert_that() - 链式断言
+
+```python
+from ptest.assertions import assert_that
+
+# 基本用法
+assert_that(1).equals(1)
+assert_that("hello world").contains("world")
+assert_that(value).is_true()
+assert_that(value).is_not_none()
+```
+
+### 方法清单
+
+| 方法 | 别名 | 说明 |
+|------|------|------|
+| `.equals(y)` | `.eq(y)` | 断言 x == y |
+| `.not_equal(y)` | `.ne(y)`, `.not_equals(y)` | 断言 x != y |
+| `.contains(y)` | `.is_in(y)`, `.in_(y)` | 断言 y in x |
+| `.is_true()` | `.true()`, `.is_t()`, `.is_truthy()` | 断言真值 |
+| `.is_false()` | `.false()`, `.is_f()`, `.is_falsy()` | 断言假值 |
+| `.is_none()` | - | 断言 x is None |
+| `.not_none()` | `.is_not_none()` | 断言 x is not None |
+| `.is_instance(type)` | `.is_type(type)` | 断言类型 |
+| `.len_is(n)` | `.has_length(n)` | 断言长度 |
+| `.match(pattern)` | `.matches(pattern)` | 正则匹配 |
+| `.match_schema(schema)` | `.conforms_to(schema)` | JSON Schema |
+
+### assert_raises() - 异常断言
+
+```python
+from ptest.assertions import assert_raises
+
+# 捕获异常
+with assert_raises(ValueError) as ctx:
+    raise ValueError("test error")
+
+# 访问异常
+print(ctx.exception)  # test error
+```
+
+### SoftAssertions - 软断言
+
+```python
+from ptest.assertions import SoftAssertions
+
+# 收集所有失败，统一报告
+with SoftAssertions() as soft:
+    soft.assert_that(1).equals(2)
+    soft.assert_that("a").equals("b")
+# 所有断言执行后才报告失败
+```
+
+### 在 pytest 中使用
+
+```python
+# 直接导入使用，与原生 pytest 断言完全兼容
+from ptest.assertions import assert_that, assert_raises, SoftAssertions
+
+def test_example():
+    assert_that(1).equals(1)
+    
+    with assert_raises(ValueError):
+        raise ValueError("error")
+```
+
+### 在 unittest 中使用
+
+```python
+import unittest
+from ptest.assertions import assert_that
+
+class MyTestCase(unittest.TestCase):
+    def test_example(self):
+        assert_that(1).equals(1)  # 抛出标准 AssertionError
+```
+
+- 单次断言: < 1ms
+- 1000 次断言: < 100ms
+
+位置捕获默认关闭以保证性能，需要时通过 `capture_location=True` 启用。

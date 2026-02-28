@@ -418,6 +418,47 @@ class TypeAssertion(Assertion):
 
         expected_class = type_map.get(str(expected).lower())
         if expected_class is None:
+            # 安全: 不做动态作用域解析，提供清晰的错误提示
+            return self._create_result(
+                passed=False,
+                actual=type(actual).__name__,
+                expected=expected,
+                extra={
+                    "error": f"Unknown type: {expected}",
+                    "hint": "支持的字符串类型: "
+                    + ", ".join(type_map.keys())
+                    + ". 建议传入 Python 类型对象，如: is_instance(str)",
+                },
+            )
+        passed = isinstance(actual, expected_class)
+        if expected_class is None:
+            # 安全: 不做动态作用域解析，提供清晰的错误提示
+            return self._create_result(
+                passed=False,
+                actual=type(actual).__name__,
+                expected=expected,
+                extra={
+                    "error": f"Unknown type: {expected}",
+                    "hint": "支持的字符串类型: "
+                    + ", ".join(type_map.keys())
+                    + ". 建议传入 Python 类型对象，如: is_instance(str)",
+                },
+            )
+        passed = isinstance(actual, expected_class)
+        if expected_class is None:
+            # 安全: 不做动态作用域解析，提供清晰的错误提示
+            return self._create_result(
+                passed=False,
+                actual=type(actual).__name__,
+                expected=expected,
+                extra={
+                    "error": f"Unknown type: {expected}",
+                    "hint": "支持的字符串类型: "
+                    + ", ".join(type_map.keys())
+                    + ". 建议传入 Python 类型对象，如: is_instance(str)",
+                },
+            )
+        if expected_class is None:
             return self._create_result(
                 passed=False,
                 actual=type(actual).__name__,
