@@ -93,9 +93,9 @@ class ReportGenerator:
 
         # 保存报告
         if not output_path:
+            base_dir = self.env_manager.report_dir or Path.cwd()
             output_path = (
-                Path.cwd()
-                / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                base_dir / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,9 +117,9 @@ class ReportGenerator:
         }
 
         if not output_path:
+            base_dir = self.env_manager.report_dir or Path.cwd()
             output_path = (
-                Path.cwd()
-                / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                base_dir / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,9 +159,9 @@ class ReportGenerator:
         )
 
         if not output_path:
+            base_dir = self.env_manager.report_dir or Path.cwd()
             output_path = (
-                Path.cwd()
-                / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                base_dir / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
             )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,18 +175,35 @@ class ReportGenerator:
         """收集测试数据"""
         isolation_engine = "basic"
         if hasattr(self.env_manager, "config") and self.env_manager.config:
-            config_isolation = getattr(
-                self.env_manager.config, "isolation_level", "basic"
-            )
-            isolation_engine = str(config_isolation)
+            if isinstance(self.env_manager.config, dict):
+                isolation_engine = str(
+                    self.env_manager.config.get("default_isolation_level", "basic")
+                )
+            else:
+                config_isolation = getattr(
+                    self.env_manager.config, "isolation_level", "basic"
+                )
+                isolation_engine = str(config_isolation)
+
+        total_cases = len(self.case_manager.results) or len(self.case_manager.cases)
+        passed_count = sum(
+            1 for result in self.case_manager.results.values() if result.status == "passed"
+        )
+        failed_count = total_cases - passed_count if total_cases else 0
+        total_duration = round(
+            sum(result.duration for result in self.case_manager.results.values()),
+            2,
+        )
+        success_rate = round((passed_count / total_cases) * 100, 2) if total_cases else 0
+        failure_rate = round((failed_count / total_cases) * 100, 2) if total_cases else 0
 
         return {
-            "total_cases": len(self.case_manager.cases),
-            "passed_count": len(self.case_manager.passed_cases),
-            "failed_count": len(self.case_manager.failed_cases),
-            "success_rate": 0,
-            "failure_rate": 0,
-            "total_duration": 0,
+            "total_cases": total_cases,
+            "passed_count": passed_count,
+            "failed_count": failed_count,
+            "success_rate": success_rate,
+            "failure_rate": failure_rate,
+            "total_duration": total_duration,
             "test_environment": str(self.env_manager.test_path),
             "isolation_engine": isolation_engine,
             "python_version": "3.12",
@@ -194,12 +211,13 @@ class ReportGenerator:
 
     def _collect_summary_data(self) -> dict:
         """收集摘要数据"""
+        test_data = self._collect_test_data()
         return {
-            "total_cases": len(self.case_manager.cases),
-            "passed": len(self.case_manager.passed_cases),
-            "failed": len(self.case_manager.failed_cases),
-            "success_rate": 0,
-            "total_duration": 0,
+            "total_cases": test_data["total_cases"],
+            "passed": test_data["passed_count"],
+            "failed": test_data["failed_count"],
+            "success_rate": test_data["success_rate"],
+            "total_duration": test_data["total_duration"],
         }
 
     def _collect_results_data(self) -> dict:

@@ -1,196 +1,245 @@
 # ptest/api.py - Python API 接口
 
-import uuid
+from __future__ import annotations
+
 import time
-from typing import Dict, List, Any, Optional, Union
+import uuid
 from pathlib import Path
-from datetime import datetime
+from typing import Any, Optional
 
-# 导入框架核心组件
-from .environment import EnvironmentManager
-from .objects.manager import ObjectManager
-from .cases.manager import CaseManager
-from .reports.generator import ReportGenerator
-from .isolation.manager import IsolationManager
-
-# 配置和常量
+from .app import WorkflowService
 from .config import DEFAULT_CONFIG
-
-# 使用框架的日志管理器
 from .core import get_logger
+from .isolation.manager import IsolationManager
 
 logger = get_logger("api")
 
 
 class PTestAPI:
-    """ptest Python API - 提供完整的编程接口"""
+    """ptest Python API - 基于统一工作流服务的编程接口"""
 
     def __init__(
         self,
-        config: Optional[Dict[str, Any]] = None,
+        config: Optional[dict[str, Any]] = None,
         work_path: Optional[str] = None,
-    ):
-        """初始化API实例"""
-
-        # 设置配置
-        self.config = config if config else DEFAULT_CONFIG
-
-        # 设置工作路径
-        if work_path:
-            self.work_path = Path(work_path)
-        else:
-            self.work_path = Path.cwd()
-
-        # 创建核心管理器
-        self.env_manager = EnvironmentManager()
+    ) -> None:
+        self.config = config.copy() if config else DEFAULT_CONFIG.copy()
+        self.work_path = Path(work_path).resolve() if work_path else Path.cwd()
+        self.workflow = WorkflowService(self.work_path, self.config)
         self.isolation_manager = IsolationManager(self.config)
-
-        # 状态跟踪
-        self.is_initialized = True
-        self._active_env_path: Optional[Path] = None
-
         logger.info("PTest API initialized")
 
-    def init_environment(self, path: Optional[str] = None) -> Path:
-        """初始化测试环境
+    def init_environment(self, path: Optional[str] = None) -> dict[str, Any]:
+        record = self.workflow.init_environment(path or self.work_path)
+        self.work_path = Path(record.root_path)
+        return self._api_response(
+            success=True,
+            status=record.status,
+            message=f"Environment initialized at: {record.root_path}",
+            data=record.to_dict(),
+        )
 
-        Args:
-            path: 环境路径，默认为当前工作路径
-
-        Returns:
-            Path: 初始化后的环境路径
-        """
-        env_path = Path(path) if path else self.work_path
-        result = self.env_manager.init_environment(env_path)
-        self._active_env_path = env_path
-        return result
-
-    def get_environment_status(self) -> Union[Dict[str, Any], str]:
-        """获取当前环境状态"""
-        return self.env_manager.get_env_status()
+    def get_environment_status(self) -> dict[str, Any]:
+        status = self.workflow.get_environment_status()
+        normalized_status = status.get("status", "ready" if status.get("initialized") else "uninitialized")
+        return self._api_response(
+            success=True,
+            status=normalized_status,
+            message=f"Environment status retrieved for: {status.get('path')}",
+            data=status,
+        )
 
     def create_test_case(
         self,
         test_type: str,
         name: str,
         description: str = "",
-        content: Union[str, Dict[str, Any]] | None = None,
-        tags: List[str] | None = None,
+        content: Any = None,
+        tags: list[str] | None = None,
         expected_result: str | None = None,
         timeout: Optional[float] = None,
-    ) -> str:
-        """创建测试用例
-
-        注意：需要先初始化环境
-        """
-        if not self._active_env_path:
-            # 如果没有初始化环境，使用当前工作路径
-            self.init_environment()
-
-        # 创建用例管理器（使用当前环境）
-        case_manager = CaseManager(self.env_manager)
-
-        # 创建测试用例
+    ) -> dict[str, Any]:
+        self.workflow.init_environment(self.work_path)
         case_id = f"{test_type}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
         case_data = {
             "type": test_type,
             "name": name,
             "description": description,
-            "content": content or {},
             "tags": tags or [],
             "expected_result": expected_result,
             "timeout": timeout,
-            "created_at": datetime.now().isoformat(),
         }
+        if isinstance(content, dict):
+            case_data.update(content)
+        elif content is not None:
+            case_data["content"] = content
+        result = self.workflow.add_case(case_id, case_data)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data={"case_id": case_id, "case": case_data},
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
 
-        case_manager.add_case(case_id, case_data)
-        return case_id
+    def list_test_cases(self) -> dict[str, Any]:
+        cases = self.workflow.list_cases()
+        return self._api_response(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(cases)} test cases",
+            data=cases,
+        )
 
-    def list_test_cases(self) -> str:
-        """列出所有测试用例"""
-        if not self._active_env_path:
-            return "No environment initialized"
+    def run_test_case(
+        self, case_id: str, params: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        result = self.workflow.run_case(case_id, params=params)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result,
+            error=result.get("error"),
+        )
 
-        case_manager = CaseManager(self.env_manager)
-        return case_manager.list_cases()
+    def create_object(self, obj_type: str, name: str, **kwargs: Any) -> dict[str, Any]:
+        return self.workflow.install_object(obj_type, name, kwargs)
 
-    def run_test_case(self, case_id: str):
-        """运行指定测试用例"""
-        if not self._active_env_path:
-            raise ValueError(
-                "Environment not initialized. Call init_environment() first."
-            )
+    def list_objects(self) -> dict[str, Any]:
+        objects = self.workflow.list_objects()
+        return self._api_response(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(objects)} objects",
+            data=objects,
+        )
 
-        case_manager = CaseManager(self.env_manager)
-        return case_manager.run_case(case_id)
+    def install_tool(self, name: str, **kwargs: Any) -> dict[str, Any]:
+        return self.workflow.install_tool(name, kwargs)
 
-    def create_object(self, obj_type: str, name: str, **kwargs) -> str:
-        """创建测试对象
+    def list_tools(self) -> dict[str, Any]:
+        tools = self.workflow.list_tools()
+        return self._api_response(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(tools)} tools",
+            data=tools,
+        )
 
-        注意：需要先初始化环境
-        """
-        if not self._active_env_path:
-            self.init_environment()
+    def create_suite(self, suite_data: dict[str, Any]) -> dict[str, Any]:
+        return self.workflow.create_suite(suite_data)
 
-        obj_manager = ObjectManager(self.env_manager)
-        result = obj_manager.create_object(obj_type, name, **kwargs)
-        return result
+    def list_suites(self) -> dict[str, Any]:
+        suites = self.workflow.list_suites()
+        return self._api_response(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(suites)} suites",
+            data=suites,
+        )
 
-    def list_objects(self) -> str:
-        """列出所有对象"""
-        if not self._active_env_path:
-            return "No environment initialized"
-
-        obj_manager = ObjectManager(self.env_manager)
-        return obj_manager.list_objects()
+    def run_suite(
+        self,
+        name: str,
+        parallel: bool = False,
+        workers: int = 4,
+        stop_on_failure: bool = False,
+        timeout: int = 0,
+        retry_count: int = 0,
+    ) -> dict[str, Any]:
+        result = self.workflow.run_suite(
+            name=name,
+            parallel=parallel,
+            workers=workers,
+            stop_on_failure=stop_on_failure,
+            timeout=timeout,
+            retry_count=retry_count,
+        )
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result,
+            error=result.get("error"),
+        )
 
     def generate_report(
         self,
         format_type: str = "html",
         output_path: Optional[str] = None,
-    ) -> str:
-        """生成测试报告
+    ) -> dict[str, Any]:
+        report_path = self.workflow.generate_report(format_type, output_path)
+        return self._api_response(
+            success=True,
+            status="generated",
+            message=f"Report generated: {report_path}",
+            data={"report_path": report_path, "format": format_type},
+        )
 
-        注意：需要先初始化环境
-        """
-        if not self._active_env_path:
-            self.init_environment()
+    def list_execution_records(
+        self, case_id: Optional[str] = None
+    ) -> dict[str, Any]:
+        records = self.workflow.list_execution_records(case_id=case_id)
+        return self._api_response(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(records)} execution records",
+            data=records,
+        )
 
-        case_manager = CaseManager(self.env_manager)
-        report_path = Path(output_path) if output_path else None
-        report_gen = ReportGenerator(self.env_manager, case_manager)
-        return report_gen.generate_report(format_type, report_path)
+    def destroy_environment(self) -> dict[str, Any]:
+        return self.workflow.destroy_environment()
 
-    def get_system_info(self) -> Dict[str, Any]:
-        """获取系统信息"""
-        isolation_engines = list(self.isolation_manager.engines.keys())
-
-        return {
-            "version": "1.0.1",
-            "api_version": "1.0.1",
+    def get_system_info(self) -> dict[str, Any]:
+        env_status = self.workflow.get_environment_status()
+        return self._api_response(
+            success=True,
+            status="ok",
+            message="System info retrieved",
+            data={
+            "version": "1.3.0",
+            "api_version": "1.3.0",
             "work_path": str(self.work_path),
-            "environment_initialized": self._active_env_path is not None,
-            "environment_path": str(self._active_env_path)
-            if self._active_env_path
-            else None,
-            "isolation_engines": isolation_engines,
-            "framework_version": "PTEST-1.0.1",
-            "created_at": datetime.now().isoformat(),
-        }
+            "environment_initialized": env_status.get("initialized", False),
+            "environment_path": env_status.get("path"),
+            "isolation_engines": list(self.isolation_manager.engines.keys()),
+            "framework_version": "PTEST-1.3.0",
+            },
+        )
 
-    def __enter__(self):
-        """上下文管理器入口"""
+    def __enter__(self) -> "PTestAPI":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """上下文管理器出口"""
-        # 清理资源
-        pass
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        return None
+
+    def _api_response(
+        self,
+        *,
+        success: bool,
+        status: str,
+        message: str,
+        data: Any | None = None,
+        error: Any | None = None,
+        error_code: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "success": success,
+            "status": status,
+            "message": message,
+            "error": error,
+            "error_code": error_code,
+            "work_path": str(self.work_path),
+            "data": data,
+        }
 
 
-# 便捷函数
 def create_ptest_api(
-    config: Optional[Dict[str, Any]] = None, work_path: Optional[str] = None
+    config: Optional[dict[str, Any]] = None,
+    work_path: Optional[str] = None,
 ) -> PTestAPI:
-    """创建PTestAPI实例的便捷函数"""
+    """创建 PTestAPI 实例的便捷函数"""
+
     return PTestAPI(config=config, work_path=work_path)

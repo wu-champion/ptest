@@ -13,39 +13,50 @@ from ..core import get_logger
 logger = get_logger("suites.cli")
 
 
-def setup_suite_subparser(subparsers):
+def setup_suite_subparser(subparsers, parents=None):
     """设置 suite 子命令"""
+    parser_parents = parents or []
     suite_parser = subparsers.add_parser(
-        "suite", help=get_colored_text("测试套件管理", 92)
+        "suite", help=get_colored_text("测试套件管理", 92), parents=parser_parents
     )
     suite_subparsers = suite_parser.add_subparsers(
         dest="suite_action", help="测试套件操作 / Suite actions"
     )
 
     # 创建套件命令
-    create_parser = suite_subparsers.add_parser("create", help="创建测试套件")
+    create_parser = suite_subparsers.add_parser(
+        "create", help="创建测试套件", parents=parser_parents
+    )
     create_parser.add_argument("name", help="套件名称")
     create_parser.add_argument(
         "--from-file", "-f", help="从配置文件创建套件（JSON/YAML）", default=None
     )
 
     # 列出套件命令
-    suite_subparsers.add_parser("list", help="列出所有套件")
+    suite_subparsers.add_parser("list", help="列出所有套件", parents=parser_parents)
 
     # 显示套件命令
-    show_parser = suite_subparsers.add_parser("show", help="显示套件详情")
+    show_parser = suite_subparsers.add_parser(
+        "show", help="显示套件详情", parents=parser_parents
+    )
     show_parser.add_argument("name", help="套件名称")
 
     # 删除套件命令
-    delete_parser = suite_subparsers.add_parser("delete", help="删除测试套件")
+    delete_parser = suite_subparsers.add_parser(
+        "delete", help="删除测试套件", parents=parser_parents
+    )
     delete_parser.add_argument("name", help="套件名称")
 
     # 验证命令
-    validate_parser = suite_subparsers.add_parser("validate", help="验证套件配置")
+    validate_parser = suite_subparsers.add_parser(
+        "validate", help="验证套件配置", parents=parser_parents
+    )
     validate_parser.add_argument("name", help="套件名称")
 
     # 运行套件命令
-    run_parser = suite_subparsers.add_parser("run", help="运行测试套件")
+    run_parser = suite_subparsers.add_parser(
+        "run", help="运行测试套件", parents=parser_parents
+    )
     run_parser.add_argument("name", help="套件名称")
     run_parser.add_argument("--verbose", action="store_true", help="显示详细输出")
     run_parser.add_argument("--parallel", action="store_true", help="启用并行执行")
