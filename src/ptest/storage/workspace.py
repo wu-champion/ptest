@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from ..models import (
 class WorkspaceStorage:
     """File-backed storage for the first-phase workflow."""
 
-    def __init__(self, root_path: Path):
+    def __init__(self, root_path: str | Path):
         self.root_path = Path(root_path).resolve()
         self.meta_dir = self.root_path / ".ptest"
         self.executions_dir = self.meta_dir / "executions"
@@ -79,8 +80,7 @@ class WorkspaceStorage:
         if not data:
             return {}
         return {
-            item["name"]: ToolRecord.from_dict(item)
-            for item in data.get("tools", [])
+            item["name"]: ToolRecord.from_dict(item) for item in data.get("tools", [])
         }
 
     def save_tools(self, tools: dict[str, ToolRecord]) -> None:
@@ -128,49 +128,119 @@ class WorkspaceStorage:
         self.ensure_layout()
         artifact_dir = self.artifacts_dir / execution_id
         artifact_dir.mkdir(parents=True, exist_ok=True)
+        context_dir = artifact_dir / "context"
+        case_dir = artifact_dir / "case"
+        result_dir = artifact_dir / "result"
+        output_dir = artifact_dir / "output"
+        logs_dir = artifact_dir / "logs"
+        indexes_dir = artifact_dir / "indexes"
 
         files = {
             "environment": self._write_artifact_file(
-                artifact_dir / "environment.json",
+                context_dir / "environment.json",
                 environment,
             ),
             "objects": self._write_artifact_file(
-                artifact_dir / "objects.json",
+                context_dir / "objects.json",
                 {"objects": objects},
             ),
             "case": self._write_artifact_file(
-                artifact_dir / "case.json",
+                case_dir / "case.json",
                 case or {},
             ),
             "result": self._write_artifact_file(
-                artifact_dir / "result.json",
+                result_dir / "result.json",
                 result,
             ),
         }
 
         if output not in (None, ""):
-            output_path = artifact_dir / (
+            output_path = output_dir / (
                 "output.txt" if isinstance(output, str) else "output.json"
             )
             if isinstance(output, str):
+                output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(output, encoding="utf-8")
                 files["output"] = str(output_path.relative_to(self.root_path))
             else:
                 files["output"] = self._write_artifact_file(output_path, output)
 
-        return {
+        categories = {
+            "context": {
+                "environment": files["environment"],
+                "objects": files["objects"],
+            },
+            "case": {
+                "case": files["case"],
+            },
+            "result": {
+                "result": files["result"],
+            },
+            "output": {
+                "output": files["output"],
+            }
+            if "output" in files
+            else {},
+        }
+        log_index = {
+            "execution_id": execution_id,
+            "workspace_logs_dir": self._relative_workspace_path(
+                self.root_path / "logs"
+            ),
+            "files": self._list_workspace_logs(),
+            "generated_at": datetime.now().isoformat(),
+        }
+        log_index_path = self._write_artifact_file(
+            logs_dir / "log_index.json",
+            log_index,
+        )
+        indexes = {
+            "artifact_index": str(
+                (indexes_dir / "artifact_index.json").relative_to(self.root_path)
+            ),
+            "log_index": log_index_path,
+        }
+        artifact_manifest = {
+            "execution_id": execution_id,
             "directory": str(artifact_dir.relative_to(self.root_path)),
             "files": files,
+            "categories": categories,
+            "indexes": indexes,
+            "generated_at": datetime.now().isoformat(),
         }
+        self._write_artifact_file(
+            indexes_dir / "artifact_index.json", artifact_manifest
+        )
+        return artifact_manifest
 
-    def save_execution_artifact_record(self, record: ExecutionRecord) -> str:
+    def save_execution_artifact_record(self, record: ExecutionRecord) -> dict[str, Any]:
         self.ensure_layout()
         artifact_dir = self.artifacts_dir / record.execution_id
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        return self._write_artifact_file(
-            artifact_dir / "execution.json",
+        result_dir = artifact_dir / "result"
+        execution_path = self._write_artifact_file(
+            result_dir / "execution.json",
             record.to_dict(),
         )
+        artifact_index_path = artifact_dir / "indexes" / "artifact_index.json"
+        artifact_index = self._read_json(artifact_index_path) or {
+            "execution_id": record.execution_id,
+            "directory": str(artifact_dir.relative_to(self.root_path)),
+            "files": {},
+            "categories": {},
+            "indexes": {
+                "artifact_index": str(artifact_index_path.relative_to(self.root_path)),
+            },
+        }
+        files = artifact_index.setdefault("files", {})
+        files["execution"] = execution_path
+        result_category = artifact_index.setdefault("categories", {}).setdefault(
+            "result",
+            {},
+        )
+        result_category["execution"] = execution_path
+        artifact_index["updated_at"] = datetime.now().isoformat()
+        self._write_json(artifact_index_path, artifact_index)
+        return artifact_index
 
     def list_executions(self) -> list[ExecutionRecord]:
         self.ensure_layout()
@@ -180,6 +250,33 @@ class WorkspaceStorage:
             if data:
                 records.append(ExecutionRecord.from_dict(data))
         return records
+
+    def get_execution(self, execution_id: str) -> ExecutionRecord | None:
+        self.ensure_layout()
+        data = self._read_json(self.executions_dir / f"{execution_id}.json")
+        if not data:
+            return None
+        return ExecutionRecord.from_dict(data)
+
+    def get_execution_artifact_index(self, execution_id: str) -> dict[str, Any] | None:
+        self.ensure_layout()
+        return self._read_json(
+            self.artifacts_dir / execution_id / "indexes" / "artifact_index.json"
+        )
+
+    def get_execution_log_index(self, execution_id: str) -> dict[str, Any] | None:
+        self.ensure_layout()
+        return self._read_json(
+            self.artifacts_dir / execution_id / "logs" / "log_index.json"
+        )
+
+    def read_artifact_file(self, relative_path: str | Path) -> Any:
+        artifact_path = self.root_path / Path(relative_path)
+        if not artifact_path.exists():
+            return None
+        if artifact_path.suffix == ".json":
+            return self._read_json(artifact_path)
+        return artifact_path.read_text(encoding="utf-8")
 
     def latest_executions_by_case(self) -> dict[str, ExecutionRecord]:
         latest: dict[str, ExecutionRecord] = {}
@@ -221,3 +318,26 @@ class WorkspaceStorage:
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2, ensure_ascii=False, default=str)
         return str(path.relative_to(self.root_path))
+
+    def _list_workspace_logs(self) -> list[dict[str, Any]]:
+        logs_dir = self.root_path / "logs"
+        if not logs_dir.exists():
+            return []
+
+        entries: list[dict[str, Any]] = []
+        for path in sorted(logs_dir.glob("*.log")):
+            stat = path.stat()
+            entries.append(
+                {
+                    "path": str(path.relative_to(self.root_path)),
+                    "size": stat.st_size,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                }
+            )
+        return entries
+
+    def _relative_workspace_path(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.root_path))
+        except ValueError:
+            return str(path)

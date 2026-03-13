@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
 # ptest/cli.py
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import shlex
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import __version__
 from .app import WorkflowService
-from .objects.manager import ObjectManager
-from .tools.manager import ToolManager
 from .data.cli import setup_data_subparser, handle_data_command
 from .contract.cli import setup_contract_subparser, handle_contract_command
 from .suites.cli import setup_suite_subparser, handle_suite_command
 from .mock.cli import setup_mock_subparser, handle_mock_command
 from .utils import print_colored, get_colored_text
 
+if TYPE_CHECKING:
+    from .cases.manager import CaseManager
+    from .environment import EnvironmentManager
 
-def setup_cli():
+
+def setup_cli() -> argparse.ArgumentParser:
     """设置命令行界面"""
     workspace_parent = argparse.ArgumentParser(add_help=False)
     workspace_parent.add_argument(
@@ -160,7 +164,9 @@ def setup_cli():
         help=get_colored_text("Manage test tools", 92),
         parents=[workspace_parent],
     )
-    tool_subparsers = tool_parser.add_subparsers(dest="tool_action", help="Tool actions")
+    tool_subparsers = tool_parser.add_subparsers(
+        dest="tool_action", help="Tool actions"
+    )
 
     install_tool_parser = tool_subparsers.add_parser(
         "install", help="Install a tool", parents=[workspace_parent]
@@ -271,6 +277,39 @@ def setup_cli():
         help="Report format",
     )
 
+    execution_parser = subparsers.add_parser(
+        "execution",
+        help=get_colored_text("Execution records and artifacts", 92),
+        parents=[workspace_parent],
+    )
+    execution_subparsers = execution_parser.add_subparsers(
+        dest="execution_action",
+        help="Execution actions",
+    )
+    execution_list_parser = execution_subparsers.add_parser(
+        "list",
+        help="List execution records",
+        parents=[workspace_parent],
+    )
+    execution_list_parser.add_argument("--case-id", help="Filter by case ID")
+    execution_show_parser = execution_subparsers.add_parser(
+        "show",
+        help="Show a single execution record",
+        parents=[workspace_parent],
+    )
+    execution_show_parser.add_argument("execution_id", help="Execution ID")
+    execution_artifacts_parser = execution_subparsers.add_parser(
+        "artifacts",
+        help="Show execution artifact index",
+        parents=[workspace_parent],
+    )
+    execution_artifacts_parser.add_argument("execution_id", help="Execution ID")
+    execution_artifacts_parser.add_argument(
+        "--include-contents",
+        action="store_true",
+        help="Include artifact file contents",
+    )
+
     # suite commands
     setup_suite_subparser(subparsers, parents=[workspace_parent])
 
@@ -295,22 +334,26 @@ def setup_cli():
     report_generate_parser.add_argument("--output", help="Custom report output path")
 
     subparsers.add_parser(
-        "status", help=get_colored_text("Workspace status", 92), parents=[workspace_parent]
+        "status",
+        help=get_colored_text("Workspace status", 92),
+        parents=[workspace_parent],
     )
 
     # data commands
-    setup_data_subparser(subparsers)
+    setup_data_subparser(subparsers, parents=[workspace_parent])
 
     # contract commands
-    setup_contract_subparser(subparsers)
+    setup_contract_subparser(subparsers, parents=[workspace_parent])
 
     # mock commands
-    setup_mock_subparser(subparsers)
+    setup_mock_subparser(subparsers, parents=[workspace_parent])
 
     return parser
 
 
-def handle_config_command(env_manager, args) -> bool:
+def handle_config_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理config命令"""
     from .config import load_config, save_config, generate_config
 
@@ -390,7 +433,9 @@ def handle_config_command(env_manager, args) -> bool:
     return False
 
 
-def _handle_init_command(env_manager, args) -> bool:
+def _handle_init_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理init命令"""
     root_path = _resolve_workspace_path(args)
     service = WorkflowService(root_path)
@@ -399,12 +444,12 @@ def _handle_init_command(env_manager, args) -> bool:
     return True
 
 
-def _resolve_workspace_path(args) -> Path:
+def _resolve_workspace_path(args: argparse.Namespace) -> Path:
     path = getattr(args, "path", None)
     return Path(path).resolve() if path else Path.cwd().resolve()
 
 
-def _get_workflow_service(args) -> WorkflowService:
+def _get_workflow_service(args: argparse.Namespace) -> WorkflowService:
     return WorkflowService(_resolve_workspace_path(args))
 
 
@@ -427,14 +472,18 @@ def _ensure_workspace_initialized(service: WorkflowService, command_label: str) 
     return True
 
 
-def _handle_object_command(env_manager, args) -> bool:
+def _handle_object_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理对象命令"""
     service = _get_workflow_service(args)
     if not _ensure_workspace_initialized(service, "obj"):
         return False
 
     if not hasattr(args, "obj_action") or not args.obj_action:
-        print_colored("请指定操作: install/start/stop/restart/uninstall/list/status", 93)
+        print_colored(
+            "请指定操作: install/start/stop/restart/uninstall/list/status", 93
+        )
         return False
 
     if args.obj_action == "install":
@@ -446,7 +495,9 @@ def _handle_object_command(env_manager, args) -> bool:
             if value is not None:
                 params[key] = value
         if args.type in {"db", "database", "sqlite", "mysql", "postgres", "postgresql"}:
-            params.setdefault("driver", "sqlite" if args.type == "sqlite" else args.type)
+            params.setdefault(
+                "driver", "sqlite" if args.type == "sqlite" else args.type
+            )
             if params["driver"] == "db":
                 params["driver"] = "sqlite"
         result = service.install_object(args.type, args.name, params)
@@ -479,14 +530,18 @@ def _handle_object_command(env_manager, args) -> bool:
     return bool(result.get("success", True))
 
 
-def _handle_tool_command(env_manager, args) -> bool:
+def _handle_tool_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理工具命令"""
     service = _get_workflow_service(args)
     if not _ensure_workspace_initialized(service, "tool"):
         return False
 
     if not hasattr(args, "tool_action") or not args.tool_action:
-        print_colored("请指定操作: install/start/stop/restart/uninstall/list/status", 93)
+        print_colored(
+            "请指定操作: install/start/stop/restart/uninstall/list/status", 93
+        )
         return False
 
     if args.tool_action == "install":
@@ -521,7 +576,9 @@ def _handle_tool_command(env_manager, args) -> bool:
     return bool(result.get("success", True))
 
 
-def _handle_suite_command_v2(env_manager, args) -> bool:
+def _handle_suite_command_v2(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """通过统一工作流服务处理 suite 命令"""
     service = _get_workflow_service(args)
     if not _ensure_workspace_initialized(service, "suite"):
@@ -616,7 +673,9 @@ def _handle_suite_command_v2(env_manager, args) -> bool:
     return False
 
 
-def _handle_env_command(env_manager, args) -> bool:
+def _handle_env_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理环境命令"""
     service = _get_workflow_service(args)
     if not hasattr(args, "env_action") or not args.env_action:
@@ -624,7 +683,9 @@ def _handle_env_command(env_manager, args) -> bool:
         return False
 
     if args.env_action == "status":
-        print(json.dumps(service.get_environment_status(), indent=2, ensure_ascii=False))
+        print(
+            json.dumps(service.get_environment_status(), indent=2, ensure_ascii=False)
+        )
         return True
 
     if args.env_action == "destroy":
@@ -638,7 +699,52 @@ def _handle_env_command(env_manager, args) -> bool:
     return False
 
 
-def _handle_entity_command(entity_manager, args, action: str, entity_type: str):
+def _handle_execution_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
+    """处理 execution 命令"""
+    service = _get_workflow_service(args)
+    if not _ensure_workspace_initialized(service, "execution"):
+        return False
+
+    if not hasattr(args, "execution_action") or not args.execution_action:
+        print_colored("请指定 execution 操作: list/show/artifacts", 93)
+        return False
+
+    if args.execution_action == "list":
+        records = service.list_execution_records(case_id=getattr(args, "case_id", None))
+        print(json.dumps(records, indent=2, ensure_ascii=False))
+        return True
+
+    if args.execution_action == "show":
+        result = service.get_execution_record(args.execution_id)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["execution"], indent=2, ensure_ascii=False))
+        return True
+
+    if args.execution_action == "artifacts":
+        result = service.get_execution_artifacts(
+            args.execution_id,
+            include_contents=getattr(args, "include_contents", False),
+        )
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["artifacts"], indent=2, ensure_ascii=False))
+        return True
+
+    print_colored(f"✗ Unknown execution action: {args.execution_action}", 91)
+    return False
+
+
+def _handle_entity_command(
+    entity_manager: Any,
+    args: argparse.Namespace,
+    action: str,
+    entity_type: str,
+) -> bool:
     """
     通用的实体命令处理器
 
@@ -695,22 +801,241 @@ def _print_result(result: Any) -> Any:
     return result
 
 
-def _handle_data_command(env_manager, args) -> bool:
+def _handle_data_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理data命令"""
+    service = _get_workflow_service(args)
+
+    if not hasattr(args, "data_action") or not args.data_action:
+        print_colored("✗ Please specify a data action (generate/template/types)", 91)
+        return False
+
+    if args.data_action == "types":
+        from .data.generator import DATA_TYPE_CATEGORIES
+
+        print(json.dumps(DATA_TYPE_CATEGORIES, indent=2, ensure_ascii=False))
+        return True
+
+    if args.data_action == "generate":
+        result = service.generate_data(
+            args.type,
+            count=args.count,
+            locale=args.locale,
+            format_type=args.format,
+            table=getattr(args, "table", None),
+            dialect=getattr(args, "dialect", "generic"),
+            batch_size=getattr(args, "batch_size", 100),
+            seed=getattr(args, "seed", None),
+        )
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        payload = result["data"]["result"]
+        if getattr(args, "output", None):
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(payload, str):
+                output_path.write_text(payload, encoding="utf-8")
+            else:
+                output_path.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            print_colored(f"✓ Data saved to: {output_path}", 92)
+        else:
+            print(
+                payload
+                if isinstance(payload, str)
+                else json.dumps(payload, indent=2, ensure_ascii=False)
+            )
+        print_colored(result["message"], 92)
+        return True
+
+    if args.data_action == "template":
+        if not _ensure_workspace_initialized(service, "data template"):
+            return False
+        if not hasattr(args, "template_action") or not args.template_action:
+            print_colored("✗ Please specify a template action (generate/save/list)", 91)
+            return False
+        if args.template_action == "save":
+            try:
+                definition = (
+                    json.loads(Path(args.definition).read_text(encoding="utf-8"))
+                    if Path(args.definition).exists()
+                    else json.loads(args.definition)
+                )
+            except Exception as exc:
+                print_colored(f"✗ Invalid template definition: {exc}", 91)
+                return False
+            result = service.save_data_template(args.name, definition)
+            print_colored(result["message"], 92 if result["success"] else 91)
+            return result["success"]
+        if args.template_action == "list":
+            result = service.list_data_templates()
+            print(json.dumps(result["data"], indent=2, ensure_ascii=False))
+            return True
+        if args.template_action == "generate":
+            result = service.generate_data_from_template(args.name, count=args.count)
+            if not result["success"]:
+                print_colored(result["message"], 91)
+                return False
+            payload = result["data"]["results"]
+            if getattr(args, "output", None):
+                Path(args.output).write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                print_colored(f"✓ Data saved to: {args.output}", 92)
+            else:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            print_colored(result["message"], 92)
+            return True
+
     return handle_data_command(args)
 
 
-def _handle_contract_command(env_manager, args) -> bool:
+def _handle_contract_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理contract命令"""
+    service = _get_workflow_service(args)
+    if not _ensure_workspace_initialized(service, "contract"):
+        return False
+    if not hasattr(args, "contract_action") or not args.contract_action:
+        print_colored("✗ Please specify a contract action", 91)
+        return False
+
+    if args.contract_action == "import":
+        result = service.import_contract(args.source, getattr(args, "name", None))
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        contract = result["contract"]
+        print_colored(result["message"], 92)
+        print(json.dumps(contract, indent=2, ensure_ascii=False))
+        return True
+    if args.contract_action == "list":
+        result = service.list_contracts()
+        print(json.dumps(result["data"], indent=2, ensure_ascii=False))
+        return True
+    if args.contract_action == "show":
+        result = service.get_contract(args.name)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["contract"], indent=2, ensure_ascii=False))
+        return True
+    if args.contract_action == "delete":
+        result = service.delete_contract(args.name)
+        print_colored(result["message"], 92 if result["success"] else 91)
+        return result["success"]
+    if args.contract_action == "generate-cases":
+        result = service.generate_cases_from_contract(args.name, persist=True)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        if getattr(args, "output", None):
+            output_dir = Path(args.output)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            for case in result["data"]["cases"]:
+                (output_dir / f"{case['id']}.json").write_text(
+                    json.dumps(case, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            print_colored(f"✓ Cases written to: {output_dir}", 92)
+        print_colored(result["message"], 92)
+        return True
+    if args.contract_action == "validate":
+        try:
+            response_body = json.loads(Path(args.response).read_text(encoding="utf-8"))
+        except Exception as exc:
+            print_colored(f"✗ Failed to load response file: {exc}", 91)
+            return False
+        result = service.validate_contract_response(
+            args.name,
+            args.endpoint,
+            args.method,
+            args.status,
+            response_body,
+        )
+        if result["success"]:
+            print_colored(result["message"], 92)
+            return True
+        print_colored(result["message"], 91)
+        print(json.dumps(result["data"]["errors"], indent=2, ensure_ascii=False))
+        return False
+
     return handle_contract_command(args)
 
 
-def _handle_suite_command(env_manager, args) -> bool:
+def _handle_mock_command_v2(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
+    """处理 mock 命令"""
+    service = _get_workflow_service(args)
+    if not _ensure_workspace_initialized(service, "mock"):
+        return False
+    if not hasattr(args, "mock_action") or not args.mock_action:
+        print_colored(
+            "Please specify a mock action (start/stop/status/logs/list/add-route)", 91
+        )
+        return False
+
+    if args.mock_action == "start":
+        result = service.start_mock_server(
+            args.name,
+            port=args.port,
+            blocking=getattr(args, "blocking", False),
+        )
+        print_colored(result["message"], 92 if result["success"] else 91)
+        return result["success"]
+    if args.mock_action == "stop":
+        result = service.stop_mock_server(args.name)
+        print_colored(result["message"], 92 if result["success"] else 91)
+        return result["success"]
+    if args.mock_action == "status":
+        result = service.get_mock_server_status(args.name)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["data"], indent=2, ensure_ascii=False))
+        return True
+    if args.mock_action == "logs":
+        result = service.get_mock_logs(args.name, limit=args.limit)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["data"], indent=2, ensure_ascii=False))
+        return True
+    if args.mock_action == "list":
+        result = service.list_mock_servers()
+        print(json.dumps(result["data"], indent=2, ensure_ascii=False))
+        return True
+    if args.mock_action == "add-route":
+        try:
+            response = json.loads(args.response)
+            when = json.loads(args.when) if getattr(args, "when", None) else None
+        except json.JSONDecodeError as exc:
+            print_colored(f"✗ Invalid JSON: {exc}", 91)
+            return False
+        result = service.add_mock_route(
+            args.name, args.path, args.method, response, when
+        )
+        print_colored(result["message"], 92 if result["success"] else 91)
+        return result["success"]
+
+    return handle_mock_command(args)
+
+
+def _handle_suite_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理suite命令"""
     return handle_suite_command(env_manager, args)
 
 
-def main():
+def main() -> int:
     """主入口"""
     from .environment import EnvironmentManager
 
@@ -723,6 +1048,7 @@ def main():
     command_handlers = {
         "init": lambda: _handle_init_command(env_manager, args),
         "env": lambda: _handle_env_command(env_manager, args),
+        "execution": lambda: _handle_execution_command(env_manager, args),
         "config": lambda: handle_config_command(env_manager, args),
         "obj": lambda: _handle_object_command(env_manager, args),
         "tool": lambda: _handle_tool_command(env_manager, args),
@@ -732,7 +1058,7 @@ def main():
         "data": lambda: _handle_data_command(env_manager, args),
         "contract": lambda: _handle_contract_command(env_manager, args),
         "suite": lambda: _handle_suite_command_v2(env_manager, args),
-        "mock": lambda: handle_mock_command(args),
+        "mock": lambda: _handle_mock_command_v2(env_manager, args),
         "status": lambda: _handle_status_command(env_manager, args),
     }
 
@@ -748,7 +1074,9 @@ def main():
         return 1
 
 
-def _handle_case_command(env_manager, args) -> bool:
+def _handle_case_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理case命令"""
     service = _get_workflow_service(args)
     if not _ensure_workspace_initialized(service, "case"):
@@ -825,7 +1153,9 @@ def _handle_case_command(env_manager, args) -> bool:
         return False
 
 
-def _handle_run_command(env_manager, args) -> bool:
+def _handle_run_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理run命令 - 运行所有或过滤后的用例"""
     service = _get_workflow_service(args)
     if not _ensure_workspace_initialized(service, "run"):
@@ -854,7 +1184,9 @@ def _handle_run_command(env_manager, args) -> bool:
     return result["success"]
 
 
-def _handle_report_command(env_manager, args) -> bool:
+def _handle_report_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理report命令"""
     service = _get_workflow_service(args)
     if not _ensure_workspace_initialized(service, "report"):
@@ -864,7 +1196,9 @@ def _handle_report_command(env_manager, args) -> bool:
         return False
 
     try:
-        report_path = service.generate_report(args.format, getattr(args, "output", None))
+        report_path = service.generate_report(
+            args.format, getattr(args, "output", None)
+        )
         print_colored(f"✓ Report generated: {report_path}", 92)
         return True
     except Exception as exc:
@@ -872,7 +1206,9 @@ def _handle_report_command(env_manager, args) -> bool:
         return False
 
 
-def _run_sequential(case_manager, case_ids, timeout) -> bool:
+def _run_sequential(
+    case_manager: CaseManager, case_ids: list[str], timeout: int
+) -> bool:
     """串行执行用例"""
     from .execution import SequentialExecutor, ExecutionTask
 
@@ -886,7 +1222,7 @@ def _run_sequential(case_manager, case_ids, timeout) -> bool:
     tasks = []
     for case_id in case_ids:
 
-        def run_case_task(case_id=case_id):
+        def run_case_task(case_id: str = case_id) -> Any:
             result = case_manager.run_case(case_id)
             return result
 
@@ -912,7 +1248,12 @@ def _run_sequential(case_manager, case_ids, timeout) -> bool:
     return failed == 0
 
 
-def _run_parallel(case_manager, case_ids, max_workers, timeout) -> bool:
+def _run_parallel(
+    case_manager: CaseManager,
+    case_ids: list[str],
+    max_workers: int,
+    timeout: int,
+) -> bool:
     """并行执行用例"""
     from .execution import ParallelExecutor, ExecutionTask
 
@@ -926,7 +1267,7 @@ def _run_parallel(case_manager, case_ids, max_workers, timeout) -> bool:
     tasks = []
     for case_id in case_ids:
 
-        def run_case_task(case_id=case_id):
+        def run_case_task(case_id: str = case_id) -> Any:
             result = case_manager.run_case(case_id)
             return result
 
@@ -954,7 +1295,9 @@ def _run_parallel(case_manager, case_ids, max_workers, timeout) -> bool:
     return failed == 0
 
 
-def _handle_status_command(env_manager, args) -> bool:
+def _handle_status_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
     """处理status命令 - 显示整体状态"""
     service = _get_workflow_service(args)
     if not _ensure_workspace_initialized(service, "status"):

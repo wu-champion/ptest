@@ -5,7 +5,8 @@ from __future__ import annotations
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from types import TracebackType
+from typing import Any
 
 from .app import WorkflowService
 from .config import DEFAULT_CONFIG
@@ -20,8 +21,8 @@ class PTestAPI:
 
     def __init__(
         self,
-        config: Optional[dict[str, Any]] = None,
-        work_path: Optional[str] = None,
+        config: dict[str, Any] | None = None,
+        work_path: str | Path | None = None,
     ) -> None:
         self.config = config.copy() if config else DEFAULT_CONFIG.copy()
         self.work_path = Path(work_path).resolve() if work_path else Path.cwd()
@@ -29,7 +30,7 @@ class PTestAPI:
         self.isolation_manager = IsolationManager(self.config)
         logger.info("PTest API initialized")
 
-    def init_environment(self, path: Optional[str] = None) -> dict[str, Any]:
+    def init_environment(self, path: str | Path | None = None) -> dict[str, Any]:
         record = self.workflow.init_environment(path or self.work_path)
         self.work_path = Path(record.root_path)
         return self._api_response(
@@ -41,7 +42,9 @@ class PTestAPI:
 
     def get_environment_status(self) -> dict[str, Any]:
         status = self.workflow.get_environment_status()
-        normalized_status = status.get("status", "ready" if status.get("initialized") else "uninitialized")
+        normalized_status = status.get(
+            "status", "ready" if status.get("initialized") else "uninitialized"
+        )
         return self._api_response(
             success=True,
             status=normalized_status,
@@ -57,7 +60,7 @@ class PTestAPI:
         content: Any = None,
         tags: list[str] | None = None,
         expected_result: str | None = None,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         self.workflow.init_environment(self.work_path)
         case_id = f"{test_type}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
@@ -93,7 +96,7 @@ class PTestAPI:
         )
 
     def run_test_case(
-        self, case_id: str, params: Optional[dict[str, Any]] = None
+        self, case_id: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         result = self.workflow.run_case(case_id, params=params)
         return self._api_response(
@@ -168,7 +171,7 @@ class PTestAPI:
     def generate_report(
         self,
         format_type: str = "html",
-        output_path: Optional[str] = None,
+        output_path: str | Path | None = None,
     ) -> dict[str, Any]:
         report_path = self.workflow.generate_report(format_type, output_path)
         return self._api_response(
@@ -178,9 +181,7 @@ class PTestAPI:
             data={"report_path": report_path, "format": format_type},
         )
 
-    def list_execution_records(
-        self, case_id: Optional[str] = None
-    ) -> dict[str, Any]:
+    def list_execution_records(self, case_id: str | None = None) -> dict[str, Any]:
         records = self.workflow.list_execution_records(case_id=case_id)
         return self._api_response(
             success=True,
@@ -189,8 +190,162 @@ class PTestAPI:
             data=records,
         )
 
+    def get_execution_record(self, execution_id: str) -> dict[str, Any]:
+        result = self.workflow.get_execution_record(execution_id)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("execution"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def get_execution_artifacts(
+        self,
+        execution_id: str,
+        *,
+        include_contents: bool = False,
+    ) -> dict[str, Any]:
+        result = self.workflow.get_execution_artifacts(
+            execution_id,
+            include_contents=include_contents,
+        )
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("artifacts"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
     def destroy_environment(self) -> dict[str, Any]:
         return self.workflow.destroy_environment()
+
+    def generate_data(
+        self,
+        data_type: str,
+        *,
+        count: int = 1,
+        locale: str = "zh_CN",
+        format_type: str = "json",
+        table: str | None = None,
+        dialect: str = "generic",
+        batch_size: int = 100,
+        seed: int | None = None,
+    ) -> dict[str, Any]:
+        result = self.workflow.generate_data(
+            data_type,
+            count=count,
+            locale=locale,
+            format_type=format_type,
+            table=table,
+            dialect=dialect,
+            batch_size=batch_size,
+            seed=seed,
+        )
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def save_data_template(
+        self, name: str, definition: dict[str, Any]
+    ) -> dict[str, Any]:
+        result = self.workflow.save_data_template(name, definition)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+        )
+
+    def list_data_templates(self) -> dict[str, Any]:
+        result = self.workflow.list_data_templates()
+        return self._api_response(
+            success=True,
+            status=result["status"],
+            message=result["message"],
+            data=result["data"],
+        )
+
+    def generate_data_from_template(
+        self, name: str, *, count: int = 1
+    ) -> dict[str, Any]:
+        result = self.workflow.generate_data_from_template(name, count=count)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def import_contract(self, source: str, name: str | None = None) -> dict[str, Any]:
+        result = self.workflow.import_contract(source, name)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+        )
+
+    def list_contracts(self) -> dict[str, Any]:
+        result = self.workflow.list_contracts()
+        return self._api_response(
+            success=True,
+            status=result["status"],
+            message=result["message"],
+            data=result["data"],
+        )
+
+    def generate_cases_from_contract(
+        self, name: str, *, persist: bool = True
+    ) -> dict[str, Any]:
+        result = self.workflow.generate_cases_from_contract(name, persist=persist)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def start_mock_server(
+        self,
+        name: str,
+        *,
+        port: int = 8080,
+        host: str = "127.0.0.1",
+        blocking: bool = False,
+    ) -> dict[str, Any]:
+        result = self.workflow.start_mock_server(
+            name, port=port, host=host, blocking=blocking
+        )
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def list_mock_servers(self) -> dict[str, Any]:
+        result = self.workflow.list_mock_servers()
+        return self._api_response(
+            success=True,
+            status=result["status"],
+            message=result["message"],
+            data=result["data"],
+        )
 
     def get_system_info(self) -> dict[str, Any]:
         env_status = self.workflow.get_environment_status()
@@ -199,20 +354,25 @@ class PTestAPI:
             status="ok",
             message="System info retrieved",
             data={
-            "version": "1.3.0",
-            "api_version": "1.3.0",
-            "work_path": str(self.work_path),
-            "environment_initialized": env_status.get("initialized", False),
-            "environment_path": env_status.get("path"),
-            "isolation_engines": list(self.isolation_manager.engines.keys()),
-            "framework_version": "PTEST-1.3.0",
+                "version": "1.4.0",
+                "api_version": "1.4.0",
+                "work_path": str(self.work_path),
+                "environment_initialized": env_status.get("initialized", False),
+                "environment_path": env_status.get("path"),
+                "isolation_engines": list(self.isolation_manager.engines.keys()),
+                "framework_version": "PTEST-1.4.0",
             },
         )
 
     def __enter__(self) -> "PTestAPI":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         return None
 
     def _api_response(
@@ -237,8 +397,8 @@ class PTestAPI:
 
 
 def create_ptest_api(
-    config: Optional[dict[str, Any]] = None,
-    work_path: Optional[str] = None,
+    config: dict[str, Any] | None = None,
+    work_path: str | Path | None = None,
 ) -> PTestAPI:
     """创建 PTestAPI 实例的便捷函数"""
 

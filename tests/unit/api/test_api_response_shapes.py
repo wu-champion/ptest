@@ -46,3 +46,18 @@ def test_api_returns_structured_case_responses(tmp_path: Path) -> None:
     assert run_result["success"] is True
     assert run_result["status"] == "passed"
     assert "message" in run_result
+
+    records_result = api.list_execution_records(case_id=case_id)
+    assert records_result["success"] is True
+    execution_id = records_result["data"][0]["execution_id"]
+
+    execution_result = api.get_execution_record(execution_id)
+    assert execution_result["success"] is True
+    assert execution_result["data"]["execution_id"] == execution_id
+
+    artifacts_result = api.get_execution_artifacts(execution_id)
+    assert artifacts_result["success"] is True
+    assert artifacts_result["data"]["execution_id"] == execution_id
+    assert artifacts_result["data"]["files"]["execution"].endswith(
+        "result/execution.json"
+    )

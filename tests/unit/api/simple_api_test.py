@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""
-简单的Python API功能验证
+"""简单 Python API 功能验证 - ptest 断言版本
+
+迁移说明:
+- 原文件使用 pytest/unittest 断言，现已迁移到 ptest 断言
+- 迁移对照表:
+  - assertIsNotNone(x) → assert_that(x).not_none()
+  - assertTrue(x) → assert_that(x).is_true()
+  - self.fail() → raise AssertionError()
 """
 
 import sys
@@ -9,6 +15,8 @@ from pathlib import Path
 import unittest
 import tempfile
 import shutil
+
+from ptest.assertions import assert_that
 
 # 添加项目根目录到Python路径
 current_dir = Path(__file__).parent.parent.parent
@@ -47,13 +55,13 @@ class SimpleAPITest(unittest.TestCase):
         """测试环境创建功能"""
         # 测试环境初始化
         result = self.env_manager.init_environment(self.test_dir)
-        self.assertIsNotNone(result)
-        self.assertTrue(os.path.exists(self.test_dir))
+        assert_that(result).not_none()
+        assert_that(os.path.exists(self.test_dir)).is_true()
         print(f"✓ 成功创建测试环境: {self.test_dir}")
 
         # 测试环境状态获取
         status = self.env_manager.get_env_status()
-        self.assertIsNotNone(status)
+        assert_that(status).not_none()
         print(f"✓ 成功获取环境状态: {status}")
 
     def test_framework_components_import(self):
@@ -67,7 +75,7 @@ class SimpleAPITest(unittest.TestCase):
 
             print("✓ 成功导入主要API类")
         except ImportError as e:
-            self.fail(f"导入失败: {e}")
+            raise AssertionError(f"导入失败: {e}")
 
     def test_basic_functionality(self):
         """测试基本功能"""

@@ -13,12 +13,14 @@ from .generator import (
 )
 
 
-def setup_data_subparser(subparsers):
+def setup_data_subparser(subparsers, parents=None):
     """设置 data 子命令"""
+    parser_parents = parents or []
     data_parser = subparsers.add_parser(
         "data",
         help=get_colored_text("Generate test data", 96),
         description="Generate various types of test data using Faker",
+        parents=parser_parents,
     )
 
     data_subparsers = data_parser.add_subparsers(
@@ -26,7 +28,9 @@ def setup_data_subparser(subparsers):
     )
 
     # generate 子命令
-    generate_parser = data_subparsers.add_parser("generate", help="Generate test data")
+    generate_parser = data_subparsers.add_parser(
+        "generate", help="Generate test data", parents=parser_parents
+    )
     generate_parser.add_argument(
         "type", help="Data type to generate (e.g., name, email, phone)"
     )
@@ -74,7 +78,7 @@ def setup_data_subparser(subparsers):
 
     # template 子命令
     template_parser = data_subparsers.add_parser(
-        "template", help="Manage data templates"
+        "template", help="Manage data templates", parents=parser_parents
     )
     template_subparsers = template_parser.add_subparsers(
         dest="template_action", help="Template actions"
@@ -82,7 +86,7 @@ def setup_data_subparser(subparsers):
 
     # template generate
     template_generate = template_subparsers.add_parser(
-        "generate", help="Generate data from template"
+        "generate", help="Generate data from template", parents=parser_parents
     )
     template_generate.add_argument("name", help="Template name")
     template_generate.add_argument(
@@ -91,17 +95,23 @@ def setup_data_subparser(subparsers):
     template_generate.add_argument("--output", "-o", help="Output file path")
 
     # template save
-    template_save = template_subparsers.add_parser("save", help="Save a new template")
+    template_save = template_subparsers.add_parser(
+        "save", help="Save a new template", parents=parser_parents
+    )
     template_save.add_argument("name", help="Template name")
     template_save.add_argument(
         "definition", help="Template definition (JSON string or file path)"
     )
 
     # template list
-    template_subparsers.add_parser("list", help="List all templates")
+    template_subparsers.add_parser(
+        "list", help="List all templates", parents=parser_parents
+    )
 
     # types 子命令
-    data_subparsers.add_parser("types", help="List supported data types")
+    data_subparsers.add_parser(
+        "types", help="List supported data types", parents=parser_parents
+    )
 
     return data_parser
 

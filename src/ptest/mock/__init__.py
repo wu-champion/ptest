@@ -433,6 +433,7 @@ class MockServer:
 
     def save_config(self, file_path: Path) -> None:
         """保存配置到文件 / Save configuration to file"""
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(self.config.to_dict(), f, ensure_ascii=False, indent=2)
         logger.info(f"配置已保存: {file_path} / Configuration saved")

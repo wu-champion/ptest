@@ -93,9 +93,10 @@ class ReportGenerator:
 
         # 保存报告
         if not output_path:
-            base_dir = self.env_manager.report_dir or Path.cwd()
+            base_dir = getattr(self.env_manager, "report_dir", None) or Path.cwd()
             output_path = (
-                base_dir / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                base_dir
+                / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,9 +118,10 @@ class ReportGenerator:
         }
 
         if not output_path:
-            base_dir = self.env_manager.report_dir or Path.cwd()
+            base_dir = getattr(self.env_manager, "report_dir", None) or Path.cwd()
             output_path = (
-                base_dir / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                base_dir
+                / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,7 +161,7 @@ class ReportGenerator:
         )
 
         if not output_path:
-            base_dir = self.env_manager.report_dir or Path.cwd()
+            base_dir = getattr(self.env_manager, "report_dir", None) or Path.cwd()
             output_path = (
                 base_dir / f"ptest_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
             )
@@ -187,15 +189,21 @@ class ReportGenerator:
 
         total_cases = len(self.case_manager.results) or len(self.case_manager.cases)
         passed_count = sum(
-            1 for result in self.case_manager.results.values() if result.status == "passed"
+            1
+            for result in self.case_manager.results.values()
+            if result.status == "passed"
         )
         failed_count = total_cases - passed_count if total_cases else 0
         total_duration = round(
             sum(result.duration for result in self.case_manager.results.values()),
             2,
         )
-        success_rate = round((passed_count / total_cases) * 100, 2) if total_cases else 0
-        failure_rate = round((failed_count / total_cases) * 100, 2) if total_cases else 0
+        success_rate = (
+            round((passed_count / total_cases) * 100, 2) if total_cases else 0
+        )
+        failure_rate = (
+            round((failed_count / total_cases) * 100, 2) if total_cases else 0
+        )
 
         return {
             "total_cases": total_cases,
