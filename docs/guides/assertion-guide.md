@@ -1,219 +1,154 @@
-# ptest 断言系统使用指南
+# ptest 断言指南
 
-## 概述
+本文档只描述当前仓库里已经存在且可用的断言接口，不再保留不确定的历史性能结论或旧规划状态。
 
-ptest 内置断言系统，让用户无需依赖 pytest/unittest 即可完成测试。
+## 两种使用方式
 
-## 快速开始
+### 1. 直接使用 `AssertionFactory`
 
 ```python
 from ptest.assertions import AssertionFactory
 
-# 创建断言
-eq = AssertionFactory.create("equal")
+assertion = AssertionFactory.create("equal")
+result = assertion.assert_value(1, 1)
 
-# 执行断言
-result = eq.assert_value(1, 1)
-print(f"Passed: {result.passed}")
+print(result.passed)
 ```
 
-## 内置断言类型
+### 2. 使用兼容层 `assert_that`
+
+```python
+from ptest.assertions import assert_that
+
+assert_that(1).equals(1)
+assert_that("hello world").contains("world")
+assert_that(True).is_true()
+assert_that("value").is_not_none()
+```
+
+## 当前内置断言
 
 ### 基础断言
 
-| 断言类型 | 用法 | 示例 |
-|---------|------|------|
-| `equal` | 相等 | `eq.assert_value(1, 1)` |
-| `notequal` | 不等 | `neq.assert_value(1, 2)` |
-| `contains` | 包含 | `contains.assert_value("hello world", "world")` |
-| `length` | 长度 | `length.assert_value("hello", 5)` |
+- `equal`
+- `notequal`
+- `contains`
+- `length`
+- `type`
+- `truthy`
+- `falsy`
+- `none`
+- `notnone`
 
-### 真假值断言
+### HTTP / 结构化数据断言
 
-| 断言类型 | 用法 | 示例 |
-|---------|------|------|
-| `truthy` | 真值 | `truthy.assert_value("hello")` |
-| `falsy` | 假值 | `falsy.assert_value("")` |
-| `none` | 空值 | `none.assert_value(None)` |
-| `notnone` | 非空 | `notnone.assert_value("value")` |
+- `statuscode`
+- `header`
+- `body`
+- `jsonpath`
+- `regex`
+- `schema`
 
-### 类型断言
+### 常见别名
 
-| 断言类型 | 用法 | 示例 |
-|---------|------|------|
-| `type` | 类型检查 | `type.assert_value("hello", "str")` |
+- `status_code` -> `statuscode`
+- `json_path` -> `jsonpath`
 
-### HTTP 断言
-
-| 断言类型 | 用法 | 示例 |
-|---------|------|------|
-| `statuscode` | 状态码 | `sc.assert_value(200, 200)` |
-| `header` | 响应头 | `header.assert_value(headers, "json", header="content-type")` |
-| `body` | 响应体 | `body.assert_value('{"key":"value"}', {"key":"value"})` |
-| `jsonpath` | JSON路径 | `jp.assert_value(data, "test", path="name")` |
-
-### 正则与 Schema
-
-| 断言类型 | 用法 | 示例 |
-|---------|------|------|
-| `regex` | 正则匹配 | `regex.assert_value("hello", r"^hel")` |
-| `schema` | JSON Schema | `schema.assert_value({"a":1}, None, schema={"type":"object"})` |
-
-## 链式断言
+## `assert_that` 常用方法
 
 ```python
-from ptest.assertions import AssertionFactory, AndAssertion, OrAssertion, NotAssertion
+from ptest.assertions import assert_that
 
-# AND - 所有断言通过才通过
-and_assert = AndAssertion(eq, truthy)
-result = and_assert.assert_value(42, 42)
-
-# OR - 任一断言通过就通过
-or_assert = OrAssertion(eq, truthy)
-result = or_assert.assert_value(42, 43)  # truthy 通过
-
-# NOT - 反转结果
-not_assert = NotAssertion(eq)
-result = not_assert.assert_value(1, 2)  # 1!=2 失败，NOT 后通过
+assert_that(1).equals(1)
+assert_that(1).not_equal(2)
+assert_that(["a", "b"]).contains("a")
+assert_that("hello").len_is(5)
+assert_that("hello").match(r"^hel")
+assert_that({"name": "ptest"}).is_instance(dict)
 ```
+
+兼容层当前常用方法包括：
+
+- `.equals(y)` / `.eq(y)`
+- `.not_equal(y)` / `.not_equals(y)` / `.ne(y)`
+- `.contains(y)` / `.is_in(y)` / `.in_(y)`
+- `.is_true()` / `.is_truthy()`
+- `.is_false()` / `.is_falsy()`
+- `.is_none()`
+- `.not_none()` / `.is_not_none()`
+- `.is_instance(type)` / `.is_type(type_name)`
+- `.len_is(n)` / `.has_length(n)`
+- `.match(pattern)` / `.matches(pattern)`
+- `.match_schema(schema)` / `.conforms_to(schema)`
+
+## 异常断言
+
+```python
+from ptest.assertions import assert_raises
+
+with assert_raises(ValueError) as ctx:
+    raise ValueError("bad input")
+
+print(ctx.exception)
+```
+
+## 软断言
+
+```python
+from ptest.assertions import SoftAssertions
+
+with SoftAssertions() as soft:
+    soft.assert_that(1).equals(2)
+    soft.assert_that("a").equals("b")
+```
+
+软断言适合一次性收集多个失败结果，再统一报告。
 
 ## 断言模板
 
 ```python
 from ptest.assertions import AssertionTemplate
 
-# 使用内置模板
 template = AssertionTemplate.create("api_success")
 result = template.assert_value({"code": 0, "message": "ok"}, {"code": 0})
-
-# 注册自定义模板
-def my_template(actual, expected=None, **kwargs):
-    ...
-
-AssertionTemplate.register("my_template", my_template)
+print(result.passed)
 ```
 
 ## 自定义断言
 
 ```python
-from ptest.assertions import Assertion, AssertionResult, AssertionRegistry
+from ptest.assertions import Assertion, AssertionFactory, AssertionRegistry
+
 
 class MyAssertion(Assertion):
     def assert_value(self, actual, expected=None, **kwargs):
-        passed = actual == expected
-        return self._create_result(passed, actual, expected)
+        return self._create_result(actual == expected, actual, expected)
 
-# 注册
+
 AssertionRegistry.register("my_assertion", MyAssertion)
 
-# 使用
-my = AssertionFactory.create("my_assertion")
+custom = AssertionFactory.create("my_assertion")
+print(custom.assert_value("a", "a").passed)
 ```
 
-## 错误信息
-
-失败时获取详细信息：
+## 失败信息
 
 ```python
-result = eq.assert_value(1, 2)
+from ptest.assertions import AssertionFactory
+
+assertion = AssertionFactory.create("equal")
+result = assertion.assert_value(1, 2)
+
 print(result.get_error_message())
-# 输出: 断言失败: None | 类型: EqualAssertion | 期望: 2 | 实际: 1 | 建议: 检查比较的值
-
-# 启用位置捕获（性能开销）
-result = eq.assert_value(1, 2, capture_location=True)
 ```
 
-## 性能
+## 当前边界
 
-- 单次断言: < 1ms
-- 1000 次断言: < 100ms
+- 本文档只覆盖仓库中已经存在的断言实现
+- 与 pytest / unittest 的兼容层适合渐进迁移，但并不代表完整替代全部生态功能
+- 参数化、跳过条件、fixture / mock 等测试框架能力仍应按当前主线能力边界理解
 
-位置捕获默认关闭以保证性能，需要时通过 `capture_location=True` 启用。
+## 相关文档
 
----
-
-## pytest/unittest 兼容层
-
-ptest 断言系统提供与 pytest/unittest 兼容的接口，方便渐进式迁移。
-
-### assert_that() - 链式断言
-
-```python
-from ptest.assertions import assert_that
-
-# 基本用法
-assert_that(1).equals(1)
-assert_that("hello world").contains("world")
-assert_that(value).is_true()
-assert_that(value).is_not_none()
-```
-
-### 方法清单
-
-| 方法 | 别名 | 说明 |
-|------|------|------|
-| `.equals(y)` | `.eq(y)` | 断言 x == y |
-| `.not_equal(y)` | `.ne(y)`, `.not_equals(y)` | 断言 x != y |
-| `.contains(y)` | `.is_in(y)`, `.in_(y)` | 断言 y in x |
-| `.is_true()` | `.true()`, `.is_t()`, `.is_truthy()` | 断言真值 |
-| `.is_false()` | `.false()`, `.is_f()`, `.is_falsy()` | 断言假值 |
-| `.is_none()` | - | 断言 x is None |
-| `.not_none()` | `.is_not_none()` | 断言 x is not None |
-| `.is_instance(type)` | `.is_type(type)` | 断言类型 |
-| `.len_is(n)` | `.has_length(n)` | 断言长度 |
-| `.match(pattern)` | `.matches(pattern)` | 正则匹配 |
-| `.match_schema(schema)` | `.conforms_to(schema)` | JSON Schema |
-
-### assert_raises() - 异常断言
-
-```python
-from ptest.assertions import assert_raises
-
-# 捕获异常
-with assert_raises(ValueError) as ctx:
-    raise ValueError("test error")
-
-# 访问异常
-print(ctx.exception)  # test error
-```
-
-### SoftAssertions - 软断言
-
-```python
-from ptest.assertions import SoftAssertions
-
-# 收集所有失败，统一报告
-with SoftAssertions() as soft:
-    soft.assert_that(1).equals(2)
-    soft.assert_that("a").equals("b")
-# 所有断言执行后才报告失败
-```
-
-### 在 pytest 中使用
-
-```python
-# 直接导入使用，与原生 pytest 断言完全兼容
-from ptest.assertions import assert_that, assert_raises, SoftAssertions
-
-def test_example():
-    assert_that(1).equals(1)
-    
-    with assert_raises(ValueError):
-        raise ValueError("error")
-```
-
-### 在 unittest 中使用
-
-```python
-import unittest
-from ptest.assertions import assert_that
-
-class MyTestCase(unittest.TestCase):
-    def test_example(self):
-        assert_that(1).equals(1)  # 抛出标准 AssertionError
-```
-
-- 单次断言: < 1ms
-- 1000 次断言: < 100ms
-
-位置捕获默认关闭以保证性能，需要时通过 `capture_location=True` 启用。
+- API 入口：[../api/README.md](../api/README.md)
+- 产品主线：[`../plan/README.md`](../plan/README.md)

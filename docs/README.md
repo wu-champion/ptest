@@ -1,104 +1,59 @@
-# ptest 项目文档
+# ptest 文档总览
 
-## 📋 文档概述
+`docs/` 目录按“是否对外”和“面向对象”两条边界组织：
 
-本文档目录提供 ptest 测试框架的完整文档，包括用户指南、架构设计、使用指南和 API 参考。
+- `docs/plan/` 是内部文档区，只存放当前正式产品主线、历史规划资料、历史会话和内部讨论沉淀，不对外。
+- `docs/` 其余目录为可对外文档，分为面向用户和面向开发者两类。
 
-## 🗂️ 文档结构
+## 文档边界
 
-### 👥 用户指南 (`user-guide/`)
-面向最终用户的使用文档：
-- [快速开始指南](user-guide/README.md)
-- [基础使用教程](user-guide/basic-usage.md)
-- [高级功能指南](user-guide/advanced-features.md)
-- [常见问题解答](user-guide/faq.md)
+### 内部文档
 
-### 🏗️ 架构文档 (`architecture/`)
-面向架构师和高级开发者的设计文档：
-- [系统架构总览](architecture/system-overview.md)
-- [环境隔离架构](architecture/environment-isolation.md)
-- [数据库架构](architecture/database-architecture.md)
+- [plan/README.md](plan/README.md)
+- 用途：当前正式产品主线、历史规划资料、历史会话与内部讨论沉淀
+- 约束：不作为对外文档入口，不承担用户指南或开发指南职责
 
-### 📋 开发文档 (`development/`)
-面向框架开发者的技术文档：
-- [开发指南](development/development-guide.md)
-- [Python API 实现](development/PYTHON_API_IMPLEMENTATION.md)
-- [实现计划](development/implementation-plans/)
-- [开发进度报告](development/progress-reports/)
-- [测试报告](development/test-reports/)
+### 对外文档
 
-### 📖 使用指南 (`guides/`)
-面向开发者的详细使用指南：
-- [测试环境管理](guides/environment-management.md)
-- [测试用例编写](guides/test-case-writing.md)
-- [对象管理指南](guides/object-management.md)
-- [报告生成指南](guides/report-generation.md)
+#### 面向用户
 
-### 📔 API 文档 (`api/`)
-面向程序员的接口文档：
-- [Python API 参考](api/python-api.md)
-- [API 使用示例](api/api-examples.md)
-- [CLI 命令参考](api/cli-commands.md)
+- [user-guide/README.md](user-guide/README.md)
+- 用途：安装、入门、基础使用、常见操作路径
 
-### 🗃️ 归档文档 (`archived/`)
-历史文档和过时内容：
-- [旧版本文档](archived/old-version-docs.md)
-- [已废弃功能](archived/deprecated-features.md)
+#### 面向开发者
 
-## 🎯 当前实现状态
+- [architecture/README.md](architecture/README.md)
+- [development/README.md](development/README.md)
+- [guides/README.md](guides/README.md)
+- [api/README.md](api/README.md)
 
-### ✅ 已实现功能
+#### 历史参考
 
-#### 环境隔离系统 (ENV-001)
-- **阶段一完成** (2026-01-25): 核心隔离基础
-  - ✅ 基础文件系统隔离
-  - ✅ 隔离管理器框架
-  - ✅ 可扩展的插件架构
-  - ✅ 完整的测试覆盖
+- [archived/README.md](archived/README.md)
+- 用途：保留旧版本公开文档和历史设计资料，默认不作为当前实现的权威说明
 
-#### Python API
-- ✅ 完整的测试框架 API
-- ✅ 环境管理接口
-- ✅ 对象管理接口
-- ✅ 测试用例管理接口
+## 推荐阅读路径
 
-#### 数据库对象管理
-- ✅ 服务端/客户端分离架构
-- ✅ 多种数据库支持 (MySQL, PostgreSQL, MongoDB, SQLite)
-- ✅ 生命周期管理
+### 用户
 
-### 🚧 开发中功能
+1. [user-guide/README.md](user-guide/README.md)
+2. [user-guide/basic-usage.md](user-guide/basic-usage.md)
 
-#### 环境隔离系统 (ENV-001)
-- **阶段二计划**: Virtualenv隔离实现
-  - 🔄 Python虚拟环境隔离
-  - 🔄 包管理和依赖解析
-  - 🔄 版本冲突检测
+### 开发者
 
-### 📅 计划中功能
+1. [development/README.md](development/README.md)
+2. [architecture/system-overview.md](architecture/system-overview.md)
+3. [api/python-api-guide.md](api/python-api-guide.md)
+4. [guides/environment-management.md](guides/environment-management.md)
+5. [development/DOCUMENTATION_GUIDE.md](development/DOCUMENTATION_GUIDE.md)
 
-#### 高级隔离功能
-- **阶段三**: Docker容器隔离
-- **阶段四**: Kubernetes集群支持
-- **阶段五**: 网络隔离和资源限制
+## 维护规则
 
-## 🚀 快速开始
+新增文档时按以下规则归档：
 
-1. **查看用户指南**: [快速开始](user-guide/README.md)
-2. **了解架构**: [系统架构总览](architecture/system-overview.md)
-3. **API参考**: [Python API 文档](api/python-api.md)
-4. **开发贡献**: [开发指南](development/development-guide.md)
+- 新的内部需求、计划、报告、调研、会话纪要放入 `docs/plan/`
+- 新的开发规范、架构说明、API 说明、专题使用指南放入开发者文档目录
+- 新的安装、入门、操作教程放入 `docs/user-guide/`
+- 已失效但仍需保留的公开资料放入 `docs/archived/`
 
-## 📞 获取帮助
-
-- 📖 [用户指南](user-guide/) - 学习如何使用
-- 🏗️ [架构文档](architecture/) - 了解系统设计
-- 🛠️ [开发文档](development/) - 参与开发
-- 📋 [使用指南](guides/) - 深入使用技巧
-- 📔 [API 文档](api/) - 编程接口参考
-
----
-
-**文档版本**: 2.0  
-**最后更新**: 2026-01-25  
-**项目版本**: ptest v1.0.1
+详细结构见 [STRUCTURE.md](STRUCTURE.md)。

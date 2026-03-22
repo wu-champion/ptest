@@ -1,104 +1,108 @@
 # 文档目录结构
 
-## 📁 docs/ 目录组织
+## docs/ 目录组织原则
 
-```
+`docs/` 只保留两类主文档：
+
+- 内部文档：集中放在 `docs/plan/`
+- 对外文档：分为面向用户和面向开发者
+
+## 当前结构
+
+```text
 docs/
-├── README.md                           # 📖 文档总览和导航
-├── STRUCTURE.md                        # 📂 文档结构说明
-├── user-guide/                         # 👥 用户指南
-│   ├── README.md                      # 快速开始指南
-│   └── basic-usage.md                 # 基础使用教程
-│   ├── advanced-features.md            # 高级功能指南
-│   └── faq.md                         # 常见问题解答
-├── architecture/                       # 🏗️ 架构设计文档
-│   ├── system-overview.md              # 系统架构总览
-│   ├── environment-isolation.md         # 环境隔离架构
-│   └── ISOLATION_ARCHITECTURE.md        # 隔离架构设计详情
-├── guides/                             # 📋 使用指南
-│   ├── environment-management.md        # 环境管理指南
-│   ├── test-case-writing.md             # 测试用例编写指南
-│   ├── object-management.md             # 对象管理指南
-│   └── report-generation.md            # 报告生成指南
-├── development/                        # 🛠️ 开发文档
-│   ├── development-guide.md             # 开发指南
-│   ├── requirements.md                 # 需求规格说明书
-│   ├── implementation-plans/           # 实现计划
-│   │   ├── ENV-001_DETAILED_REQUIREMENTS.md
-│   │   └── ENV-001_IMPLEMENTATION_PLAN.md
-│   ├── progress-reports/               # 开发进度报告
-│   │   └── WEEK1_COMPLETION_REPORT.md
-│   └── PYTHON_API_IMPLEMENTATION.md    # API实现报告
-├── api/                                # 📔 API 文档
-│   ├── python-api.md                   # Python API 参考文档
-│   ├── python-api-guide.md              # API 使用指南
-│   ├── api-examples.md                 # API 使用示例
-│   ├── cli-commands.md                 # CLI 命令参考
-│   └── README.md                       # 测试数据示例
-└── archived/                           # 🗃️ 归档文档
-    ├── README.md                       # 归档文档索引
-    ├── prd.md                          # 旧需求规格书
-    ├── AGENTS.md                       # 开发代理指南(中文)
-    ├── AGENTS_EN.md                    # 开发代理指南(英文)
-    ├── DATABASE_ARCHITECTURE_REFACTOR.md
-    ├── DATABASE_SEPARATION_ARCHITECTURE_COMPLETE.md
-    ├── DATABASE_SERVER_CLIENT_SEPARATION.md
-    ├── UNIVERSAL_DATABASE_CONNECTOR.md
-    ├── TEST_DIRECTORY_RESTRUCTURE.md
-    └── TEST_EXECUTION_README.md
+├── README.md
+├── STRUCTURE.md
+├── PROJECT_STRUCTURE.md
+├── plan/                              # 内部文档，不对外
+│   ├── README.md
+│   ├── current/                       # 当前正式主线
+│   │   ├── requirements/
+│   │   ├── mvp/
+│   │   ├── plans/
+│   │   └── indexes/
+│   ├── history/                       # 历史规划资料
+│   │   ├── requirements/
+│   │   ├── prds/
+│   │   ├── designs/
+│   │   ├── backlog/
+│   │   ├── plans/
+│   │   └── reports/
+│   ├── sessions/                      # 历史会话与过程记录
+│   └── tmp_product_reboot/            # 临时讨论与推导材料
+├── user-guide/                        # 对外：用户文档
+│   ├── README.md
+│   └── basic-usage.md
+├── api/                               # 对外：开发者 API 文档
+│   ├── README.md
+│   ├── python-api-guide.md
+│   ├── api-examples.md
+│   └── test-data-examples.md
+├── architecture/                      # 对外：开发者架构文档
+│   ├── README.md
+│   ├── system-overview.md
+│   ├── ISOLATION_ARCHITECTURE.md
+│   └── DATABASE_SEPARATION_ARCHITECTURE_COMPLETE.md
+├── development/                       # 对外：开发者工程文档
+│   ├── README.md
+│   ├── development-guide.md
+│   ├── CODING_STANDARDS.md
+│   ├── CODE_QUALITY_GUIDE.md
+│   ├── CI_CD_GUIDE.md
+│   ├── DOCUMENTATION_GUIDE.md
+│   └── docker-testing-guide.md
+├── guides/                            # 对外：开发者专题指南
+│   ├── README.md
+│   ├── environment-management.md
+│   ├── VIRTUALENV_USER_GUIDE.md
+│   ├── assertion-guide.md
+│   └── NAMING_CONVENTION.md
+└── archived/                          # 对外：历史参考，不作为当前权威说明
+    ├── README.md
+    └── ...
 ```
 
-## 🎯 分类说明
+## 归档规则
 
-### 👥 用户指南 (user-guide/)
-面向最终用户的使用文档，包括：
-- 框架介绍
-- 快速开始指南
-- 基本使用方法
-- 常见问题解答
+### 1. `docs/plan/`
 
-### 🏗️ 架构文档 (architecture/) 
-面向架构师和高级开发者的设计文档，包括：
-- 系统架构设计
-- 数据库架构重构
-- 服务端/客户端分离设计
-- 通用连接器架构
+以下内容统一进入 `docs/plan/`：
 
-### 📋 使用指南 (guides/)
-面向开发者的详细使用指南，包括：
-- 测试目录组织
-- 测试执行引擎使用
-- 最佳实践
-- 配置指南
+- 当前正式产品主线文档
+- 历史规划与历史实现资料
+- 历史会话
+- 内部整理报告
+- 临时讨论与推导材料
 
-### 🛠️ 开发文档 (development/)
-面向框架开发者的技术文档，包括：
-- 开发规范和指南
-- 代码风格指南
-- 需求规格说明
-- 贡献指南
+### 2. 面向用户
 
-### 📔 API 文档 (api/)
-面向程序员的接口文档，包括：
-- API 接口说明
-- 数据格式规范
-- 示例代码
-- 测试数据格式
+以下内容进入 `docs/user-guide/`：
 
-## 🔄 维护指南
+- 安装说明
+- 快速开始
+- 基础使用教程
+- 用户操作路径说明
 
-### 添加新文档
-1. 确定文档分类
-2. 在对应目录下创建文件
-3. 更新本目录结构说明
-4. 更新主 README.md 导航
+### 3. 面向开发者
 
-### 文档命名规范
-- 使用英文文件名，单词间用下划线分隔
-- 文件名应清晰表达文档内容
-- 避免使用特殊字符和空格
+以下内容进入开发者文档目录：
 
-### 文档格式规范
-- 使用 Markdown 格式
-- 遵循统一的标题层级
-- 包含适当的目录和导航链接
+- `docs/architecture/`: 架构与设计说明
+- `docs/development/`: 工程规范、开发流程、质量规则
+- `docs/guides/`: 功能专题使用指南
+- `docs/api/`: 编程接口和示例
+
+### 4. `docs/archived/`
+
+以下内容进入 `docs/archived/`：
+
+- 已过时但仍需保留的公开文档
+- 历史设计稿
+- 旧版本说明
+
+## 维护要求
+
+- 新增文档时，先判断是否属于内部研发沉淀；如果是，放入 `docs/plan/`
+- 根目录 `docs/README.md` 只做导航，不承载内部研发过程细节
+- 每个公开文档目录都应有自己的 `README.md` 作为入口
+- 文档结构变更后，需同步更新本文件

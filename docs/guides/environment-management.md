@@ -1,243 +1,158 @@
 # 环境管理指南
 
-## 🏗️ 环境管理概述
+本文档描述当前 `1.4.0` 主线中的环境生命周期管理方式。这里的“环境”本质上是一个工作区和它对应的隔离上下文，而不是单纯的目录。
 
-ptest 的环境管理功能提供了企业级的多层次环境隔离能力，确保测试环境之间的完全独立性和安全性。
+## 当前环境模型
 
-## 🎯 隔离级别
+环境管理围绕这几个动作展开：
 
-### Basic 隔离
-**适用场景**: 简单的单元测试、基础功能验证
+1. 初始化工作区
+2. 记录环境元数据
+3. 附着或恢复隔离上下文
+4. 承载对象、用例、执行记录和报告
+5. 执行销毁和清理
 
-**特性**:
-- 文件系统目录隔离
-- 基础进程管理
-- 端口分配和冲突检测
-- 最小资源开销
+当前主线通过 `WorkflowService` 和 CLI 共同完成这套流程。
 
-**使用示例**:
-```python
-from ptest import TestFramework
+## 当前支持的隔离级别
 
-framework = TestFramework()
-env = framework.create_environment("./test_env", isolation="basic")
+### `basic`
+
+- 第一阶段默认隔离级别
+- 适合本地快速开始和主线验证
+- 工作区元数据、对象状态、执行记录都可落盘
+
+### `virtualenv`
+
+- 适合 Python 依赖隔离场景
+- 依赖具体宿主机环境
+- 当前文档只把它视为可选运行模式
+
+### `docker`
+
+- 适合更重的集成验证
+- 本地真实 Docker 可用性受宿主机和网络影响
+- 真实 Docker 校验以 CI 为准
+
+## CLI 方式
+
+### 初始化
+
+```bash
+uv run ptest init --path ./demo-workspace
 ```
 
-### Virtualenv 隔离
-**适用场景**: Python应用测试、包依赖隔离
+### 查看状态
 
-**特性**:
-- Python虚拟环境完全隔离
-- 包依赖管理和版本控制
-- 独立的Python解释器
-- 支持requirements.txt
-
-**使用示例**:
-```python
-# 创建虚拟环境隔离
-env = framework.create_environment("./python_test", isolation="virtualenv")
-
-# 安装特定版本的包
-env.install_package("requests==2.28.0")
-env.install_package("pandas==1.5.0")
-
-# 安装从requirements.txt
-env.install_packages_from_requirements("requirements.txt")
-
-# 查看已安装的包
-packages = env.get_installed_packages()
-print(packages)  # {'requests': '2.28.0', 'pandas': '1.5.0'}
+```bash
+uv run ptest env status --path ./demo-workspace
+uv run ptest --path ./demo-workspace status
 ```
 
-### Docker 隔离
-**适用场景**: 集成测试、完整环境隔离、微服务测试
+### 销毁
 
-**特性**:
-- 完整的容器环境隔离
-- 操作系统级别的隔离
-- 资源限制和配额管理
-- 网络隔离和安全控制
-
-**使用示例**:
-```python
-# 创建Docker隔离环境
-env = framework.create_environment("./integration_test", isolation="docker", 
-                                  env_config={
-                                      "image": "python:3.9-slim",
-                                      "resource_limits": {
-                                          "memory_limit": "1g",
-                                          "cpu_limit": 2.0
-                                      },
-                                      "network_config": {
-                                          "port_mapping": {"8080": "8080"},
-                                          "network_isolation": True
-                                      }
-                                  })
-
-# 在容器中执行命令
-result = env.execute_in_isolation(["python", "--version"])
-print(result.stdout)  # Python 3.9.x
+```bash
+uv run ptest env destroy --path ./demo-workspace
 ```
 
-## 🔧 环境管理操作
+销毁会尝试做这些事：
 
-### 创建环境
+- 停止并清理已记录的对象和工具
+- 回收当前工作区对应的隔离环境
+- 清空 `.ptest/artifacts/`
+- 把环境状态标记为 `destroyed`
 
-```python
-# 基础创建
-env = framework.create_environment(path="./test_env")
-
-# 指定隔离级别
-env = framework.create_environment(
-    path="./test_env",
-    isolation="virtualenv",
-    name="my_test_env"
-)
-
-# 使用自定义配置
-env = framework.create_environment(
-    path="./test_env",
-    isolation="virtualenv",
-    env_config={
-        "python_version": "3.9",
-        "base_packages": ["setuptools", "wheel", "pip"],
-        "requirements": ["requests==2.28.0", "pytest==7.0.0"],
-        "resource_limits": {
-            "memory_mb": 1024,
-            "max_processes": 50
-        }
-    }
-)
-```
-
-### 环境状态管理
+## Python API 方式
 
 ```python
-# 获取环境状态
-status = env.get_status()
-print(f"环境状态: {status['status']}")
-print(f"创建时间: {status['created_at']}")
-print(f"隔离类型: {status['isolation_type']}")
+from pathlib import Path
 
-# 激活环境（如果需要）
-success = env.activate()
+from ptest.api import PTestAPI
 
-# 停用环境
-success = env.deactivate()
+workspace = Path("./demo-workspace")
+api = PTestAPI(work_path=workspace)
+
+init_result = api.init_environment()
+print(init_result["data"]["root_path"])
+
+status = api.get_environment_status()
+print(status["data"]["status"])
+
+destroy_result = api.destroy_environment()
+print(destroy_result["success"])
 ```
 
-### 资源管理
+## 工作区结构
 
-```python
-# 获取资源使用情况
-resource_usage = env.get_resource_usage()
-print(f"CPU使用率: {resource_usage['cpu_percent']}%")
-print(f"内存使用: {resource_usage['memory_mb']}MB")
-print(f"磁盘使用: {resource_usage['disk_mb']}MB")
+初始化后，工作区中最重要的目录和文件通常包括：
 
-# 获取分配的端口
-ports = env.allocated_ports
-print(f"已分配端口: {ports}")
-
-# 分配新端口
-new_port = env.allocate_port()
-print(f"新分配端口: {new_port}")
-
-# 释放端口
-success = env.release_port(new_port)
+```text
+demo-workspace/
+├── .ptest/
+│   ├── environment.json
+│   ├── objects.json
+│   ├── tools.json
+│   ├── executions.json
+│   └── artifacts/
+├── cases/
+├── reports/
+└── logs/
 ```
 
-### 环境清理
+其中：
 
-```python
-# 清理环境（保留文件结构）
-env.cleanup()
+- `.ptest/environment.json` 保存环境元数据
+- `.ptest/artifacts/` 保存执行级 artifact 和索引
+- `reports/` 保存报告输出
+- `logs/` 保存工作区日志
 
-# 强制清理（删除所有文件）
-env.cleanup(force=True)
+## 环境恢复与状态语义
 
-# 通过管理器清理
-framework.cleanup_environment(env.env_id)
-framework.cleanup_all_environments(force=True)
+当前主线支持在重新进入同一工作区时恢复环境元数据，并尽量重新附着隔离上下文。
+
+常见状态包括：
+
+- `ready`: 工作区已初始化，可继续使用
+- `destroyed`: 环境已销毁，需重新初始化
+- `uninitialized`: 当前路径还不是工作区
+
+对象和工具在恢复时也会带上恢复语义，例如：
+
+- `rebuild_connector`
+- `downgraded_nonrecoverable_runtime`
+- `stale`
+
+这些信息会体现在对象或 mock 的元数据中，用于帮助判断“是否真的恢复到了可运行状态”。
+
+## 与执行记录的关系
+
+环境不仅是运行上下文，也是执行产物的归属点。每次 case 执行后，主线会在：
+
+```text
+.ptest/artifacts/<execution_id>/
 ```
 
-## 🔄 环境生命周期
+下保存：
 
-### 生命周期阶段
+- `context/environment.json`
+- `context/objects.json`
+- `case/case.json`
+- `result/result.json`
+- `result/execution.json`
+- `indexes/artifact_index.json`
+- `logs/log_index.json`
 
-```mermaid
-graph TD
-    A[创建环境] --> B[初始化]
-    B --> C[激活]
-    C --> D[使用]
-    D --> E[停用]
-    E --> F[清理]
-    F --> G[归档/删除]
-    
-    D --> H[重启/重置]
-    H --> C
-    
-    E --> I[重新激活]
-    I --> C
-```
+## 当前边界
 
-### 生命周期管理示例
+- 当前文档以第一阶段 MVP 主线为准
+- 更深的跨进程、多引擎恢复仍属于后续增强方向
+- 本地真实 Docker 环境问题不应与主线功能问题混为一谈
 
-```python
-from ptest import TestFramework
+## 相关文档
 
-# 使用上下文管理器确保资源清理
-with TestFramework() as framework:
-    env = framework.create_environment("./lifecycle_test", isolation="virtualenv")
-    
-    # 环境会自动激活
-    with env:
-        # 在环境中执行操作
-        mysql = env.add_object("mysql", "test_db", version="8.0")
-        mysql.start()
-        
-        # 添加和运行测试
-        env.add_case("db_test", {
-            "type": "database",
-            "object": "test_db",
-            "query": "SELECT 1"
-        })
-        
-        result = env.run_case("db_test")
-        print(f"测试结果: {'通过' if result.is_passed() else '失败'}")
-    
-    # 环境自动停用
-# 框架自动清理所有资源
-```
-
-## 📦 包管理 (Virtualenv隔离)
-
-### 包安装
-
-```python
-# 安装单个包
-success = env.install_package("requests==2.28.0")
-
-# 安装多个包
-packages = [
-    ("requests", "2.28.0"),
-    ("pandas", "1.5.0"),
-    ("numpy", "1.24.0")
-]
-
-for package, version in packages:
-    env.install_package(package, version)
-
-# 从requirements.txt安装
-env.install_from_requirements("requirements.txt")
-
-# 升级包
-env.upgrade_package("requests")
-```
-
-### 包查询
-
-```python
+- 快速开始：[../user-guide/basic-usage.md](../user-guide/basic-usage.md)
+- Python API：[../api/python-api-guide.md](../api/python-api-guide.md)
+- 架构总览：[../architecture/system-overview.md](../architecture/system-overview.md)
 # 获取所有已安装包
 packages = env.get_installed_packages()
 for name, version in packages.items():
@@ -617,10 +532,10 @@ framework.configure_auto_cleanup({
 ## 🔗 相关文档
 
 - [系统架构总览](../architecture/system-overview.md)
-- [环境隔离架构](../architecture/environment-isolation.md)
-- [API 参考](../api/python-api.md)
-- [测试用例编写](test-case-writing.md)
-- [对象管理指南](object-management.md)
+- [环境隔离架构](../architecture/ISOLATION_ARCHITECTURE.md)
+- [API 文档入口](../api/README.md)
+- [专题指南入口](README.md)
+- [用户文档入口](../user-guide/README.md)
 
 ---
 
