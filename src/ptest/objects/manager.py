@@ -113,6 +113,12 @@ class ObjectManager:
         try:
             obj = self.create_object(obj_type, name, params)
             result = obj.install(params)
+            if isinstance(result, str):
+                if result.startswith("✓"):
+                    self.logger.info(f"Successfully installed {name}")
+                    return result
+                self.logger.error(f"Failed to install {name}: {result}")
+                return result
             if result:
                 self.logger.info(f"Successfully installed {name}")
                 return f"✓ Installed {name}"

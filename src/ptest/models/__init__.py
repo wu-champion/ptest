@@ -82,3 +82,81 @@ class ExecutionRecord:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionRecord":
         return cls(**data)
+
+
+@dataclass
+class ProblemRecord:
+    problem_id: str
+    problem_type: str
+    summary: str
+    status: str = "open"
+    preservation_status: str = "success"
+    execution_id: str = ""
+    case_id: str = ""
+    environment_id: str = ""
+    object_refs: list[str] = field(default_factory=list)
+    artifact_refs: dict[str, Any] = field(default_factory=dict)
+    log_refs: dict[str, Any] = field(default_factory=dict)
+    latest_action: str = "preserved"
+    notes: str = ""
+    created_at: str = field(default_factory=_now_iso)
+    updated_at: str = field(default_factory=_now_iso)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProblemRecord":
+        return cls(**data)
+
+
+@dataclass
+class ProblemAssetRecord:
+    problem_id: str
+    problem_type: str
+    summary: str
+    status: str = "open"
+    preservation_status: str = "success"
+    execution_id: str = ""
+    case_id: str = ""
+    environment_id: str = ""
+    object_refs: list[str] = field(default_factory=list)
+    artifact_refs: dict[str, Any] = field(default_factory=dict)
+    log_refs: dict[str, Any] = field(default_factory=dict)
+    recovery: dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=_now_iso)
+    updated_at: str = field(default_factory=_now_iso)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProblemAssetRecord":
+        return cls(**data)
+
+
+@dataclass
+class ProblemRecoveryRecord:
+    action_id: str
+    problem_id: str
+    problem_type: str
+    action_type: str
+    mode: str
+    success: bool
+    status: str
+    execution_id: str = ""
+    case_id: str = ""
+    environment_id: str = ""
+    created_at: str = field(default_factory=_now_iso)
+    updated_at: str = field(default_factory=_now_iso)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProblemRecoveryRecord":
+        return cls(**data)

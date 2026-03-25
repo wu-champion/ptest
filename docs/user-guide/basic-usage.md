@@ -1,6 +1,6 @@
 # ptest 快速开始
 
-本文档只覆盖当前 `1.4.0` 主线已经稳定支持的最小闭环：
+本文档只覆盖当前 `1.5.0` 主线已经稳定支持的最小闭环：
 
 `环境初始化 -> 对象安装与启动 -> 用例创建与执行 -> 执行记录与报告 -> 环境销毁`
 
@@ -73,6 +73,17 @@ uv run ptest --path ./demo-workspace execution artifacts <execution_id>
 uv run ptest --path ./demo-workspace report generate --format html
 ```
 
+### 5.1 查看问题记录与恢复信息
+
+当一次执行失败时，当前主线会自动沉淀问题记录：
+
+```bash
+uv run ptest --path ./demo-workspace problem list
+uv run ptest --path ./demo-workspace problem show <problem_id>
+uv run ptest --path ./demo-workspace problem assets <problem_id>
+uv run ptest --path ./demo-workspace problem recover <problem_id>
+```
+
 ### 6. 销毁工作区资源
 
 ```bash
@@ -122,6 +133,14 @@ print(records["data"])
 
 report = api.generate_report(format_type="json")
 print(report["data"]["report_path"])
+
+problems = api.list_problem_records()
+print(problems["data"])
+
+if problems["data"]:
+    problem_id = problems["data"][0]["problem_id"]
+    recovery = api.recover_problem(problem_id)
+    print(recovery["data"])
 
 api.destroy_environment()
 ```

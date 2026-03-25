@@ -1,6 +1,6 @@
 # ptest Python API 指南
 
-本文档描述当前 `1.4.0` 主线下的 Python API 使用方式。
+本文档描述当前 `1.5.0` 主线下的 Python API 使用方式。
 
 当前推荐入口是 `PTestAPI`，它直接基于统一工作流服务工作，而不是旧的 `TestFramework` 风格接口。
 
@@ -20,6 +20,7 @@ api = PTestAPI(work_path=Path("./demo-workspace"))
 - 安装和查询对象、工具
 - 创建和执行测试用例
 - 读取执行记录和 artifact
+- 读取问题记录、问题资产和恢复动作
 - 生成报告
 - 管理数据模板、契约和 mock 资产
 
@@ -166,6 +167,33 @@ artifacts = api.get_execution_artifacts(
     include_contents=True,
 )
 print(artifacts["data"]["contents"]["result/execution.json"])
+```
+
+## 问题记录与恢复
+
+当一次执行失败时，当前主线会自动生成问题记录。
+
+```python
+problems = api.list_problem_records(case_id=case_id)
+print(problems["data"])
+
+problem_id = problems["data"][0]["problem_id"]
+
+detail = api.get_problem_record(problem_id)
+assets = api.get_problem_assets(problem_id)
+recovery = api.recover_problem(problem_id)
+
+print(detail["data"]["problem_type"])
+print(assets["data"]["preservation_status"])
+print(recovery["data"]["mode"])
+```
+
+如果问题类型支持最小重放：
+
+```python
+replay = api.replay_problem(problem_id)
+print(replay["data"])
+print(replay["recovery_action"])
 ```
 
 ## 报告

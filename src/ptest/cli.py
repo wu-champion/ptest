@@ -310,6 +310,52 @@ def setup_cli() -> argparse.ArgumentParser:
         help="Include artifact file contents",
     )
 
+    problem_parser = subparsers.add_parser(
+        "problem",
+        help=get_colored_text("Problem records and replay", 92),
+        parents=[workspace_parent],
+    )
+    problem_subparsers = problem_parser.add_subparsers(
+        dest="problem_action",
+        help="Problem actions",
+    )
+    problem_list_parser = problem_subparsers.add_parser(
+        "list",
+        help="List problem records",
+        parents=[workspace_parent],
+    )
+    problem_list_parser.add_argument(
+        "--type",
+        dest="problem_type",
+        help="Filter by problem type",
+    )
+    problem_list_parser.add_argument("--case-id", help="Filter by case ID")
+    problem_list_parser.add_argument("--execution-id", help="Filter by execution ID")
+    problem_show_parser = problem_subparsers.add_parser(
+        "show",
+        help="Show a single problem record",
+        parents=[workspace_parent],
+    )
+    problem_show_parser.add_argument("problem_id", help="Problem ID")
+    problem_assets_parser = problem_subparsers.add_parser(
+        "assets",
+        help="Show problem assets",
+        parents=[workspace_parent],
+    )
+    problem_assets_parser.add_argument("problem_id", help="Problem ID")
+    problem_replay_parser = problem_subparsers.add_parser(
+        "replay",
+        help="Replay a replayable problem",
+        parents=[workspace_parent],
+    )
+    problem_replay_parser.add_argument("problem_id", help="Problem ID")
+    problem_recover_parser = problem_subparsers.add_parser(
+        "recover",
+        help="Show the minimal recovery plan for a problem",
+        parents=[workspace_parent],
+    )
+    problem_recover_parser.add_argument("problem_id", help="Problem ID")
+
     # suite commands
     setup_suite_subparser(subparsers, parents=[workspace_parent])
 
@@ -739,6 +785,63 @@ def _handle_execution_command(
     return False
 
 
+def _handle_problem_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
+    """处理 problem 命令"""
+    service = _get_workflow_service(args)
+    if not _ensure_workspace_initialized(service, "problem"):
+        return False
+
+    if not hasattr(args, "problem_action") or not args.problem_action:
+        print_colored("请指定 problem 操作: list/show/assets/replay/recover", 93)
+        return False
+
+    if args.problem_action == "list":
+        records = service.list_problem_records(
+            problem_type=getattr(args, "problem_type", None),
+            case_id=getattr(args, "case_id", None),
+            execution_id=getattr(args, "execution_id", None),
+        )
+        print(json.dumps(records, indent=2, ensure_ascii=False))
+        return True
+
+    if args.problem_action == "show":
+        result = service.get_problem_record(args.problem_id)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["problem"], indent=2, ensure_ascii=False))
+        return True
+
+    if args.problem_action == "assets":
+        result = service.get_problem_assets(args.problem_id)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["assets"], indent=2, ensure_ascii=False))
+        return True
+
+    if args.problem_action == "replay":
+        result = service.replay_problem(args.problem_id)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["replay"], indent=2, ensure_ascii=False))
+        return True
+
+    if args.problem_action == "recover":
+        result = service.recover_problem(args.problem_id)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["recovery"], indent=2, ensure_ascii=False))
+        return True
+
+    print_colored(f"✗ Unknown problem action: {args.problem_action}", 91)
+    return False
+
+
 def _handle_entity_command(
     entity_manager: Any,
     args: argparse.Namespace,
@@ -1049,6 +1152,7 @@ def main() -> int:
         "init": lambda: _handle_init_command(env_manager, args),
         "env": lambda: _handle_env_command(env_manager, args),
         "execution": lambda: _handle_execution_command(env_manager, args),
+        "problem": lambda: _handle_problem_command(env_manager, args),
         "config": lambda: handle_config_command(env_manager, args),
         "obj": lambda: _handle_object_command(env_manager, args),
         "tool": lambda: _handle_tool_command(env_manager, args),

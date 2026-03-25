@@ -220,6 +220,82 @@ class PTestAPI:
             error_code=result.get("error_code"),
         )
 
+    def list_problem_records(
+        self,
+        *,
+        problem_type: str | None = None,
+        case_id: str | None = None,
+        execution_id: str | None = None,
+    ) -> dict[str, Any]:
+        records = self.workflow.list_problem_records(
+            problem_type=problem_type,
+            case_id=case_id,
+            execution_id=execution_id,
+        )
+        return self._api_response(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(records)} problem records",
+            data=records,
+        )
+
+    def get_problem_record(self, problem_id: str) -> dict[str, Any]:
+        result = self.workflow.get_problem_record(problem_id)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("problem"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def get_problem_assets(self, problem_id: str) -> dict[str, Any]:
+        result = self.workflow.get_problem_assets(problem_id)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("assets"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def get_problem_recovery(self, problem_id: str) -> dict[str, Any]:
+        result = self.workflow.get_problem_recovery(problem_id)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("recovery_action"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def replay_problem(self, problem_id: str) -> dict[str, Any]:
+        result = self.workflow.replay_problem(problem_id)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("replay"),
+            recovery_action=result.get("recovery_action"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def recover_problem(self, problem_id: str) -> dict[str, Any]:
+        result = self.workflow.recover_problem(problem_id)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("recovery"),
+            recovery_action=result.get("recovery_action"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
     def destroy_environment(self) -> dict[str, Any]:
         return self.workflow.destroy_environment()
 
@@ -354,13 +430,13 @@ class PTestAPI:
             status="ok",
             message="System info retrieved",
             data={
-                "version": "1.4.0",
-                "api_version": "1.4.0",
+                "version": "1.5.0",
+                "api_version": "1.5.0",
                 "work_path": str(self.work_path),
                 "environment_initialized": env_status.get("initialized", False),
                 "environment_path": env_status.get("path"),
                 "isolation_engines": list(self.isolation_manager.engines.keys()),
-                "framework_version": "PTEST-1.4.0",
+                "framework_version": "PTEST-1.5.0",
             },
         )
 
@@ -384,8 +460,9 @@ class PTestAPI:
         data: Any | None = None,
         error: Any | None = None,
         error_code: str | None = None,
+        **extra: Any,
     ) -> dict[str, Any]:
-        return {
+        payload = {
             "success": success,
             "status": status,
             "message": message,
@@ -394,6 +471,8 @@ class PTestAPI:
             "work_path": str(self.work_path),
             "data": data,
         }
+        payload.update(extra)
+        return payload
 
 
 def create_ptest_api(

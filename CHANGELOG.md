@@ -1,3 +1,22 @@
+## [1.5.0] - 2026-03-26
+
+### Added - 新增功能
+
+- 第二阶段问题保全与复现主线已建立统一 `problem` 模型、问题索引和问题资产持久化
+- CLI / Python API / `WorkflowService` 已统一支持 `problem list/show/assets/recover` 主线
+- 已支持 `api_response` 问题的最小重放
+- 已支持 `data_state` 问题的最小恢复方案输出
+- 已支持 `environment_init`、`dependency_object`、`dependency_configuration` 问题保全与最小恢复方案
+- 已支持 `service_runtime` 问题的轻量保全与基础恢复方案
+- 问题记录已开始持久化恢复动作，当前包含 `recovery.json`、`latest_action` 和 `metadata.latest_recovery`
+
+### Changed - 改进
+
+- 问题资产已统一输出 `preservation_status`、`required_assets`、`available_assets`、`missing_assets` 与 `missing_reasons`
+- 环境 / 依赖类问题已扩展到“对象启动成功但 endpoint 不可达”的预运行校验场景
+- 问题记录与恢复动作已形成最小关联闭环，便于按问题视角追踪后续验证动作
+- 第二阶段当前已完成正式收口，后续重点转向案例化准备和下一阶段衔接
+
 ## [1.4.0] - 2026-03-13
 
 ### Added - 新增功能

@@ -10,6 +10,9 @@ from ..models import (
     EnvironmentRecord,
     ExecutionRecord,
     ManagedObjectRecord,
+    ProblemAssetRecord,
+    ProblemRecoveryRecord,
+    ProblemRecord,
     ToolRecord,
 )
 
@@ -22,14 +25,19 @@ class WorkspaceStorage:
         self.meta_dir = self.root_path / ".ptest"
         self.executions_dir = self.meta_dir / "executions"
         self.artifacts_dir = self.meta_dir / "artifacts"
+        self.problems_dir = self.meta_dir / "problems"
         self.environment_file = self.meta_dir / "environment.json"
         self.objects_file = self.meta_dir / "objects.json"
         self.tools_file = self.meta_dir / "tools.json"
+        self.problems_index_file = self.meta_dir / "problems.json"
+        self.execution_problem_index_file = self.meta_dir / "execution_to_problems.json"
+        self.case_problem_index_file = self.meta_dir / "case_to_problems.json"
 
     def ensure_layout(self) -> None:
         self.meta_dir.mkdir(parents=True, exist_ok=True)
         self.executions_dir.mkdir(parents=True, exist_ok=True)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        self.problems_dir.mkdir(parents=True, exist_ok=True)
 
     def load_environment(self) -> EnvironmentRecord | None:
         data = self._read_json(self.environment_file)
@@ -258,6 +266,84 @@ class WorkspaceStorage:
             return None
         return ExecutionRecord.from_dict(data)
 
+    def load_problem_records(self) -> dict[str, ProblemRecord]:
+        data = self._read_json(self.problems_index_file)
+        if not data:
+            return {}
+        return {
+            item["problem_id"]: ProblemRecord.from_dict(item)
+            for item in data.get("problems", [])
+        }
+
+    def save_problem_records(self, problems: dict[str, ProblemRecord]) -> None:
+        self.ensure_layout()
+        payload = {
+            "problems": [record.to_dict() for record in problems.values()],
+        }
+        self._write_json(self.problems_index_file, payload)
+
+    def save_problem_record(self, record: ProblemRecord) -> ProblemRecord:
+        problems = self.load_problem_records()
+        problems[record.problem_id] = record
+        self.save_problem_records(problems)
+        self._write_json(
+            self.problems_dir / record.problem_id / "record.json",
+            record.to_dict(),
+        )
+        self._link_problem_indexes(
+            record.problem_id, record.execution_id, record.case_id
+        )
+        return record
+
+    def get_problem_record(self, problem_id: str) -> ProblemRecord | None:
+        problem_path = self.problems_dir / problem_id / "record.json"
+        data = self._read_json(problem_path)
+        if data:
+            return ProblemRecord.from_dict(data)
+        return self.load_problem_records().get(problem_id)
+
+    def save_problem_assets(self, record: ProblemAssetRecord) -> ProblemAssetRecord:
+        self.ensure_layout()
+        self._write_json(
+            self.problems_dir / record.problem_id / "assets.json",
+            record.to_dict(),
+        )
+        return record
+
+    def get_problem_assets(self, problem_id: str) -> ProblemAssetRecord | None:
+        data = self._read_json(self.problems_dir / problem_id / "assets.json")
+        if not data:
+            return None
+        return ProblemAssetRecord.from_dict(data)
+
+    def save_problem_recovery(
+        self, record: ProblemRecoveryRecord
+    ) -> ProblemRecoveryRecord:
+        self.ensure_layout()
+        self._write_json(
+            self.problems_dir / record.problem_id / "recovery.json",
+            record.to_dict(),
+        )
+        return record
+
+    def get_problem_recovery(self, problem_id: str) -> ProblemRecoveryRecord | None:
+        data = self._read_json(self.problems_dir / problem_id / "recovery.json")
+        if not data:
+            return None
+        return ProblemRecoveryRecord.from_dict(data)
+
+    def list_problem_ids_for_execution(self, execution_id: str) -> list[str]:
+        data = self._read_json(self.execution_problem_index_file) or {}
+        mapping = data.get("execution_to_problems", {})
+        problem_ids = mapping.get(execution_id, [])
+        return problem_ids if isinstance(problem_ids, list) else []
+
+    def list_problem_ids_for_case(self, case_id: str) -> list[str]:
+        data = self._read_json(self.case_problem_index_file) or {}
+        mapping = data.get("case_to_problems", {})
+        problem_ids = mapping.get(case_id, [])
+        return problem_ids if isinstance(problem_ids, list) else []
+
     def get_execution_artifact_index(self, execution_id: str) -> dict[str, Any] | None:
         self.ensure_layout()
         return self._read_json(
@@ -292,6 +378,16 @@ class WorkspaceStorage:
         if self.artifacts_dir.exists():
             shutil.rmtree(self.artifacts_dir)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        if self.problems_dir.exists():
+            shutil.rmtree(self.problems_dir)
+        self.problems_dir.mkdir(parents=True, exist_ok=True)
+        for path in (
+            self.problems_index_file,
+            self.execution_problem_index_file,
+            self.case_problem_index_file,
+        ):
+            if path.exists():
+                path.unlink()
 
     def clear_workspace_state(self) -> None:
         if self.objects_file.exists():
@@ -341,3 +437,33 @@ class WorkspaceStorage:
             return str(path.relative_to(self.root_path))
         except ValueError:
             return str(path)
+
+    def _link_problem_indexes(
+        self, problem_id: str, execution_id: str, case_id: str
+    ) -> None:
+        if execution_id:
+            execution_mapping = self._read_json(self.execution_problem_index_file) or {
+                "execution_to_problems": {}
+            }
+            execution_mapping.setdefault("execution_to_problems", {})
+            self._append_unique_mapping_value(
+                execution_mapping["execution_to_problems"], execution_id, problem_id
+            )
+            self._write_json(self.execution_problem_index_file, execution_mapping)
+
+        if case_id:
+            case_mapping = self._read_json(self.case_problem_index_file) or {
+                "case_to_problems": {}
+            }
+            case_mapping.setdefault("case_to_problems", {})
+            self._append_unique_mapping_value(
+                case_mapping["case_to_problems"], case_id, problem_id
+            )
+            self._write_json(self.case_problem_index_file, case_mapping)
+
+    def _append_unique_mapping_value(
+        self, mapping: dict[str, Any], key: str, value: str
+    ) -> None:
+        values = mapping.setdefault(key, [])
+        if isinstance(values, list) and value not in values:
+            values.append(value)

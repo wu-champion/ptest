@@ -1,6 +1,6 @@
 # 环境管理指南
 
-本文档描述当前 `1.4.0` 主线中的环境生命周期管理方式。这里的“环境”本质上是一个工作区和它对应的隔离上下文，而不是单纯的目录。
+本文档描述当前 `1.5.0` 主线中的环境生命周期管理方式。这里的“环境”本质上是一个工作区和它对应的隔离上下文，而不是单纯的目录。
 
 ## 当前环境模型
 
@@ -153,31 +153,6 @@ demo-workspace/
 - 快速开始：[../user-guide/basic-usage.md](../user-guide/basic-usage.md)
 - Python API：[../api/python-api-guide.md](../api/python-api-guide.md)
 - 架构总览：[../architecture/system-overview.md](../architecture/system-overview.md)
-# 获取所有已安装包
-packages = env.get_installed_packages()
-for name, version in packages.items():
-    print(f"{name}: {version}")
-
-# 获取特定包版本
-version = env.get_package_version("requests")
-print(f"requests版本: {version}")
-
-# 检查包是否安装
-is_installed = env.is_package_installed("requests")
-print(f"requests已安装: {is_installed}")
-```
-
-### 包卸载
-
-```python
-# 卸载单个包
-success = env.uninstall_package("requests")
-
-# 卸载多个包
-for package in ["requests", "pandas"]:
-    env.uninstall_package(package)
-
-# 清理未使用的包
 env.cleanup_unused_packages()
 ```
 
