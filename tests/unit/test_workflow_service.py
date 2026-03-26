@@ -8,6 +8,10 @@ from ptest.contract.manager import APIContract, APIEndpoint, ContractManager
 from ptest.mock import MockConfig, MockServer
 
 
+def _normalized_path(path: str) -> str:
+    return path.replace("\\", "/")
+
+
 def test_workflow_service_persists_environment_and_objects(tmp_path: Path) -> None:
     service = WorkflowService(tmp_path)
     record = service.init_environment()
@@ -136,21 +140,31 @@ def test_workflow_service_runs_case_and_generates_report(tmp_path: Path) -> None
     assert (artifact_dir / "indexes" / "artifact_index.json").exists()
     assert (artifact_dir / "logs" / "log_index.json").exists()
     artifacts = executions[0]["metadata"]["artifacts"]
-    assert artifacts["directory"].startswith(".ptest/artifacts/")
-    assert artifacts["files"]["environment"].endswith("context/environment.json")
-    assert artifacts["files"]["execution"].endswith("result/execution.json")
-    assert artifacts["indexes"]["artifact_index"].endswith(
+    assert _normalized_path(artifacts["directory"]).startswith(".ptest/artifacts/")
+    assert _normalized_path(artifacts["files"]["environment"]).endswith(
+        "context/environment.json"
+    )
+    assert _normalized_path(artifacts["files"]["execution"]).endswith(
+        "result/execution.json"
+    )
+    assert _normalized_path(artifacts["indexes"]["artifact_index"]).endswith(
         "indexes/artifact_index.json"
     )
-    assert artifacts["indexes"]["log_index"].endswith("logs/log_index.json")
+    assert _normalized_path(artifacts["indexes"]["log_index"]).endswith(
+        "logs/log_index.json"
+    )
     artifact_index = json.loads(
         (artifact_dir / "indexes" / "artifact_index.json").read_text(encoding="utf-8")
     )
     log_index = json.loads(
         (artifact_dir / "logs" / "log_index.json").read_text(encoding="utf-8")
     )
-    assert artifact_index["files"]["execution"].endswith("result/execution.json")
-    assert artifact_index["indexes"]["log_index"].endswith("logs/log_index.json")
+    assert _normalized_path(artifact_index["files"]["execution"]).endswith(
+        "result/execution.json"
+    )
+    assert _normalized_path(artifact_index["indexes"]["log_index"]).endswith(
+        "logs/log_index.json"
+    )
     assert log_index["workspace_logs_dir"] == "logs"
 
     suite_result = service.create_suite(

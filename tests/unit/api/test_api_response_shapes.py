@@ -5,6 +5,10 @@ from pathlib import Path
 from ptest.api import PTestAPI
 
 
+def _normalized_path(path: str) -> str:
+    return path.replace("\\", "/")
+
+
 def test_api_returns_structured_environment_responses(tmp_path: Path) -> None:
     api = PTestAPI(work_path=str(tmp_path))
 
@@ -58,6 +62,6 @@ def test_api_returns_structured_case_responses(tmp_path: Path) -> None:
     artifacts_result = api.get_execution_artifacts(execution_id)
     assert artifacts_result["success"] is True
     assert artifacts_result["data"]["execution_id"] == execution_id
-    assert artifacts_result["data"]["files"]["execution"].endswith(
+    assert _normalized_path(artifacts_result["data"]["files"]["execution"]).endswith(
         "result/execution.json"
     )

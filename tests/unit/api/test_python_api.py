@@ -45,7 +45,7 @@ class TestPTestAPI(unittest.TestCase):
     def test_api_work_path(self):
         """测试工作路径设置"""
         api = PTestAPI(work_path=self.test_dir)
-        self.assertEqual(str(api.work_path), str(Path(self.test_dir)))
+        self.assertTrue(api.work_path.samefile(self.test_dir))
 
 
 class TestEnvironmentManagement(unittest.TestCase):
