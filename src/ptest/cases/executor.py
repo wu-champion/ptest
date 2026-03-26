@@ -11,6 +11,10 @@ from datetime import datetime
 from .result import TestCaseResult
 from .hooks import HookExecutor, HookManager, HookWhen
 
+# 导入断言工厂
+from ptest.assertions.factory import AssertionFactory
+
+
 # 尝试导入可选依赖
 try:
     import requests
@@ -121,19 +125,35 @@ class TestExecutor:
         return result
 
     def _execute_api_test(self, case_data: Dict[str, Any]) -> Tuple[bool, Any]:
-        """执行API测试"""
+        """执行API测试
+
+        支持两种格式:
+        1. 新 DSL 格式: request/assertions 结构
+        2. 旧扁平格式: method/url/expected_status 等字段
+        """
         if not REQUESTS_AVAILABLE:
             return False, "requests module not installed. Run: pip install requests"
 
         try:
-            method = case_data.get("method", "GET").upper()
-            url = case_data.get("url", "")
-            headers = case_data.get("headers", {})
-            params = case_data.get("params", {})
-            body = case_data.get("body", {})
-            expected_status = case_data.get("expected_status", 200)
-            expected_response = case_data.get("expected_response", {})
-            timeout = case_data.get("timeout", 30)
+            # 优先使用新 DSL 格式 (request/assertions)
+            request_config = case_data.get("request", {})
+            assertions_config = case_data.get("assertions", [])
+
+            # 解析请求参数 (新格式优先，否则使用旧格式)
+            method = request_config.get("method", "") or case_data.get("method", "GET")
+            url = request_config.get("url", "") or case_data.get("url", "")
+            headers = request_config.get("headers", {}) or case_data.get("headers", {})
+            params = request_config.get("params", {}) or case_data.get("params", {})
+            body = request_config.get("body", {}) or case_data.get("body", {})
+            timeout = request_config.get("timeout", 30) or case_data.get("timeout", 30)
+
+            # 确保 method 是大写
+            if method:
+                method = method.upper()
+
+            # 如果没有请求配置且没有 url，报错
+            if not url:
+                return False, "Missing URL: please provide 'request.url' or 'url'"
 
             self.env_manager.logger.info(f"Executing API test: {method} {url}")
 
@@ -146,6 +166,14 @@ class TestExecutor:
                 json=body if body else None,
                 timeout=timeout,
             )
+
+            # 如果有 assertions 配置，使用断言系统
+            if assertions_config:
+                return self._execute_assertions(response, assertions_config)
+
+            # 没有 assertions 配置，回退到旧逻辑 (保持向后兼容)
+            expected_status = case_data.get("expected_status", 200)
+            expected_response = case_data.get("expected_response", {})
 
             # 检查状态码
             if response.status_code != expected_status:
@@ -179,6 +207,112 @@ class TestExecutor:
             )
         except Exception as e:
             return False, f"API test error: {str(e)}"
+
+    def _execute_assertions(
+        self, response, assertions_config: list
+    ) -> Tuple[bool, Any]:
+        """执行断言列表
+
+        Args:
+            response: HTTP 响应对象
+            assertions_config: 断言配置列表
+
+        Returns:
+            (success, message) 元组
+        """
+
+        failed_assertions = []
+        passed_count = 0
+
+        # 准备实际值
+        actual_value = response
+        actual_json = None
+
+        # 尝试解析 JSON 响应
+        content_type = response.headers.get("content-type", "")
+        if content_type.startswith("application/json"):
+            try:
+                actual_json = response.json()
+            except Exception:
+                pass
+
+        for idx, assertion_item in enumerate(assertions_config):
+            if not isinstance(assertion_item, dict):
+                failed_assertions.append(f"Assertion {idx}: invalid format")
+                continue
+
+            assertion_type = assertion_item.get("type", "")
+            if not assertion_type:
+                failed_assertions.append(f"Assertion {idx}: missing 'type'")
+                continue
+
+            try:
+                # 根据断言类型准备 actual 值
+                if assertion_type in ("status_code", "statuscode"):
+                    actual = response.status_code
+                    expected = assertion_item.get("expected")
+                    kwargs = {}
+                elif assertion_type in ("json_path", "jsonpath"):
+                    actual = actual_json if actual_json is not None else {}
+                    expected = assertion_item.get("expected")
+                    kwargs = {"path": assertion_item.get("path", "")}
+                elif assertion_type in ("body", "bodyassertion"):
+                    actual = response.text
+                    expected = assertion_item.get("expected")
+                    kwargs = {}
+                elif assertion_type in ("header", "headerassertion"):
+                    actual = dict(response.headers)
+                    expected = assertion_item.get("expected")
+                    kwargs = {"header_name": assertion_item.get("header", "")}
+                elif assertion_type in ("regex", "regexassertion"):
+                    actual = response.text
+                    expected = assertion_item.get("expected")
+                    kwargs = {}
+                elif assertion_type in ("schema", "schemaassertion"):
+                    actual = actual_json if actual_json is not None else {}
+                    expected = assertion_item.get("expected")
+                    kwargs = {"schema": assertion_item.get("schema", {})}
+                else:
+                    # 通用处理
+                    actual = actual_value
+                    expected = assertion_item.get("expected")
+                    kwargs = {
+                        k: v
+                        for k, v in assertion_item.items()
+                        if k not in ("type", "expected", "description")
+                    }
+
+                # 创建并执行断言
+                assertion = AssertionFactory.create(assertion_type)
+                result = assertion.assert_value(actual, expected=expected, **kwargs)
+
+                if result.passed:
+                    passed_count += 1
+                else:
+                    error_msg = (
+                        f"Assertion {idx} ({assertion_type}) failed: {result.message}"
+                    )
+                    if result.extra:
+                        error_msg += f" - {result.extra}"
+                    failed_assertions.append(error_msg)
+
+            except ValueError as e:
+                failed_assertions.append(
+                    f"Assertion {idx} ({assertion_type}): {str(e)}"
+                )
+            except Exception as e:
+                failed_assertions.append(
+                    f"Assertion {idx} ({assertion_type}): unexpected error: {str(e)}"
+                )
+
+        # 返回结果
+        if failed_assertions:
+            return (
+                False,
+                f"{len(failed_assertions)} assertion(s) failed: {'; '.join(failed_assertions[:3])}",
+            )
+        else:
+            return True, f"{passed_count} assertion(s) passed"
 
     def _execute_database_test(self, case_data: Dict[str, Any]) -> Tuple[bool, Any]:
         """执行数据库测试"""

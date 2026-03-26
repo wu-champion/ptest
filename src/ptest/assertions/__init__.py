@@ -15,6 +15,7 @@ from .factory import AssertionFactory
 from .registry import AssertionRegistry
 from .chains import AndAssertion, OrAssertion, NotAssertion, ChainBuilder
 from .templates import AssertionTemplate, TemplateAssertion
+from .compat import assert_that, assert_raises, SoftAssertions, soft_assertions
 
 __all__ = [
     "Assertion",
@@ -27,4 +28,8 @@ __all__ = [
     "ChainBuilder",
     "AssertionTemplate",
     "TemplateAssertion",
+    "assert_that",
+    "assert_raises",
+    "SoftAssertions",
+    "soft_assertions",
 ]

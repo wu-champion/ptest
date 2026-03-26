@@ -214,18 +214,17 @@ class SuiteManager:
 
     def list_suites(self) -> list[str]:
         """列出所有测试套件 / List all test suites"""
-        return sorted(self._suites.keys())
+        suite_names = {path.stem for path in self.storage_dir.glob("*.json")}
+        suite_names.update(self._suites.keys())
+        return sorted(suite_names)
 
     def delete_suite(self, name: str) -> bool:
         """删除测试套件 / Delete test suite"""
-        if name not in self._suites:
-            logger.warning(f"套件不存在: {name}")
-            return False
-
         suite_file = self.storage_dir / f"{name}.json"
         if suite_file.exists():
             suite_file.unlink()
-            del self._suites[name]
+            if name in self._suites:
+                del self._suites[name]
             logger.info(f"测试套件删除成功: {name}")
             return True
 
@@ -364,6 +363,19 @@ class SuiteManager:
 
                 # 执行
                 results = executor.execute(current_tasks, dependencies)
+
+                # 归一化结果：如果任务返回的是测试结果对象，则以其 success/status 为准
+                for execution_result in results:
+                    payload = execution_result.result
+                    if hasattr(payload, "success"):
+                        execution_result.success = bool(payload.success)
+                        execution_result.error = (
+                            None if payload.success else getattr(payload, "error", None)
+                        )
+                    elif isinstance(payload, dict) and "success" in payload:
+                        execution_result.success = bool(payload["success"])
+                        if not execution_result.success:
+                            execution_result.error = str(payload.get("error", ""))
 
                 # 记录结果
                 for r in results:

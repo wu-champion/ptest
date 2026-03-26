@@ -1,11 +1,23 @@
 # -*- coding: utf-8 -*-
-"""集成测试 - 完整工作流 / Integration Tests - Complete Workflow"""
+"""集成测试 - 完整工作流 - ptest 断言版本
+
+迁移说明:
+- 原文件使用 pytest/unittest 断言，现已迁移到 ptest 断言
+- 迁移对照表:
+  - assert x == y → assert_that(x).equals(y)
+  - assert x in y → assert_that(y).contains(x)
+  - assert len(x) == n → assert_that(len(x)).equals(n)
+  - assert x is not None → assert_that(x).not_none()
+  - assert x is True → assert_that(x).is_true()
+  - pytest.raises(E) → assert_raises(E)
+"""
 
 import json
 import tempfile
 from pathlib import Path
 
-import pytest
+
+from ptest.assertions import assert_that, assert_raises
 
 
 class TestCompleteWorkflow:
@@ -19,7 +31,7 @@ class TestCompleteWorkflow:
         # 1. 生成测试数据
         generator = DataGenerator()
         test_data = generator.generate("name", count=5, format="raw")
-        assert len(test_data) == 5
+        assert_that(len(test_data)).equals(5)
 
         # 2. 创建契约
         contract_data = {
@@ -57,7 +69,7 @@ class TestCompleteWorkflow:
 
             # 5. 验证契约存在
             contracts = manager.list_contracts()
-            assert "test_api" in contracts
+            assert_that("test_api" in contracts).is_true()
 
     def test_suite_execution_workflow(self):
         """测试套件执行工作流"""
@@ -79,26 +91,26 @@ class TestCompleteWorkflow:
             }
 
             suite = manager.create_suite(suite_data)
-            assert suite.name == "integration_suite"
+            assert_that(suite.name).equals("integration_suite")
 
             # 3. 加载并验证
             loaded = manager.load_suite("integration_suite")
-            assert loaded is not None
-            assert len(loaded.cases) == 2
+            assert_that(loaded).not_none()
+            assert_that(len(loaded.cases)).equals(2)
 
             # 4. 验证依赖关系
             sorted_cases = loaded.get_sorted_cases()
-            assert sorted_cases[0].case_id == "test_login"
-            assert sorted_cases[1].case_id == "test_api"
+            assert_that(sorted_cases[0].case_id).equals("test_login")
+            assert_that(sorted_cases[1].case_id).equals("test_api")
 
     def test_config_workflow(self):
         """测试配置工作流 - 使用实际config模块"""
         from ptest import config
 
         # 验证默认配置存在
-        assert "log_level" in config.DEFAULT_CONFIG
-        assert config.DEFAULT_CONFIG["log_level"] == "INFO"
-        assert "report_format" in config.DEFAULT_CONFIG
+        assert_that("log_level" in config.DEFAULT_CONFIG).is_true()
+        assert_that(config.DEFAULT_CONFIG["log_level"]).equals("INFO")
+        assert_that("report_format" in config.DEFAULT_CONFIG).is_true()
 
 
 class TestModuleIntegration:
@@ -122,12 +134,12 @@ class TestModuleIntegration:
 
             # 3. 加载模板
             loaded = template_manager.load_template("user_template")
-            assert loaded is not None
-            assert "name" in loaded
+            assert_that(loaded).not_none()
+            assert_that("name" in loaded).is_true()
 
             # 4. 列出模板
             templates = template_manager.list_templates()
-            assert "user_template" in templates
+            assert_that("user_template" in templates).is_true()
 
     def test_execution_with_hooks(self):
         """测试执行器与Hooks集成 - 使用正确的API"""
@@ -156,8 +168,8 @@ class TestModuleIntegration:
         # 3. 执行单个Hook
         result = executor.execute_hook(setup_hook)
 
-        assert result.success is True
-        assert "setup" in result.output.lower()
+        assert_that(result.success).is_true()
+        assert_that("setup" in result.output.lower()).is_true()
 
         # 4. 批量执行Hooks
         hooks = [
@@ -174,8 +186,8 @@ class TestModuleIntegration:
         ]
         all_success, results = executor.execute_hooks(hooks, HookWhen.SETUP)
 
-        assert all_success is True
-        assert len(results) == 2
+        assert_that(all_success).is_true()
+        assert_that(len(results)).equals(2)
 
     def test_mock_with_data_flow(self):
         """测试Mock服务与数据流集成"""
@@ -196,8 +208,8 @@ class TestModuleIntegration:
 
         # 2. 创建Mock服务器
         server = MockServer(config)
-        assert server.config.name == "test_mock"
-        assert len(server.config.routes) == 1
+        assert_that(server.config.name).equals("test_mock")
+        assert_that(len(server.config.routes)).equals(1)
 
 
 class TestEndToEndScenarios:
@@ -212,7 +224,7 @@ class TestEndToEndScenarios:
         # 1. 生成测试数据
         generator = DataGenerator()
         user_data = generator.generate("email", count=3, format="raw")
-        assert len(user_data) == 3
+        assert_that(len(user_data)).equals(3)
 
         # 2. 设置Mock服务
         config = MockConfig(name="api_mock", port=18081)
@@ -226,7 +238,7 @@ class TestEndToEndScenarios:
         )
 
         # 验证配置
-        assert len(server.config.routes) == 1
+        assert_that(len(server.config.routes)).equals(1)
 
     def test_database_testing_scenario(self):
         """数据库测试场景"""
@@ -239,8 +251,8 @@ class TestEndToEndScenarios:
         names = generator.generate("name", count=10, format="raw")
         emails = generator.generate("email", count=10, format="raw")
 
-        assert len(names) == 10
-        assert len(emails) == 10
+        assert_that(len(names)).equals(10)
+        assert_that(len(emails)).equals(10)
 
     def test_parallel_execution_scenario(self):
         """并行执行场景"""
@@ -262,8 +274,8 @@ class TestEndToEndScenarios:
         executor = ParallelExecutor(max_workers=3)
         execution_results = executor.execute(tasks)
 
-        assert len(execution_results) == 5
-        assert all(r.success for r in execution_results)
+        assert_that(len(execution_results)).equals(5)
+        assert_that(all(r.success for r in execution_results)).is_true()
 
         executor.shutdown()
 
@@ -284,7 +296,7 @@ class TestErrorHandling:
             contract_file.write_text(json.dumps(invalid_contract))
 
             # 应该抛出异常或返回错误
-            with pytest.raises(Exception):
+            with assert_raises(Exception):
                 manager.import_contract(str(contract_file), "invalid")
 
     def test_suite_validation_error(self):
@@ -299,8 +311,10 @@ class TestErrorHandling:
 
         # 验证应该失败
         is_valid, errors = suite.validate()
-        assert is_valid is False
-        assert any("至少需要一个用例" in error for error in errors)
+        assert_that(is_valid).is_false()
+        # 检查是否有包含"至少需要一个用例"的错误
+        has_error = any("至少需要一个用例" in error for error in errors)
+        assert_that(has_error).is_true()
 
     def test_hook_execution_failure(self):
         """测试Hook执行失败 - 使用正确的API"""
@@ -323,5 +337,6 @@ class TestErrorHandling:
         executor = HookExecutor(env_manager)
         result = executor.execute_hook(hook)
 
-        assert result.success is False
-        assert result.error is not None or result.error == ""
+        assert_that(result.success).is_false()
+        # result.error 可以是 None 或空字符串
+        assert_that(result.error is not None or result.error == "").is_true()

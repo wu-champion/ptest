@@ -1,11 +1,23 @@
 # -*- coding: utf-8 -*-
-"""测试套件模块单元测试 / Test Suite Module Unit Tests"""
+"""测试套件模块单元测试 - ptest 断言版本
+
+迁移说明:
+- 原文件使用 pytest/unittest 断言，现已迁移到 ptest 断言
+- 迁移对照表:
+  - assert x == y → assert_that(x).equals(y)
+  - assert x is True → assert_that(x).is_true()
+  - assert x is False → assert_that(x).is_false()
+  - assert x in y → assert_that(y).contains(x)
+  - assert len(x) == n → assert_that(len(x)).equals(n)
+  - pytest.raises(E) → assert_raises(E)
+"""
 
 import json
 import tempfile
 from pathlib import Path
 
-import pytest
+
+from ptest.assertions import assert_that, assert_raises
 
 from ptest.suites import CaseRef, ExecutionMode, SuiteManager, TestSuite
 
@@ -23,18 +35,18 @@ class TestCaseRef:
             skip_reason=None,
         )
 
-        assert case_ref.case_id == "test_case_1"
-        assert case_ref.order == 1
-        assert case_ref.depends_on == ["setup_case"]
-        assert case_ref.skip is False
+        assert_that(case_ref.case_id).equals("test_case_1")
+        assert_that(case_ref.order).equals(1)
+        assert_that(case_ref.depends_on).equals(["setup_case"])
+        assert_that(case_ref.skip).is_false()
 
     def test_case_ref_default_values(self):
         """测试CaseRef默认值"""
         case_ref = CaseRef(case_id="test_case", order=1)
 
-        assert case_ref.depends_on == []
-        assert case_ref.skip is False
-        assert case_ref.skip_reason is None
+        assert_that(case_ref.depends_on).equals([])
+        assert_that(case_ref.skip).is_false()
+        assert_that(case_ref.skip_reason).is_none()
 
     def test_case_ref_to_dict(self):
         """测试CaseRef序列化"""
@@ -47,11 +59,11 @@ class TestCaseRef:
         )
 
         data = case_ref.to_dict()
-        assert data["case_id"] == "test_case"
-        assert data["order"] == 2
-        assert data["depends_on"] == ["dep1"]
-        assert data["skip"] is True
-        assert data["skip_reason"] == "Not ready"
+        assert_that(data["case_id"]).equals("test_case")
+        assert_that(data["order"]).equals(2)
+        assert_that(data["depends_on"]).equals(["dep1"])
+        assert_that(data["skip"]).is_true()
+        assert_that(data["skip_reason"]).equals("Not ready")
 
     def test_case_ref_from_dict(self):
         """测试CaseRef反序列化"""
@@ -64,9 +76,9 @@ class TestCaseRef:
         }
 
         case_ref = CaseRef.from_dict(data)
-        assert case_ref.case_id == "test_case"
-        assert case_ref.order == 3
-        assert case_ref.depends_on == ["dep1", "dep2"]
+        assert_that(case_ref.case_id).equals("test_case")
+        assert_that(case_ref.order).equals(3)
+        assert_that(case_ref.depends_on).equals(["dep1", "dep2"])
 
 
 class TestTestSuite:
@@ -84,21 +96,21 @@ class TestTestSuite:
             max_workers=2,
         )
 
-        assert suite.name == "integration_suite"
-        assert suite.description == "Integration test suite"
-        assert len(suite.setup) == 1
-        assert len(suite.cases) == 1
-        assert suite.execution_mode == ExecutionMode.SEQUENTIAL
+        assert_that(suite.name).equals("integration_suite")
+        assert_that(suite.description).equals("Integration test suite")
+        assert_that(len(suite.setup)).equals(1)
+        assert_that(len(suite.cases)).equals(1)
+        assert_that(suite.execution_mode).equals(ExecutionMode.SEQUENTIAL)
 
     def test_suite_default_values(self):
         """测试TestSuite默认值"""
         suite = TestSuite(name="simple_suite")
 
-        assert suite.setup == []
-        assert suite.cases == []
-        assert suite.teardown == []
-        assert suite.execution_mode == ExecutionMode.SEQUENTIAL
-        assert suite.max_workers == 4
+        assert_that(suite.setup).equals([])
+        assert_that(suite.cases).equals([])
+        assert_that(suite.teardown).equals([])
+        assert_that(suite.execution_mode).equals(ExecutionMode.SEQUENTIAL)
+        assert_that(suite.max_workers).equals(4)
 
     def test_suite_to_dict(self):
         """测试TestSuite序列化"""
@@ -109,10 +121,10 @@ class TestTestSuite:
         )
 
         data = suite.to_dict()
-        assert data["name"] == "test_suite"
-        assert data["execution_mode"] == "parallel"
-        assert len(data["cases"]) == 1
-        assert data["max_workers"] == 4
+        assert_that(data["name"]).equals("test_suite")
+        assert_that(data["execution_mode"]).equals("parallel")
+        assert_that(len(data["cases"])).equals(1)
+        assert_that(data["max_workers"]).equals(4)
 
     def test_suite_from_dict(self):
         """测试TestSuite反序列化"""
@@ -127,10 +139,10 @@ class TestTestSuite:
         }
 
         suite = TestSuite.from_dict(data)
-        assert suite.name == "test_suite"
-        assert suite.description == "Test suite"
-        assert len(suite.cases) == 1
-        assert suite.max_workers == 2
+        assert_that(suite.name).equals("test_suite")
+        assert_that(suite.description).equals("Test suite")
+        assert_that(len(suite.cases)).equals(1)
+        assert_that(suite.max_workers).equals(2)
 
     def test_suite_validate_success(self):
         """测试套件验证成功"""
@@ -143,24 +155,26 @@ class TestTestSuite:
         )
 
         is_valid, errors = suite.validate()
-        assert is_valid is True
-        assert errors == []
+        assert_that(is_valid).is_true()
+        assert_that(errors).equals([])
 
     def test_suite_validate_empty_name(self):
         """测试套件验证 - 空名称"""
         suite = TestSuite(name="", cases=[CaseRef(case_id="case_1", order=1)])
 
         is_valid, errors = suite.validate()
-        assert is_valid is False
-        assert any("名称不能为空" in error for error in errors)
+        assert_that(is_valid).is_false()
+        has_error = any("名称不能为空" in error for error in errors)
+        assert_that(has_error).is_true()
 
     def test_suite_validate_no_cases(self):
         """测试套件验证 - 无用例"""
         suite = TestSuite(name="empty_suite")
 
         is_valid, errors = suite.validate()
-        assert is_valid is False
-        assert any("至少需要一个用例" in error for error in errors)
+        assert_that(is_valid).is_false()
+        has_error = any("至少需要一个用例" in error for error in errors)
+        assert_that(has_error).is_true()
 
     def test_suite_validate_duplicate_orders(self):
         """测试套件验证 - 重复顺序"""
@@ -173,8 +187,9 @@ class TestTestSuite:
         )
 
         is_valid, errors = suite.validate()
-        assert is_valid is False
-        assert any("顺序重复" in error for error in errors)
+        assert_that(is_valid).is_false()
+        has_error = any("顺序重复" in error for error in errors)
+        assert_that(has_error).is_true()
 
     def test_suite_validate_missing_dependency(self):
         """测试套件验证 - 依赖不存在"""
@@ -187,8 +202,9 @@ class TestTestSuite:
         )
 
         is_valid, errors = suite.validate()
-        assert is_valid is False
-        assert any("依赖不存在" in error for error in errors)
+        assert_that(is_valid).is_false()
+        has_error = any("依赖不存在" in error for error in errors)
+        assert_that(has_error).is_true()
 
     def test_get_sorted_cases(self):
         """测试获取排序后的用例"""
@@ -202,9 +218,9 @@ class TestTestSuite:
         )
 
         sorted_cases = suite.get_sorted_cases()
-        assert sorted_cases[0].case_id == "case_1"
-        assert sorted_cases[1].case_id == "case_2"
-        assert sorted_cases[2].case_id == "case_3"
+        assert_that(sorted_cases[0].case_id).equals("case_1")
+        assert_that(sorted_cases[1].case_id).equals("case_2")
+        assert_that(sorted_cases[2].case_id).equals("case_3")
 
 
 class TestSuiteManager:
@@ -214,7 +230,7 @@ class TestSuiteManager:
         """测试SuiteManager创建"""
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = SuiteManager(storage_dir=tmpdir)
-            assert manager.storage_dir == Path(tmpdir)
+            assert_that(manager.storage_dir).equals(Path(tmpdir))
 
     def test_create_suite_from_dict(self):
         """测试从字典创建套件"""
@@ -228,8 +244,8 @@ class TestSuiteManager:
             }
 
             suite = manager.create_suite(suite_data)
-            assert suite.name == "test_suite"
-            assert len(suite.cases) == 1
+            assert_that(suite.name).equals("test_suite")
+            assert_that(len(suite.cases)).equals(1)
 
     def test_create_suite_from_file(self):
         """测试从文件创建套件"""
@@ -245,7 +261,7 @@ class TestSuiteManager:
             manager = SuiteManager(storage_dir=tmpdir)
             suite = manager.create_suite(suite_file)
 
-            assert suite.name == "file_suite"
+            assert_that(suite.name).equals("file_suite")
 
     def test_load_suite(self):
         """测试加载套件"""
@@ -261,15 +277,15 @@ class TestSuiteManager:
 
             # 再加载
             loaded_suite = manager.load_suite("load_test")
-            assert loaded_suite is not None
-            assert loaded_suite.name == "load_test"
+            assert_that(loaded_suite).not_none()
+            assert_that(loaded_suite.name).equals("load_test")
 
     def test_load_nonexistent_suite(self):
         """测试加载不存在的套件"""
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = SuiteManager(storage_dir=tmpdir)
             suite = manager.load_suite("nonexistent")
-            assert suite is None
+            assert_that(suite).is_none()
 
     def test_list_suites(self):
         """测试列出所有套件"""
@@ -284,8 +300,8 @@ class TestSuiteManager:
             )
 
             suites = manager.list_suites()
-            assert "suite_a" in suites
-            assert "suite_b" in suites
+            assert_that("suite_a" in suites).is_true()
+            assert_that("suite_b" in suites).is_true()
 
     def test_delete_suite(self):
         """测试删除套件"""
@@ -295,16 +311,16 @@ class TestSuiteManager:
             manager.create_suite(
                 {"name": "to_delete", "cases": [{"case_id": "c1", "order": 1}]}
             )
-            assert manager.delete_suite("to_delete") is True
+            assert_that(manager.delete_suite("to_delete")).is_true()
 
             # 验证已删除
-            assert manager.load_suite("to_delete") is None
+            assert_that(manager.load_suite("to_delete")).is_none()
 
     def test_delete_nonexistent_suite(self):
         """测试删除不存在的套件"""
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = SuiteManager(storage_dir=tmpdir)
-            assert manager.delete_suite("nonexistent") is False
+            assert_that(manager.delete_suite("nonexistent")).is_false()
 
     def test_get_suite_cases(self):
         """测试获取套件用例"""
@@ -322,16 +338,16 @@ class TestSuiteManager:
             )
 
             cases = manager.get_suite_cases("case_test")
-            assert len(cases) == 2
-            assert cases[0].case_id == "case_1"  # 已排序
-            assert cases[1].case_id == "case_2"
+            assert_that(len(cases)).equals(2)
+            assert_that(cases[0].case_id).equals("case_1")  # 已排序
+            assert_that(cases[1].case_id).equals("case_2")
 
     def test_create_suite_file_not_found(self):
         """测试创建套件 - 文件不存在"""
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = SuiteManager(storage_dir=tmpdir)
 
-            with pytest.raises(FileNotFoundError):
+            with assert_raises(FileNotFoundError):
                 manager.create_suite(Path(tmpdir) / "nonexistent.json")
 
 
@@ -340,10 +356,10 @@ class TestExecutionMode:
 
     def test_execution_mode_values(self):
         """测试执行模式值"""
-        assert ExecutionMode.SEQUENTIAL.value == "sequential"
-        assert ExecutionMode.PARALLEL.value == "parallel"
+        assert_that(ExecutionMode.SEQUENTIAL.value).equals("sequential")
+        assert_that(ExecutionMode.PARALLEL.value).equals("parallel")
 
     def test_execution_mode_comparison(self):
         """测试执行模式比较"""
         suite = TestSuite(name="test", execution_mode=ExecutionMode.PARALLEL)
-        assert suite.execution_mode == ExecutionMode.PARALLEL
+        assert_that(suite.execution_mode).equals(ExecutionMode.PARALLEL)

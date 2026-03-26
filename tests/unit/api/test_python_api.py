@@ -32,8 +32,7 @@ class TestPTestAPI(unittest.TestCase):
         """测试API初始化"""
         api = PTestAPI()
         self.assertIsNotNone(api)
-        self.assertTrue(api.is_initialized)
-        self.assertIsNotNone(api.env_manager)
+        self.assertIsNotNone(api.workflow)
         self.assertIsNotNone(api.isolation_manager)
 
     def test_api_with_config(self):
@@ -46,7 +45,7 @@ class TestPTestAPI(unittest.TestCase):
     def test_api_work_path(self):
         """测试工作路径设置"""
         api = PTestAPI(work_path=self.test_dir)
-        self.assertEqual(str(api.work_path), str(Path(self.test_dir)))
+        self.assertTrue(api.work_path.samefile(self.test_dir))
 
 
 class TestEnvironmentManagement(unittest.TestCase):
@@ -64,8 +63,9 @@ class TestEnvironmentManagement(unittest.TestCase):
 
     def test_init_environment(self):
         """测试初始化环境"""
-        env_path = self.api.init_environment(path=self.test_dir)
-        self.assertIsNotNone(env_path)
+        result = self.api.init_environment(path=self.test_dir)
+        self.assertTrue(result["success"])
+        env_path = result["data"]["root_path"]
         self.assertTrue(Path(env_path).exists())
 
     def test_get_environment_status(self):
@@ -73,7 +73,8 @@ class TestEnvironmentManagement(unittest.TestCase):
         self.api.init_environment(path=self.test_dir)
         status = self.api.get_environment_status()
         self.assertIsInstance(status, dict)
-        self.assertIn("path", status)
+        self.assertTrue(status["success"])
+        self.assertIn("path", status["data"])
 
 
 class TestTestCaseManagement(unittest.TestCase):
@@ -92,21 +93,24 @@ class TestTestCaseManagement(unittest.TestCase):
 
     def test_create_test_case(self):
         """测试创建测试用例"""
-        case_id = self.api.create_test_case(
+        result = self.api.create_test_case(
             test_type="api",
             name="test_api_endpoint",
             description="Test API endpoint functionality",
             content={"method": "GET", "url": "http://example.com"},
             tags=["api", "smoke"],
         )
-        self.assertIsNotNone(case_id)
+        self.assertTrue(result["success"])
+        case_id = result["data"]["case_id"]
         self.assertIsInstance(case_id, str)
         self.assertTrue(len(case_id) > 0)
 
     def test_list_test_cases(self):
         """测试列出测试用例"""
         result = self.api.list_test_cases()
-        self.assertIsInstance(result, str)
+        self.assertIsInstance(result, dict)
+        self.assertTrue(result["success"])
+        self.assertIsInstance(result["data"], list)
 
 
 class TestReportGeneration(unittest.TestCase):
@@ -126,8 +130,9 @@ class TestReportGeneration(unittest.TestCase):
     def test_generate_report(self):
         """测试生成报告"""
         try:
-            report_path = self.api.generate_report(format_type="html")
-            self.assertIsInstance(report_path, str)
+            result = self.api.generate_report(format_type="html")
+            self.assertTrue(result["success"])
+            self.assertIsInstance(result["data"]["report_path"], str)
         except Exception as e:
             self.assertIsInstance(e, Exception)
 
@@ -149,10 +154,11 @@ class TestSystemInfo(unittest.TestCase):
         """测试获取系统信息"""
         info = self.api.get_system_info()
         self.assertIsInstance(info, dict)
-        self.assertIn("version", info)
-        self.assertIn("api_version", info)
-        self.assertEqual(info["version"], "1.0.1")
-        self.assertIn("isolation_engines", info)
+        self.assertTrue(info["success"])
+        self.assertIn("version", info["data"])
+        self.assertIn("api_version", info["data"])
+        self.assertEqual(info["data"]["version"], "1.5.0")
+        self.assertIn("isolation_engines", info["data"])
 
 
 class TestContextManager(unittest.TestCase):
@@ -171,7 +177,7 @@ class TestContextManager(unittest.TestCase):
         """测试上下文管理器"""
         with PTestAPI(work_path=self.test_dir) as api:
             self.assertIsNotNone(api)
-            self.assertTrue(api.is_initialized)
+            self.assertIsNotNone(api.workflow)
 
 
 class TestHelperFunction(unittest.TestCase):

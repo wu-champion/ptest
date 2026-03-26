@@ -1,142 +1,50 @@
 # 归档文档索引
 
-## 📚 文档说明
+`archived/` 保存不再作为当前版本权威说明的公开文档，用于历史参考和演进追溯。
 
-本目录包含 ptest 项目的旧版本文档和已废弃功能的文档。这些文档保留用于历史参考和向后兼容性支持。
+## 使用原则
 
-## 🗂️ 归档内容
+- 归档文档默认不再维护
+- 如果归档文档与当前实现冲突，以当前文档为准
+- 对外说明优先阅读 `docs/README.md` 中当前目录入口
 
-### 需求规格文档
+## 当前主要归档内容
 
-#### [需求规格说明书](./prd.md)
-- **状态**: 已归档 (2026-01-25)
-- **替代文档**: [实现计划](../development/implementation-plans/ENV-001_DETAILED_REQUIREMENTS.md)
-- **说明**: 原始需求文档，包含完整的功能需求描述
-- **适用性**: 历史参考，了解需求演进过程
+### 早期需求与产品资料
 
-### 架构设计文档
+- [prd.md](./prd.md)
+  - 项目早期需求文档
+  - 用于理解产品定义如何从“传统测试框架”演化到当前主线
 
-#### [数据库架构重构](./DATABASE_ARCHITECTURE_REFACTOR.md)
-- **状态**: 已归档 (2026-01-25)
-- **替代文档**: [数据库架构](../architecture/database-architecture.md)
-- **说明**: 数据库测试架构的早期重构设计
-- **适用性**: 了解数据库架构演进历史
+### 历史数据库架构资料
 
-#### [数据库分离架构](./DATABASE_SEPARATION_ARCHITECTURE_COMPLETE.md)
-- **状态**: 已归档 (2026-01-25)
-- **替代文档**: [数据库架构](../architecture/database-architecture.md)
-- **说明**: 数据库服务端/客户端分离架构设计
-- **适用性**: 架构设计历史参考
+- [DATABASE_ARCHITECTURE_REFACTOR.md](./DATABASE_ARCHITECTURE_REFACTOR.md)
+- [DATABASE_SEPARATION_ARCHITECTURE_COMPLETE.md](./DATABASE_SEPARATION_ARCHITECTURE_COMPLETE.md)
+- [DATABASE_SERVER_CLIENT_SEPARATION.md](./DATABASE_SERVER_CLIENT_SEPARATION.md)
+- [UNIVERSAL_DATABASE_CONNECTOR.md](./UNIVERSAL_DATABASE_CONNECTOR.md)
 
-#### [服务端客户端分离](./DATABASE_SERVER_CLIENT_SEPARATION.md)
-- **状态**: 已归档 (2026-01-25)
-- **替代文档**: [数据库架构](../architecture/database-architecture.md)
-- **说明**: 数据库服务端/客户端分离实现细节
-- **适用性**: 实现细节历史参考
+这些文档主要用于追溯数据库对象设计和历史拆分方案，不应直接作为当前 API 或 CLI 的权威说明。
 
-#### [通用数据库连接器](./UNIVERSAL_DATABASE_CONNECTOR.md)
-- **状态**: 已归档 (2026-01-25)
-- **替代文档**: [对象管理指南](../guides/object-management.md)
-- **说明**: 统一数据库连接器的设计和实现
-- **适用性**: 数据库连接器设计历史
+### 历史开发与目录资料
 
-### 开发文档
+- [AGENTS.md](./AGENTS.md)
+- [AGENTS_EN.md](./AGENTS_EN.md)
+- [TEST_DIRECTORY_RESTRUCTURE.md](./TEST_DIRECTORY_RESTRUCTURE.md)
+- [TEST_EXECUTION_README.md](./TEST_EXECUTION_README.md)
 
-#### [开发代理指南 (中文)](./AGENTS.md)
-- **状态**: 已归档 (2026-01-25)
-- **替代文档**: [开发指南](../development/development-guide.md)
-- **说明**: 智能编码代理使用指南（中文版）
-- **适用性**: 开发工具使用历史参考
+## 当前推荐入口
 
-#### [开发代理指南 (英文)](./AGENTS_EN.md)
-- **状态**: 已归档 (2026-01-25)
-- **替代文档**: [开发指南](../development/development-guide.md)
-- **说明**: 智能编码代理使用指南（英文版）
-- **适用性**: 开发工具使用历史参考
+如果你需要当前版本文档，请优先阅读：
 
-### 使用指南
+- [../README.md](../README.md)
+- [../user-guide/README.md](../user-guide/README.md)
+- [../api/README.md](../api/README.md)
+- [../architecture/README.md](../architecture/README.md)
+- [../development/README.md](../development/README.md)
+- [../guides/README.md](../guides/README.md)
 
-#### [测试目录重构](./TEST_DIRECTORY_RESTRUCTURE.md)
-- **状态**: 已归档 (2026-01-25)
-- **替代文档**: [环境管理指南](../guides/environment-management.md)
-- **说明**: 测试目录结构重构的设计和实现
-- **适用性**: 项目结构演进历史
+## 说明
 
-#### [测试执行引擎](./TEST_EXECUTION_README.md)
-- **状态**: 已归档 (2026-01-25)
-- **替代文档**: [测试用例编写指南](../guides/test-case-writing.md)
-- **说明**: 真实测试用例执行引擎的实现说明
-- **适用性**: 测试引擎演进历史
-
-## 🔄 文档演进历程
-
-### 2026-01-25: 大型重构
-- **重构原因**: 项目架构升级，实现环境隔离功能
-- **主要变更**:
-  - 新增环境隔离架构文档
-  - 重构用户指南和API文档结构
-  - 重新组织开发文档分类
-  - 旧文档迁移至归档目录
-
-### 2026-01-20: 隔离功能开发
-- **新增内容**:
-  - ENV-001需求规格书
-  - 环境隔离架构设计
-  - 实现计划文档
-- **影响**: 需要重新组织文档结构
-
-### 2026-01-15: 数据库架构完善
-- **新增内容**:
-  - 数据库分离架构文档
-  - 服务端/客户端分离设计
-  - 通用数据库连接器
-- **影响**: 架构文档数量增加
-
-## 📖 使用建议
-
-### 历史研究
-如果您需要了解项目的演进历史，可以按时间顺序查看：
-1. [需求规格说明书](./prd.md) - 了解原始需求
-2. [数据库架构重构](./DATABASE_ARCHITECTURE_REFACTOR.md) - 了解架构演进
-3. [测试目录重构](./TEST_DIRECTORY_RESTRUCTURE.md) - 了解结构变化
-
-### 功能参考
-如果需要查找特定功能的历史实现：
-- **数据库功能**: 查看 [数据库架构文档](#架构设计文档)
-- **测试执行**: 查看 [测试执行引擎](#使用指南)
-- **开发工具**: 查看 [开发代理指南](#开发文档)
-
-### 兼容性支持
-如果需要维护旧版本的兼容性：
-- 参考 [服务端客户端分离](./DATABASE_SERVER_CLIENT_SEPARATION.md) 了解旧API设计
-- 查看 [通用数据库连接器](./UNIVERSAL_DATABASE_CONNECTOR.md) 了解连接器演进
-
-## ⚠️ 注意事项
-
-1. **文档状态**: 归档文档不再维护，仅作历史参考
-2. **准确性**: 内容可能已过时，请以新文档为准
-3. **兼容性**: 部分实现细节可能已发生变化
-4. **支持**: 不对归档文档提供技术支持
-
-## 📞 获取帮助
-
-如果您在使用归档文档时遇到问题：
-
-1. **优先查看新文档**: 检查是否有对应的新版本文档
-2. **搜索Issue**: 在GitHub Issues中搜索相关问题
-3. **提问社区**: 在社区讨论中询问
-4. **联系维护者**: 如有紧急需求可联系项目维护者
-
-## 🔗 相关链接
-
-- [当前文档主页](../README.md)
-- [系统架构总览](../architecture/system-overview.md)
-- [开发指南](../development/development-guide.md)
-- [API 参考文档](../api/python-api.md)
-- [GitHub 仓库](https://github.com/your-org/ptest)
-
----
-
-**归档时间**: 2026-01-25  
-**归档版本**: ptest v1.0.0 → v1.0.1  
-**维护状态**: 仅维护不更新
+- `docs/plan/` 是内部文档区，不作为对外入口
+- 归档区的价值是保留历史，不是延续旧结论
+- 如需查历史决策，优先结合 `docs/archived/` 与内部 `docs/plan/history/` 理解

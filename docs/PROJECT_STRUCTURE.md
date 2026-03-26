@@ -61,39 +61,51 @@ ptest/
 │           └── manager.py
 │
 ├── docs/                         # 📚 文档目录
-│   ├── plan/                     # 📋 开发计划（不上传GitHub）
-│   │   ├── 01_VIRTUALENV_IMPLEMENTATION_PLAN.md
-│   │   ├── 02_DOCKER_IMPLEMENTATION_PLAN.md
-│   │   ├── 03_next_steps_plan.md
-│   │   ├── 04_production_readiness_plan.md
-│   │   └── PTEST-004_PHASE1_COMPLETION_REPORT.md
+│   ├── plan/                     # 📋 内部文档：当前主线、历史资料、会话、讨论稿
+│   │   ├── current/
+│   │   │   ├── requirements/
+│   │   │   ├── mvp/
+│   │   │   └── plans/
+│   │   ├── history/
+│   │   │   ├── requirements/
+│   │   │   ├── prds/
+│   │   │   ├── designs/
+│   │   │   ├── backlog/
+│   │   │   ├── plans/
+│   │   │   └── reports/
+│   │   ├── sessions/
+│   │   └── tmp_product_reboot/
 │   │
-│   ├── architecture/              # 🏗️ 架构文档
-│   │   ├── system-overview.md
-│   │   └── ISOLATION_ARCHITECTURE.md
-│   │
-│   ├── api/                      # 📖 API文档
-│   │   ├── README.md
-│   │   ├── python-api-guide.md
-│   │   └── api-examples.md
-│   │
-│   ├── guides/                   # 💡 使用指南
-│   │   ├── environment-management.md
-│   │   └── VIRTUALENV_USER_GUIDE.md
-│   │
-│   ├── user-guide/               # 👤 用户指南
+│   ├── user-guide/               # 👤 对外：用户文档
 │   │   ├── README.md
 │   │   └── basic-usage.md
 │   │
-│   ├── development/              # 🛠️ 开发文档
-│   │   ├── development-guide.md
-│   │   ├── PYTHON_API_IMPLEMENTATION.md
-│   │   ├── implementation-plans/
-│   │   ├── progress-reports/
-│   │   ├── implementation-reports/
-│   │   └── test-reports/
+│   ├── api/                      # 📖 对外：开发者 API 文档
+│   │   ├── README.md
+│   │   ├── python-api-guide.md
+│   │   ├── api-examples.md
+│   │   └── test-data-examples.md
 │   │
-│   ├── archived/                 # 🗃️ 归档文档
+│   ├── architecture/             # 🏗️ 对外：架构文档
+│   │   ├── README.md
+│   │   ├── system-overview.md
+│   │   └── ISOLATION_ARCHITECTURE.md
+│   │
+│   ├── development/              # 🛠️ 对外：开发流程与工程规范
+│   │   ├── README.md
+│   │   ├── development-guide.md
+│   │   ├── CODING_STANDARDS.md
+│   │   ├── CODE_QUALITY_GUIDE.md
+│   │   ├── DOCUMENTATION_GUIDE.md
+│   │   └── CI_CD_GUIDE.md
+│   │
+│   ├── guides/                   # 💡 对外：专题使用指南
+│   │   ├── README.md
+│   │   ├── environment-management.md
+│   │   ├── VIRTUALENV_USER_GUIDE.md
+│   │   └── assertion-guide.md
+│   │
+│   ├── archived/                 # 🗃️ 对外：历史参考文档
 │   │   └── ...
 │   │
 │   ├── README.md
@@ -175,13 +187,10 @@ ptest/
 
 所有项目相关文档，按类型分类。
 
-#### **plan/** - 开发计划（不上传GitHub）
-记录开发过程中的详细计划文档，包括：
-- 各阶段的实施计划
-- 完成报告
-- 进度跟踪
+#### **plan/** - 内部计划文档
+记录当前正式产品主线、历史规划资料、历史会话和内部讨论稿，仅供内部研发参考。
 
-**重要**: 此目录不纳入Git版本控制，仅供内部开发参考。
+**重要**: 此目录是内部文档区，不作为对外文档入口。
 
 #### **architecture/** - 架构文档
 系统设计和架构说明文档。
@@ -198,9 +207,9 @@ ptest/
 #### **development/** - 开发文档
 开发者相关文档，包括：
 - 开发指南
-- 实现计划
-- 进度报告
-- 测试报告
+- 工程规范
+- 质量规则
+- 文档规范
 
 #### **archived/** - 归档文档
 历史文档和已废弃功能的文档。
@@ -265,9 +274,9 @@ ptest/
 - 📚 API文档：`docs/api/`
 
 ### **维护者**
-- 📋 开发计划：`docs/plan/`
-- 📊 进度报告：`docs/development/progress-reports/`
-- 📝 实现报告：`docs/development/implementation-reports/`
+- 📋 当前主线：`docs/plan/current/`
+- 📚 历史资料：`docs/plan/history/`
+- 📝 会话记录：`docs/plan/sessions/`
 
 ---
 
@@ -304,7 +313,7 @@ ptest/
 - 完成后记录到实现报告
 
 ### **版本管理**
-- 使用语义化版本号（1.0.1）
+- 使用语义化版本号（例如 `1.5.0`）
 - 更新`pyproject.toml`中的版本号
 - 发布时更新`CHANGELOG.md`
 
@@ -312,13 +321,13 @@ ptest/
 
 ## 📊 项目状态
 
-- **版本**: 1.0.1
+- **版本**: 1.5.0（当前以 `pyproject.toml` 为准）
 - **Python**: 3.12+
 - **管理工具**: uv
 - **测试框架**: pytest
-- **完成度**: 约95%
+- **当前阶段**: 第一阶段 MVP 主线已完成，处于发布收口阶段
 
 ---
 
-**最后更新**: 2026-01-30
+**最后更新**: 2026-03-13
 **维护者**: cp

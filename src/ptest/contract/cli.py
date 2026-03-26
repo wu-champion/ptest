@@ -7,9 +7,12 @@ from ..utils import print_colored, get_colored_text
 from .manager import ContractManager
 
 
-def setup_contract_subparser(subparsers):
+def setup_contract_subparser(subparsers, parents=None):
+    parser_parents = parents or []
     setup_contract_subparser = subparsers.add_parser(
-        "contract", help=get_colored_text("Manage API contracts", 96)
+        "contract",
+        help=get_colored_text("Manage API contracts", 96),
+        parents=parser_parents,
     )
 
     contract_subparsers = setup_contract_subparser.add_subparsers(
@@ -17,22 +20,30 @@ def setup_contract_subparser(subparsers):
     )
 
     import_parser = contract_subparsers.add_parser(
-        "import", help="Import an API contract"
+        "import", help="Import an API contract", parents=parser_parents
     )
     import_parser.add_argument("source", help="Contract file path or URL")
     import_parser.add_argument("--name", "-n", help="Contract name (optional)")
 
-    contract_subparsers.add_parser("list", help="List all contracts")
+    contract_subparsers.add_parser(
+        "list", help="List all contracts", parents=parser_parents
+    )
 
-    show_parser = contract_subparsers.add_parser("show", help="Show contract details")
+    show_parser = contract_subparsers.add_parser(
+        "show", help="Show contract details", parents=parser_parents
+    )
     show_parser.add_argument("name", help="Contract name")
     show_parser.add_argument("--endpoint", "-e", help="Filter by endpoint path")
 
-    delete_parser = contract_subparsers.add_parser("delete", help="Delete a contract")
+    delete_parser = contract_subparsers.add_parser(
+        "delete", help="Delete a contract", parents=parser_parents
+    )
     delete_parser.add_argument("name", help="Contract name")
 
     generate_parser = contract_subparsers.add_parser(
-        "generate-cases", help="Generate test cases from contract"
+        "generate-cases",
+        help="Generate test cases from contract",
+        parents=parser_parents,
     )
     generate_parser.add_argument("name", help="Contract name")
     generate_parser.add_argument(
@@ -40,7 +51,7 @@ def setup_contract_subparser(subparsers):
     )
 
     validate_parser = contract_subparsers.add_parser(
-        "validate", help="Validate response against contract"
+        "validate", help="Validate response against contract", parents=parser_parents
     )
     validate_parser.add_argument("name", help="Contract name")
     validate_parser.add_argument(

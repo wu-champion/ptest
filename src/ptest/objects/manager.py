@@ -71,38 +71,39 @@ class ObjectManager:
 
         # 设置对象类型映射
         self.object_types = {
-            "database": {
-                "class": db_module.DBObject,
-                "client": db_enhanced_module.DatabaseClientObject,
-                "server": db_enhanced_module.DatabaseServerObject,
-            },
+            "database": db_module.DBObject,
             "service": service_module.ServiceObject,
             "web": web_module.WebObject,
             "database_server": db_enhanced_module.DatabaseServerObject,
             "database_client": db_enhanced_module.DatabaseClientObject,
-            "mongodb": "database_server",  # 偍为MongoDB支持
+        }
+        self.object_aliases = {
+            "db": "database",
+            "mysql": "database",
+            "postgresql": "database",
+            "postgres": "database",
+            "sqlite": "database",
+            "mongodb": "database_server",
+            "redis": "service",
+            "nginx": "web",
+            "apache": "web",
         }
 
     def get_object_type(self, name: str) -> Optional[str]:
         """获取对象类型"""
-        object_type_map = {
-            "mysql": "database",
-            "postgresql": "database",
-            "postgres": "database",
-            "web": "web",
-            "nginx": "web",
-            "apache": "web",
-            "redis": "service",
-            "mongodb": "database_server",
-        }
-        return object_type_map.get(name.lower())
+        return self.object_aliases.get(name.lower())
 
-    def create_object(self, obj_type: str, name: str):
+    def normalize_type(self, obj_type: str) -> str:
+        normalized = obj_type.lower()
+        return self.object_aliases.get(normalized, normalized)
+
+    def create_object(self, obj_type: str, name: str, params=None):
         """创建对象实例"""
-        if obj_type.lower() not in self.object_types:
+        normalized_type = self.normalize_type(obj_type)
+        if normalized_type not in self.object_types:
             raise ValueError(f"Unknown object type: {obj_type}")
 
-        obj_class = self.object_types[obj_type.lower()]
+        obj_class = self.object_types[normalized_type]
         obj = obj_class(name, self.env_manager)
         self.objects[name] = obj
         return obj
@@ -110,8 +111,14 @@ class ObjectManager:
     def install(self, obj_type: str, name: str, params=None) -> Any:
         """安装对象"""
         try:
-            obj = self.create_object(obj_type, name)
+            obj = self.create_object(obj_type, name, params)
             result = obj.install(params)
+            if isinstance(result, str):
+                if result.startswith("✓"):
+                    self.logger.info(f"Successfully installed {name}")
+                    return result
+                self.logger.error(f"Failed to install {name}: {result}")
+                return result
             if result:
                 self.logger.info(f"Successfully installed {name}")
                 return f"✓ Installed {name}"
@@ -177,6 +184,16 @@ class ObjectManager:
     def get_object(self, name: str):
         """获取对象"""
         return self.objects.get(name)
+
+    def status(self, name: str):
+        """获取对象状态"""
+        obj = self.objects.get(name)
+        if obj is None:
+            return f"✗ Object '{name}' does not exist"
+        if hasattr(obj, "get_status"):
+            return obj.get_status()
+        status = getattr(obj, "status", "unknown")
+        return {"name": name, "status": status}
 
     def delete_object(self, name: str):
         """删除对象"""

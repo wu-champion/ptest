@@ -29,17 +29,22 @@ logger = get_logger("mock.cli")
 _mock_servers: dict[str, MockServer] = {}
 
 
-def setup_mock_subparser(subparsers):
+def setup_mock_subparser(subparsers, parents=None):
     """设置 mock 子命令 / Setup mock subcommand"""
+    parser_parents = parents or []
     mock_parser = subparsers.add_parser(
-        "mock", help=get_colored_text("Mock server management", 96)
+        "mock",
+        help=get_colored_text("Mock server management", 96),
+        parents=parser_parents,
     )
     mock_subparsers = mock_parser.add_subparsers(
         dest="mock_action", help="Mock actions"
     )
 
     # start 子命令
-    start_parser = mock_subparsers.add_parser("start", help="Start mock server")
+    start_parser = mock_subparsers.add_parser(
+        "start", help="Start mock server", parents=parser_parents
+    )
     start_parser.add_argument("name", help="Server name")
     start_parser.add_argument("--config", help="Configuration file path")
     start_parser.add_argument("--port", type=int, default=8080, help="Server port")
@@ -48,25 +53,35 @@ def setup_mock_subparser(subparsers):
     )
 
     # stop 子命令
-    stop_parser = mock_subparsers.add_parser("stop", help="Stop mock server")
+    stop_parser = mock_subparsers.add_parser(
+        "stop", help="Stop mock server", parents=parser_parents
+    )
     stop_parser.add_argument("name", help="Server name")
 
     # status 子命令
-    status_parser = mock_subparsers.add_parser("status", help="Check server status")
+    status_parser = mock_subparsers.add_parser(
+        "status", help="Check server status", parents=parser_parents
+    )
     status_parser.add_argument("name", help="Server name")
 
     # logs 子命令
-    logs_parser = mock_subparsers.add_parser("logs", help="View request logs")
+    logs_parser = mock_subparsers.add_parser(
+        "logs", help="View request logs", parents=parser_parents
+    )
     logs_parser.add_argument("name", help="Server name")
     logs_parser.add_argument(
         "--limit", type=int, default=10, help="Number of logs to show"
     )
 
     # list 子命令
-    mock_subparsers.add_parser("list", help="List all mock servers")
+    mock_subparsers.add_parser(
+        "list", help="List all mock servers", parents=parser_parents
+    )
 
     # add-route 子命令
-    route_parser = mock_subparsers.add_parser("add-route", help="Add mock route")
+    route_parser = mock_subparsers.add_parser(
+        "add-route", help="Add mock route", parents=parser_parents
+    )
     route_parser.add_argument("name", help="Server name")
     route_parser.add_argument("path", help="Route path")
     route_parser.add_argument("--method", default="GET", help="HTTP method")

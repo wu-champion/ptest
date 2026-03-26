@@ -1,480 +1,241 @@
-# ptest Python API 参考文档
+# ptest Python API 指南
 
-## 📋 API 概述
+本文档描述当前 `1.5.0` 主线下的 Python API 使用方式。
 
-ptest 提供了完整的 Python API，支持编程方式管理测试环境、对象、用例和报告生成。所有功能都通过面向对象的接口提供，易于集成到现有的开发流程中。
+当前推荐入口是 `PTestAPI`，它直接基于统一工作流服务工作，而不是旧的 `TestFramework` 风格接口。
 
-## 🔧 核心类
-
-### TestFramework
-
-框架的主要入口类，提供全局管理功能。
+## 核心入口
 
 ```python
-from ptest import TestFramework, create_test_framework
+from pathlib import Path
 
-# 方法1: 使用构造函数
-framework = TestFramework()
+from ptest.api import PTestAPI
 
-# 方法2: 使用便捷函数
-framework = create_test_framework()
-
-# 创建测试环境
-env = framework.create_environment("/path/to/test")
-
-# 添加被测对象
-mysql = env.add_object("mysql", "my_db", version="8.0")
-
-# 添加测试用例
-case = env.add_case("api_test", {
-    "type": "api",
-    "endpoint": "/api/users",
-    "method": "GET",
-    "assertions": [{"status_code": 200}]
-})
-
-# 运行测试
-result = case.run()
-print(f"测试结果: {result.status}, 耗时: {result.duration}s")
-
-# 生成报告
-report_path = framework.generate_report("html")
-print(f"报告已生成: {report_path}")
+api = PTestAPI(work_path=Path("./demo-workspace"))
 ```
 
-### 上下文管理器使用
+`PTestAPI` 当前负责：
+
+- 初始化和销毁工作区
+- 安装和查询对象、工具
+- 创建和执行测试用例
+- 读取执行记录和 artifact
+- 读取问题记录、问题资产和恢复动作
+- 生成报告
+- 管理数据模板、契约和 mock 资产
+
+## 统一返回结构
+
+API 当前统一返回结构化结果：
 
 ```python
-from ptest import TestFramework
+result = api.get_environment_status()
 
-# 使用上下文管理器自动清理资源
-with TestFramework() as framework:
-    env = framework.create_environment("./test_env")
-    
-    # 对象也支持上下文管理器
-    with env.add_object("mysql", "my_db", version="8.0") as mysql:
-        # 对象会自动启动
-        case = env.add_case("db_test", {
-            "type": "database",
-            "db_object": "my_db",
-            "query": "SELECT COUNT(*) as count FROM users",
-            "expected_result": {"count": 10}
-        })
-        
-        result = case.run()
-        print(f"数据库测试: {result.status}")
-        
-    # 对象会自动停止
+print(result["success"])
+print(result["status"])
+print(result["message"])
+print(result["data"])
+print(result.get("error"))
+print(result.get("error_code"))
 ```
 
-## 📋 详细功能说明
+建议调用方优先依赖这些字段：
 
-### 1. 框架管理 (TestFramework)
+- `success`
+- `status`
+- `message`
+- `data`
+- `error`
+- `error_code`
+
+## 环境管理
+
+### 初始化工作区
 
 ```python
-from ptest import TestFramework
-
-# 创建框架
-framework = TestFramework(config={
-    "timeout": 300,
-    "log_level": "INFO"
-})
-
-# 创建多个环境
-dev_env = framework.create_environment("./dev_test", isolation="basic")
-prod_env = framework.create_environment("./prod_test", isolation="basic")
-
-# 获取环境
-env = framework.get_environment("dev_test")  # 按名称
-env = framework.get_environment("./dev_test")  # 按路径
-
-# 框架状态
-status = framework.get_status()
-print(status)
-
-# 列出所有环境
-environments = framework.list_environments()
-for env_info in environments:
-    print(f"环境: {env_info['name']} - {env_info['path']}")
-
-# 清理资源
-framework.cleanup()
+init_result = api.init_environment()
+print(init_result["data"]["root_path"])
 ```
 
-### 2. 环境管理 (TestEnvironment)
+### 获取环境状态
 
 ```python
-# 创建环境
-env = framework.create_environment("./test_env")
-
-# 环境状态
-status = env.get_status()
-print(f"环境状态: {status}")
-
-# 添加对象
-mysql_obj = env.add_object("mysql", "my_mysql", version="8.0")
-postgres_obj = env.add_object("postgresql", "my_pg", version="14")
-
-# 添加测试用例
-api_case = env.add_case("api_users", {
-    "type": "api",
-    "url": "https://jsonplaceholder.typicode.com/users",
-    "method": "GET",
-    "expected_status": 200
-})
-
-db_case = env.add_case("db_check", {
-    "type": "database",
-    "db_object": "my_mysql",
-    "query": "SELECT 1 as test",
-    "expected_result": {"test": 1}
-})
-
-# 运行测试
-result1 = env.run_case("api_users")
-result2 = env.run_case("db_check")
-
-# 运行所有测试
-all_results = env.run_all_cases()
-for result in all_results:
-    print(f"{result.case_id}: {result.status}")
-
-# 生成报告
-html_report = env.generate_report("html")
-json_report = env.generate_report("json")
+status = api.get_environment_status()
+print(status["data"]["status"])
 ```
 
-### 3. 对象管理 (ManagedObject)
+### 销毁工作区
 
 ```python
-# 创建对象
-mysql_obj = env.add_object("mysql", "my_db", version="8.0")
-
-# 对象生命周期管理
-success = mysql_obj.start()      # 启动
-success = mysql_obj.stop()       # 停止
-success = mysql_obj.restart()    # 重启
-success = mysql_obj.uninstall()  # 卸载
-
-# 获取对象状态
-status = mysql_obj.get_status()
-print(f"对象状态: {status}")
-
-# 使用上下文管理器
-with env.add_object("mysql", "temp_db") as mysql:
-    # 对象已启动
-    case = env.add_case("temp_test", {
-        "type": "database",
-        "db_object": "temp_db",
-        "query": "SELECT VERSION()",
-        "expected_result": {"version": "8.0"}
-    })
-    result = case.run()
-    
-# 对象已自动停止
+destroy_result = api.destroy_environment()
+print(destroy_result["success"])
 ```
 
-### 4. 测试用例管理 (TestCase)
+## 对象与工具
+
+### 安装对象
 
 ```python
-# 创建测试用例
-case = env.add_case("api_test", {
-    "type": "api",
-    "url": "https://api.example.com/users",
-    "method": "GET",
-    "headers": {"Authorization": "Bearer token"},
-    "expected_status": 200,
-    "expected_response": {"count": 10}
-})
+result = api.create_object(
+    "db",
+    "demo_db",
+    driver="sqlite",
+    database="./demo-workspace/demo.db",
+)
 
-# 运行测试
-result = case.run()
-print(f"测试结果: {result.to_dict()}")
-
-# 获取用例信息
-case_data = case.get_data()
-case_status = case.get_status()
-
-# 删除用例
-success = case.remove()
+print(result["success"])
 ```
 
-### 5. 测试结果 (TestResult)
+当前对象操作里，启动、停止、重启等运行态动作由工作流服务承担：
 
 ```python
-# 运行测试获取结果
-result = case.run()
-
-# 检查测试状态
-if result.is_passed():
-    print("✓ 测试通过")
-elif result.is_failed():
-    print(f"✗ 测试失败: {result.get_error()}")
-
-# 获取详细信息
-print(f"测试用例ID: {result.case_id}")
-print(f"测试状态: {result.status}")
-print(f"执行时间: {result.get_duration()}s")
-print(f"开始时间: {result.start_time}")
-print(f"结束时间: {result.end_time}")
-
-# 转换为字典
-result_dict = result.to_dict()
+api.workflow.start_object("demo_db")
+status = api.workflow.get_object_status("demo_db")
+print(status["object"]["status"])
 ```
 
-## 🔧 高级用法
-
-### 数据库测试
+### 工具管理
 
 ```python
-# 添加数据库对象
-mysql_obj = env.add_object("mysql", "my_mysql", version="8.0")
-mysql_obj.start()
+tool = api.install_tool("demo_tool", version="1.0")
+print(tool["success"])
 
-# 数据库测试用例
-db_test = env.add_case("mysql_connection", {
-    "type": "database",
-    "db_object": "my_mysql",
-    "query": "SELECT COUNT(*) as user_count FROM users",
-    "expected_result": {"user_count": 100}
-})
-
-# 运行数据库测试
-result = db_test.run()
+tools = api.list_tools()
+print(tools["data"])
 ```
 
-### API 测试
+## 用例管理
+
+### 创建用例
 
 ```python
-# API 测试用例
-api_test = env.add_case("api_user_list", {
-    "type": "api",
-    "method": "GET",
-    "url": "https://jsonplaceholder.typicode.com/users",
-    "headers": {"Content-Type": "application/json"},
-    "expected_status": 200,
-    "expected_response": {"count": 10},  # 可选的响应验证
-    "timeout": 30
-})
+result = api.create_test_case(
+    test_type="database",
+    name="sqlite_smoke",
+    content={
+        "db_type": "sqlite",
+        "database": "./demo-workspace/demo.db",
+        "query": "SELECT 1 as value",
+        "expected_result": [{"value": 1}],
+    },
+    tags=["smoke"],
+)
 
-result = api_test.run()
+case_id = result["data"]["case_id"]
 ```
 
-### Web 测试
+### 列出和执行用例
 
 ```python
-# Web 测试用例
-web_test = env.add_case("web_homepage", {
-    "type": "web",
-    "url": "https://example.com",
-    "expected_title": "Example Domain",
-    "expected_content": "This domain is for use in illustrative examples",
-    "timeout": 10
-})
+cases = api.list_test_cases()
+print(cases["data"])
 
-result = web_test.run()
+run_result = api.run_test_case(case_id)
+print(run_result["status"])
 ```
 
-### 服务测试
+## 执行记录与 artifact
+
+### 执行记录
 
 ```python
-# 服务测试用例
-service_test = env.add_case("web_service_check", {
-    "type": "service",
-    "host": "localhost",
-    "port": 8080,
-    "timeout": 5
-})
-
-result = service_test.run()
+records = api.list_execution_records()
+print(records["data"])
 ```
 
-## 🎯 实际应用示例
-
-### 完整的Web应用测试流程
+### 单条记录
 
 ```python
-from ptest import TestFramework
-
-def test_web_application():
-    """完整的Web应用测试示例"""
-    
-    with TestFramework() as framework:
-        # 创建测试环境
-        env = framework.create_environment("./web_app_test")
-        
-        # 添加数据库
-        with env.add_object("mysql", "app_db", version="8.0") as db:
-            # 添加Web应用
-            with env.add_object("web", "app_web") as web_app:
-                
-                # 数据库准备测试
-                db_setup = env.add_case("db_setup", {
-                    "type": "database",
-                    "db_object": "app_db",
-                    "query": """
-                    CREATE TABLE IF NOT EXISTS users (
-                        id INT PRIMARY KEY AUTO_INCREMENT,
-                        name VARCHAR(100),
-                        email VARCHAR(100)
-                    )
-                    """
-                })
-                
-                # API接口测试
-                api_test = env.add_case("api_users", {
-                    "type": "api",
-                    "method": "GET",
-                    "url": "http://localhost:8080/api/users",
-                    "expected_status": 200
-                })
-                
-                # Web页面测试
-                web_test = env.add_case("web_homepage", {
-                    "type": "web",
-                    "url": "http://localhost:8080/",
-                    "expected_title": "My App"
-                })
-                
-                # 服务连通性测试
-                service_test = env.add_case("service_check", {
-                    "type": "service",
-                    "host": "localhost",
-                    "port": 8080
-                })
-                
-                # 运行所有测试
-                results = env.run_all_cases()
-                
-                # 分析结果
-                passed = sum(1 for r in results if r.is_passed())
-                failed = sum(1 for r in results if r.is_failed())
-                
-                print(f"测试完成: {passed} 通过, {failed} 失败")
-                
-                # 生成报告
-                report_path = framework.generate_report("html")
-                print(f"详细报告: {report_path}")
-                
-                return all(r.is_passed() for r in results)
-
-# 运行测试
-if __name__ == "__main__":
-    success = test_web_application()
-    print(f"测试结果: {'全部通过' if success else '存在失败'}")
+execution_id = records["data"][0]["execution_id"]
+detail = api.get_execution_record(execution_id)
+print(detail["data"])
 ```
 
-### 数据驱动的批量测试
+### artifact 索引
 
 ```python
-from ptest import TestFramework
-import json
-
-def data_driven_test():
-    """数据驱动的批量测试示例"""
-    
-    # 测试数据
-    test_cases = [
-        {
-            "id": "api_get_users",
-            "type": "api",
-            "method": "GET",
-            "url": "https://jsonplaceholder.typicode.com/users",
-            "expected_status": 200
-        },
-        {
-            "id": "api_get_posts", 
-            "type": "api",
-            "method": "GET",
-            "url": "https://jsonplaceholder.typicode.com/posts",
-            "expected_status": 200
-        },
-        {
-            "id": "api_create_user",
-            "type": "api",
-            "method": "POST",
-            "url": "https://jsonplaceholder.typicode.com/users",
-            "data": {"name": "Test User", "email": "test@example.com"},
-            "expected_status": 201
-        }
-    ]
-    
-    with TestFramework() as framework:
-        env = framework.create_environment("./api_tests")
-        
-        # 批量添加测试用例
-        for test_case in test_cases:
-            case_id = test_case.pop("id")
-            env.add_case(case_id, test_case)
-        
-        # 运行所有测试
-        results = env.run_all_cases()
-        
-        # 保存测试结果
-        results_data = [r.to_dict() for r in results]
-        with open("./test_results.json", "w") as f:
-            json.dump(results_data, f, indent=2, default=str)
-        
-        return results
-
-if __name__ == "__main__":
-    results = data_driven_test()
-    for result in results:
-        print(f"{result.case_id}: {result.status}")
+artifacts = api.get_execution_artifacts(execution_id)
+print(artifacts["data"]["directory"])
+print(artifacts["data"]["indexes"]["artifact_index"])
 ```
 
-## 🔍 调试和故障排除
-
-### 启用详细日志
+如需直接读取 artifact 内容：
 
 ```python
-import logging
-
-# 设置日志级别
-logging.basicConfig(level=logging.DEBUG)
-
-framework = TestFramework(config={
-    "log_level": "DEBUG",
-    "timeout": 60
-})
+artifacts = api.get_execution_artifacts(
+    execution_id,
+    include_contents=True,
+)
+print(artifacts["data"]["contents"]["result/execution.json"])
 ```
 
-### 错误处理
+## 问题记录与恢复
+
+当一次执行失败时，当前主线会自动生成问题记录。
 
 ```python
-from ptest import TestFramework
+problems = api.list_problem_records(case_id=case_id)
+print(problems["data"])
 
-try:
-    with TestFramework() as framework:
-        env = framework.create_environment("./test")
-        
-        # 尝试添加不存在的对象类型
-        obj = env.add_object("invalid_type", "test")
-        
-except ValueError as e:
-    print(f"参数错误: {e}")
-except Exception as e:
-    print(f"执行错误: {e}")
+problem_id = problems["data"][0]["problem_id"]
+
+detail = api.get_problem_record(problem_id)
+assets = api.get_problem_assets(problem_id)
+recovery = api.recover_problem(problem_id)
+
+print(detail["data"]["problem_type"])
+print(assets["data"]["preservation_status"])
+print(recovery["data"]["mode"])
 ```
 
-### 检查对象状态
+如果问题类型支持最小重放：
 
 ```python
-# 检查对象状态
-obj = env.add_object("mysql", "test_db")
-status = obj.get_status()
-
-if status["status"] == "running":
-    print("对象正在运行")
-elif status["installed"]:
-    print("对象已安装但未运行")
-else:
-    print("对象未安装")
+replay = api.replay_problem(problem_id)
+print(replay["data"])
+print(replay["recovery_action"])
 ```
 
-## 📚 更多资源
+## 报告
 
-- [完整API文档](../api/README.md)
-- [架构设计文档](../architecture/)
-- [开发指南](../development/AGENTS.md)
-- [测试用例示例](../../examples/test_cases.py)
+```python
+report = api.generate_report(format_type="html")
+print(report["data"]["report_path"])
+```
+
+## 数据模板
+
+### 保存模板
+
+```python
+api.save_data_template(
+    "user_template",
+    {
+        "username": "{{username}}",
+        "email": "{{email}}",
+    },
+)
+```
+
+### 生成数据
+
+```python
+generated = api.generate_data_from_template("user_template", count=2)
+print(generated["data"]["results"])
+```
+
+## 契约与 mock
+
+```python
+contracts = api.list_contracts()
+print(contracts["data"])
+
+mocks = api.list_mock_servers()
+print(mocks["data"])
+```
+
+## 说明
+
+- 当前对外 Python API 以 `PTestAPI` 为主
+- 如果你需要看简短可运行示例，优先阅读 [api-examples.md](api-examples.md)
+- 如果你需要理解能力边界，请同时参考 [../architecture/system-overview.md](../architecture/system-overview.md)

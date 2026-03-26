@@ -1,4 +1,4 @@
-name: Nightly - 真实 Docker 测试
+name: 每日定时 - 真实 Docker 测试
 
 on:
   schedule:
