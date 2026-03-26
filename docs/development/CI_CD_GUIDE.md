@@ -53,14 +53,31 @@
 - 使用 Trusted Publishing
 - 自动发布到 PyPI
 
-#### 2.3 发布到 Test PyPI (publish-test-pypi)
-- 手动触发时发布到测试环境
-
-#### 2.4 创建 GitHub Release (create-release)
+#### 2.3 创建 GitHub Release (create-release)
 - 自动生成 Release 说明
 - 上传构建产物
 
-### 3. Docker 工作流 (`docker.yml`)
+### 3. main 自动发布工作流 (`release-on-main.yml`)
+
+**触发条件**:
+- 推送到 `main` 分支
+- 且本次变更包含 `pyproject.toml` 或 `CHANGELOG.md`
+
+**任务**:
+
+#### 3.1 检查是否需要自动发布 (prepare-release)
+- 读取 `pyproject.toml` 中的版本号
+- 检查对应 `v<version>` 标签是否已存在
+- 如标签已存在则跳过自动发布
+
+#### 3.2 自动执行 CI、构建与发布
+- 复用 `ci.yml` 完成测试与质量检查
+- 构建发布包并验证产物
+- 发布到正式 PyPI
+- 自动创建版本标签
+- 自动创建 GitHub Release
+
+### 4. Docker 工作流 (`docker.yml`)
 
 **触发条件**:
 - 推送到 `main` 分支
@@ -104,13 +121,14 @@ uv build
 
 ### 自动发布
 
-1. 创建并推送 Tag:
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-2. GitHub 会自动创建 Release 并触发发布流程
+1. 在功能分支中更新版本号与 `CHANGELOG.md`
+2. 通过 PR 合并到 `main`
+3. `release-on-main.yml` 会自动：
+   - 读取版本号
+   - 检查标签是否存在
+   - 执行 CI
+   - 发布到 PyPI
+   - 创建标签和 GitHub Release
 
 ## 环境配置
 
@@ -123,14 +141,7 @@ git push origin v1.0.0
 2. 在 PyPI 项目中添加 Trusted Publisher:
    - 发布者: GitHub Actions
    - 仓库: `<username>/ptest`
-   - 工作流: `cd.yml`
-
-### Test PyPI 配置
-
-1. 在 GitHub 仓库设置中配置环境:
-   - 环境名称: `testpypi`
-
-2. 在 Test PyPI 项目中添加 Trusted Publisher
+   - 工作流: `cd.yml` 或 `release-on-main.yml`
 
 ## 状态徽章
 
