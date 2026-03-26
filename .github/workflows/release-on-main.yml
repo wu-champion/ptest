@@ -1,0 +1,184 @@
+name: 自动发布 - main 合并触发
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - pyproject.toml
+      - CHANGELOG.md
+
+jobs:
+  prepare-release:
+    name: 检查是否需要自动发布
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      should_release: ${{ steps.check.outputs.should_release }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 读取版本号
+        id: version
+        run: |
+          VERSION=$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          print(data["project"]["version"])
+          PY
+          )
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: 检查远端标签是否已存在
+        id: check
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "发现已存在标签 $TAG，本次跳过自动发布。"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "未发现标签 $TAG，将继续自动发布。"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  ci-check:
+    name: CI 检查
+    if: needs.prepare-release.outputs.should_release == 'true'
+    needs: [prepare-release]
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: 构建发布包
+    if: needs.prepare-release.outputs.should_release == 'true'
+    needs: [prepare-release, ci-check]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 同步依赖
+        run: uv sync
+
+      - name: 清理旧构建产物
+        run: rm -rf dist/ build/ *.egg-info
+
+      - name: 构建包
+        run: uv build
+
+      - name: 验证构建产物
+        run: |
+          ls -la dist/
+          uv run twine check dist/*
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+          retention-days: 5
+
+  publish-pypi:
+    name: 发布到 PyPI
+    if: needs.prepare-release.outputs.should_release == 'true'
+    needs: [prepare-release, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/ptestx/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: 发布到 PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+
+  create-tag:
+    name: 创建版本标签
+    if: needs.prepare-release.outputs.should_release == 'true'
+    needs: [prepare-release, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 配置 Git 用户
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: 创建并推送标签
+        run: |
+          TAG="${{ needs.prepare-release.outputs.tag }}"
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+
+  create-release:
+    name: 创建 GitHub Release
+    if: needs.prepare-release.outputs.should_release == 'true'
+    needs: [prepare-release, publish-pypi, create-tag]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          name: Release ${{ needs.prepare-release.outputs.tag }}
+          body: |
+            ## ptest ${{ needs.prepare-release.outputs.tag }}
+
+            本次版本由 `main` 分支合并后自动发布。
+
+            安装命令：
+            ```bash
+            pip install ptestx==${{ needs.prepare-release.outputs.version }}
+            ```
+          files: dist/*
+          draft: false
+          prerelease: false
