@@ -159,26 +159,47 @@ jobs:
       contents: write
 
     steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
       - name: 下载构建产物
         uses: actions/download-artifact@v4
         with:
           name: release-dists
           path: dist/
 
+      - name: 准备 Release Notes
+        id: release_notes
+        run: |
+          TAG="${{ needs.prepare-release.outputs.tag }}"
+          VERSION="${{ needs.prepare-release.outputs.version }}"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+
+          if [ -f "$NOTES_FILE" ]; then
+            echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+            echo "使用仓库中的 release notes: $NOTES_FILE"
+          else
+            FALLBACK_FILE="$RUNNER_TEMP/release-notes-${VERSION}.md"
+            cat > "$FALLBACK_FILE" <<EOF
+          ## ptest ${TAG}
+
+          本次版本由 \`main\` 分支合并后自动发布。
+
+          安装命令：
+          \`\`\`bash
+          pip install ptestx==${VERSION}
+          \`\`\`
+          EOF
+            echo "path=$FALLBACK_FILE" >> "$GITHUB_OUTPUT"
+            echo "未找到版本专用 release notes，已生成默认说明。"
+          fi
+
       - name: 创建 Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.prepare-release.outputs.tag }}
           name: Release ${{ needs.prepare-release.outputs.tag }}
-          body: |
-            ## ptest ${{ needs.prepare-release.outputs.tag }}
-
-            本次版本由 `main` 分支合并后自动发布。
-
-            安装命令：
-            ```bash
-            pip install ptestx==${{ needs.prepare-release.outputs.version }}
-            ```
+          body_path: ${{ steps.release_notes.outputs.path }}
           files: dist/*
           draft: false
           prerelease: false
