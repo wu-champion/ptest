@@ -47,6 +47,63 @@ class ManagedObjectRecord:
 
 
 @dataclass
+class InstallationSourceAsset:
+    product: str
+    version: str
+    source_type: str
+    path: str
+    checksum_type: str = ""
+    checksum_value: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "InstallationSourceAsset":
+        return cls(**data)
+
+
+@dataclass
+class DependencyAsset:
+    name: str
+    path: str
+    asset_type: str = "library"
+    required: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "DependencyAsset":
+        return cls(**data)
+
+
+@dataclass
+class MySQLLifecycleScenarioConfig:
+    scenario_name: str
+    product: str
+    version: str
+    workspace_path: str
+    instance_name: str
+    port: int
+    runtime_backend: str = "host"
+    directories: dict[str, str] = field(default_factory=dict)
+    database_name: str = "ptest_mysql"
+    table_name: str = "crud_items"
+    boundary_checks: dict[str, bool] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MySQLLifecycleScenarioConfig":
+        return cls(**data)
+
+
+@dataclass
 class ToolRecord:
     name: str
     status: str = "created"

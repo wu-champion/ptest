@@ -1,149 +1,190 @@
-# ptest - 综合测试框架
+# ptest
 
-> **注意**: v1.2+ 包名已改为 `ptestx`，安装命令: `pip install ptestx`
+`ptest` 想解决的，不只是“把测试跑起来”。
 
-ptest 是一个全面的测试框架，用于管理测试环境、测试对象、测试用例、测试套件和测试数据。
+它更想解决测试工程师在真实工作里反复遇到、却很少被一个工具完整接住的那些事情：
 
-## 📚 完整文档
+- 一个服务终于装起来了，但环境怎么收口、怎么清理，没人管
+- 问题测出来了，可现场没留下来，下次想复现只能从头再配
+- 被测对象、测试数据、执行记录、日志、报告都散在不同脚本和目录里
+- 同一个问题修复前后要反复验证，却很难回到接近当时的状态
 
-完整的文档请访问 [docs/](./docs/) 目录：
+很多时候，痛点不在于“写一条 case”，而在于：
 
-- **[用户指南](./docs/user-guide/README.md)** - 快速开始和使用说明
-- **[架构文档](./docs/architecture/)** - 系统设计和架构说明  
-- **[使用指南](./docs/guides/)** - 详细的使用指南
-- **[开发文档](./docs/development/)** - 开发规范和贡献指南
-- **[API文档](./docs/api/)** - 接口和数据格式说明
+**怎么把一个真实产品准备好、跑起来、测下去、留住现场、再干净地收回来。**
 
-## 🚀 快速开始
+这就是 `ptest` 当前在做的事情。
 
-### 安装
+## 它现在能做什么
+
+`ptest` 当前已经建立起一条比较完整的测试主线：
+
+- 初始化受管工作区
+- 安装并管理被测对象
+- 绑定测试用例并执行
+- 生成执行记录、报告和问题记录
+- 在失败时尽量保留现场，并提供恢复入口
+- 在结束后对对象和环境做清理收口
+
+它不是只想做一个“测试命令执行器”，而是想成为一个**测试生命周期框架**。
+
+## 先说清楚一个名字问题
+
+你在下面会频繁看到两个名字同时出现：
+
+- 项目名：`ptest`
+- PyPI 包名：`ptestx`
+
+这不是文档写错了，而是发布时必须这样处理：
+
+- 仓库和产品名称仍然是 `ptest`
+- 但 PyPI 上的 `ptest` 名称已存在
+- 所以发布包名使用的是 `ptestx`
+- 安装完成后，命令行入口仍然是：
+  - `ptest`
+
+也就是说，第一次使用时请这样理解：
+
 ```bash
 pip install ptestx
+ptest --version
 ```
 
-### 快速开始示例
+下面案例里出现的大量 `ptest ...` 命令，都是安装完成后的正常用法。
+
+## 一个真实案例
+
+为了避免只停留在抽象描述层面，我们提供了一个可重复执行的真实案例：
+
+**MySQL 全生命周期实践**
+
+它会在受管工作区里完成：
+
+`install -> start -> use -> stop -> uninstall`
+
+这条链路不只是验证 MySQL 能不能用，也在验证 `ptest` 自己是否真的具备：
+
+- 受管目录隔离
+- 对象生命周期管理
+- 失败现场沉淀
+- 停止与卸载后的清理能力
+
+当前这个案例基于：
+
+- `MySQL Community Server 8.4.8 LTS`
+- 本地固定安装包资产
+- 受管工作区
+- `host` runtime backend
+
+也就是说，`ptest` 会管理目录、配置、状态、记录和清理边界；  
+真实 `mysqld` 进程运行在宿主执行环境能力之上。
+
+## 为什么这个案例重要
+
+很多工具能演示“连上一个数据库，跑一条 SQL”。  
+但测试工程师真正需要的，往往是下面这整件事：
+
+1. 把被测产品准备起来
+2. 把依赖带齐
+3. 跑一条真实测试链路
+4. 出问题时把上下文留下来
+5. 结束后别把机器和环境弄脏
+
+MySQL 主案例的价值就在这里：
+
+**它不是一个漂亮的命令示例，而是一条真实工作流。**
+
+## 快速看一眼它怎么运行
+
+如果你已经通过 `pip install ptestx` 安装了 `ptest`，可以直接使用 `ptest` 命令。
+
 ```bash
-# 查看快速开始示例
-ls examples/
+ptest init --path ~/ptest/mysql-demo
+cd ~/ptest/mysql-demo
 
-# 运行基础 API 测试示例
-cd examples/01_basic_api_test
-uv run pytest ...
+ptest obj install mysql mysql_demo \
+  --package-path ~/.ptest/assets/mysql/8.4.8/mysql-server_8.4.8-1ubuntu24.04_amd64.deb-bundle.tar \
+  --dependency-asset ~/.ptest/assets/mysql/8.4.8/deps/libaio1t64_xxx_amd64.deb \
+  --dependency-asset ~/.ptest/assets/mysql/8.4.8/deps/libnuma1_xxx_amd64.deb \
+  --port 13319
+
+ptest obj start mysql_demo
+ptest case run mysql_crud_case
 ```
 
-### 初始化测试环境
+上面这组命令故意写成“先进入工作区，再逐步操作”的形式。  
+因为对测试工程师来说，更常见的不是“一条命令从头跑到尾”，而是：
+
+- 先把对象装起来
+- 启动对象
+- 分几次添加和执行不同用例
+- 过程中反复看状态、看问题记录、看报告
+- 最后再决定什么时候停止和卸载
+
+如果你是在源码仓库里开发或验证，使用 `uv run ptest ...` 会更稳，因为它会明确使用当前项目环境。
+
+这组命令会把你带进一个真实场景：
+
+- MySQL 安装
+- MySQL 启动
+- 后续继续做 CRUD 测试
+- 再根据需要查看记录、停服务、卸载对象
+
+如果你只想先快速理解这条链路，直接看这里：
+
+- [MySQL 全生命周期实践](./docs/user-guide/mysql-full-lifecycle.md)
+
+如果你更像一个真实测试工程师那样，一步一步创建环境、安装对象、跑 CRUD、查看记录，再手动停止和卸载对象，也建议直接从这篇文档开始。里面已经按分步操作方式重写了。
+
+## 当前边界
+
+为了避免说得太满，这里也把当前边界说清楚。
+
+- `ptest` 当前已经能很好地管理**工作区隔离**和**对象生命周期**
+- 对于 SQLite 这类轻量对象，这已经足够
+- 对于 MySQL 这类真实服务对象，当前主案例采用的是 `host` runtime backend
+- 这意味着执行环境需要允许：
+  - 真实进程启动
+  - TCP 端口绑定
+  - 动态库加载
+
+如果当前环境不支持这些能力，框架会尽量在启动前给出明确提示，而不是等到运行中再抛一个模糊错误。
+
+换句话说：
+
+**我们现在已经能把真实服务对象纳入受管流程，但还没有把“任意环境下的强隔离运行”当成已经完成的承诺。**
+
+## 从哪里开始
+
+如果你第一次接触 `ptest`，建议按这个顺序看：
+
+1. [快速开始](./docs/user-guide/basic-usage.md)
+2. [MySQL 全生命周期实践](./docs/user-guide/mysql-full-lifecycle.md)
+3. [Python API 指南](./docs/api/python-api-guide.md)
+4. [环境管理说明](./docs/guides/environment-management.md)
+
+如果你关心架构和设计：
+
+- [架构文档](./docs/architecture/README.md)
+- [开发文档](./docs/development/README.md)
+
+## 安装
+
+当前 PyPI 包名为 `ptestx`，安装后使用的命令仍然是 `ptest`：
+
 ```bash
-ptest init --path /home/test/
+pip install ptestx
+ptest --version
 ```
 
-### 管理测试对象
-以Mysql为例
+如果你在源码仓库里工作，建议直接使用：
+
 ```bash
-# 安装MySQL对象
-ptest --path /home/test obj install mysql my_mysql_db --version 9.9.9
-
-# 启动MySQL对象
-ptest --path /home/test obj start my_mysql_db
-
-# 列出所有对象
-ptest --path /home/test obj list
+uv sync
+uv run ptest --version
 ```
-
-### 管理测试用例
-```bash
-# 添加测试用例
-ptest --path /home/test case add mysql_connection_test --data '{"type": "connection", "description": "Test MySQL connection"}'
-
-# 运行特定测试用例
-ptest --path /home/test case run mysql_connection_test
-
-# 运行所有测试用例
-ptest --path /home/test run
-
-# 并行执行
-ptest --path /home/test run --parallel --workers 4
-```
-
-### 测试套件管理 (v1.2+)
-```bash
-# 创建套件
-ptest --path /home/test suite create my_suite
-
-# 运行套件
-ptest --path /home/test suite run my_suite
-
-# 并行执行
-ptest --path /home/test suite run my_suite --parallel --workers 4
-
-# 失败停止
-ptest --path /home/test suite run my_suite --stop-on-failure
-```
-
-### Mock 服务管理 (v1.2+)
-```bash
-# 启动 Mock 服务
-ptest --path /home/test mock start payment_gateway --port 18080
-
-# 停止 Mock 服务
-ptest --path /home/test mock stop payment_gateway
-
-# 查看 Mock 列表
-ptest --path /home/test mock list
-```
-
-### 数据生成 (v1.2+)
-```bash
-# 生成测试数据
-ptest data generate name --count 100
-
-# 生成 SQL INSERT 语句
-ptest data generate email --format sql --table users --dialect mysql
-
-# 查看支持的数据类型
-ptest data types
-```
-
-### API 契约管理 (v1.2+)
-```bash
-# 导入 OpenAPI 契约
-ptest --path /home/test contract import https://api.example.com/openapi.json --name my_contract
-
-# 查看契约列表
-ptest --path /home/test contract list
-```
-
-### 生成报告
-```bash
-# 生成HTML报告
-ptest --path /home/test report generate --format html
-
-# 生成JSON报告
-ptest --path /home/test report generate --format json
-```
-
-### 查看状态
-```bash
-ptest --path /home/test status
-```
-
-### 命令别名
-同时提供了```p```作为简写命令：
-```bash
-p init --path /home/test/
-p --path /home/test obj install mysql my_mysql_db
-p --path /home/test run
-```
-
-## 📖 更多信息
-
-查看 [docs/](./docs/) 目录获取完整的文档，包括：
-
-- 详细的架构设计文档
-- 数据库配置和使用指南
-- 测试执行引擎说明
-- 开发规范和贡献指南
-- API 接口文档
 
 ---
 
-*ptest - 综合测试框架，让测试变得简单而强大！*
+`ptest` 想做的，不只是帮你把测试跑完。  
+它更想帮你把对象管起来，把问题留住，把现场找回来。

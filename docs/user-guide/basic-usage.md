@@ -12,19 +12,22 @@
 
 ## 安装
 
-如果你在源码仓库内工作，优先使用：
+如果你是作为框架使用者来使用 `ptest`，推荐直接安装：
+
+```bash
+pip install ptestx
+ptest --version
+```
+
+如果你是在源码仓库里开发或验证当前项目，推荐使用：
 
 ```bash
 uv sync
 uv run ptest --version
 ```
 
-如果你使用构建产物安装：
-
-```bash
-uv pip install ptestx
-ptest --version
-```
+下面的 CLI 示例默认按“已经安装完成，可以直接使用 `ptest` 命令”的方式来写。  
+如果你是在源码仓库里操作，只需要把 `ptest` 替换成 `uv run ptest` 即可。
 
 ## CLI 快速开始
 
@@ -33,16 +36,17 @@ ptest --version
 ### 1. 初始化工作区
 
 ```bash
-uv run ptest init --path ./demo-workspace
-uv run ptest env status --path ./demo-workspace
+ptest init --path ./demo-workspace
+cd ./demo-workspace
+ptest env status
 ```
 
 ### 2. 安装并启动对象
 
 ```bash
-uv run ptest --path ./demo-workspace obj install db demo_db --database ./demo-workspace/demo.db --driver sqlite
-uv run ptest --path ./demo-workspace obj start demo_db
-uv run ptest --path ./demo-workspace obj status demo_db
+ptest obj install db demo_db --database ./demo.db --driver sqlite
+ptest obj start demo_db
+ptest obj status demo_db
 ```
 
 ### 3. 添加测试用例
@@ -50,10 +54,10 @@ uv run ptest --path ./demo-workspace obj status demo_db
 `case add` 当前要求通过 `--data` 或 `--file` 提供 JSON。
 
 ```bash
-uv run ptest --path ./demo-workspace case add sqlite_smoke --data '{
+ptest case add sqlite_smoke --data '{
   "type": "database",
   "db_type": "sqlite",
-  "database": "./demo-workspace/demo.db",
+  "database": "./demo.db",
   "query": "SELECT 1 as value",
   "expected_result": [{"value": 1}]
 }'
@@ -62,15 +66,15 @@ uv run ptest --path ./demo-workspace case add sqlite_smoke --data '{
 ### 4. 执行测试
 
 ```bash
-uv run ptest --path ./demo-workspace case run sqlite_smoke
-uv run ptest --path ./demo-workspace execution list
+ptest case run sqlite_smoke
+ptest execution list
 ```
 
 ### 5. 查看执行产物并生成报告
 
 ```bash
-uv run ptest --path ./demo-workspace execution artifacts <execution_id>
-uv run ptest --path ./demo-workspace report generate --format html
+ptest execution artifacts <execution_id>
+ptest report generate --format html
 ```
 
 ### 5.1 查看问题记录与恢复信息
@@ -78,16 +82,17 @@ uv run ptest --path ./demo-workspace report generate --format html
 当一次执行失败时，当前主线会自动沉淀问题记录：
 
 ```bash
-uv run ptest --path ./demo-workspace problem list
-uv run ptest --path ./demo-workspace problem show <problem_id>
-uv run ptest --path ./demo-workspace problem assets <problem_id>
-uv run ptest --path ./demo-workspace problem recover <problem_id>
+ptest problem list
+ptest problem show <problem_id>
+ptest problem assets <problem_id>
+ptest problem recover <problem_id>
 ```
 
 ### 6. 销毁工作区资源
 
 ```bash
-uv run ptest env destroy --path ./demo-workspace
+cd ..
+ptest env destroy --path ./demo-workspace
 ```
 
 ## Python API 快速开始
@@ -148,22 +153,26 @@ api.destroy_environment()
 ## 当前主线常用命令
 
 ```bash
-uv run ptest --path ./demo-workspace status
-uv run ptest --path ./demo-workspace case list
-uv run ptest --path ./demo-workspace obj list
-uv run ptest --path ./demo-workspace tool list
-uv run ptest --path ./demo-workspace suite list
-uv run ptest --path ./demo-workspace data types
+ptest status
+ptest case list
+ptest obj list
+ptest tool list
+ptest suite list
+ptest data types
 ```
+
+如果你是在自动化脚本里，或者要跨多个工作区操作，再显式加上 `--path` 会更稳。
 
 ## 当前已知边界
 
 - `docs/plan/` 是内部文档区，不属于对外使用入口
 - 本地 Docker 真实环境测试可能受网络和宿主机环境影响，真实 Docker 校验以 CI 为准
+- MySQL 主案例当前依赖 `host` runtime backend，需要执行环境允许真实进程启动和 TCP 端口绑定
 - 当前用户文档优先覆盖第一阶段主线，不承诺所有历史命令都继续可用
 
 ## 下一步阅读
 
 - CLI / API 入口说明：[`README.md`](../../README.md)
+- MySQL 主案例实践：[mysql-full-lifecycle.md](mysql-full-lifecycle.md)
 - Python API 说明：[../api/python-api-guide.md](../api/python-api-guide.md)
 - 环境管理专题：[../guides/environment-management.md](../guides/environment-management.md)

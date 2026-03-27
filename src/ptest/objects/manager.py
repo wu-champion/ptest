@@ -79,7 +79,7 @@ class ObjectManager:
         }
         self.object_aliases = {
             "db": "database",
-            "mysql": "database",
+            "mysql": "database_server",
             "postgresql": "database",
             "postgres": "database",
             "sqlite": "database",

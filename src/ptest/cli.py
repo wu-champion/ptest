@@ -123,6 +123,17 @@ def setup_cli() -> argparse.ArgumentParser:
     install_obj_parser.add_argument(
         "--version", help="Version for specific object types like MySQL"
     )
+    install_obj_parser.add_argument(
+        "--package-path",
+        dest="package_path",
+        help="Local package path for MySQL lifecycle scenario",
+    )
+    install_obj_parser.add_argument(
+        "--dependency-asset",
+        dest="dependency_assets",
+        action="append",
+        help="Managed dependency asset path for MySQL lifecycle scenario; can be repeated",
+    )
     install_obj_parser.add_argument("--driver", help="Database driver")
     install_obj_parser.add_argument("--database", help="Database name or sqlite path")
     install_obj_parser.add_argument("--host", help="Database host")
@@ -536,10 +547,18 @@ def _handle_object_command(
         params = {}
         if hasattr(args, "version") and args.version:
             params["version"] = args.version
+        if hasattr(args, "package_path") and args.package_path:
+            params["mysql_package_path"] = args.package_path
+        if hasattr(args, "dependency_assets") and args.dependency_assets:
+            params["dependency_assets"] = [
+                {"path": path_value} for path_value in args.dependency_assets
+            ]
         for key in ("driver", "database", "host", "port", "username", "password"):
             value = getattr(args, key, None)
             if value is not None:
                 params[key] = value
+        if args.type == "mysql":
+            params["workspace_path"] = str(_resolve_workspace_path(args))
         if args.type in {"db", "database", "sqlite", "mysql", "postgres", "postgresql"}:
             params.setdefault(
                 "driver", "sqlite" if args.type == "sqlite" else args.type

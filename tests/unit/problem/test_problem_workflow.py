@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import pytest
 
 from ptest.app import WorkflowService
 from ptest.models import ManagedObjectRecord
+from ptest.objects.db_server import DatabaseServerComponent
 
 
 class _FakeResponse:
@@ -281,6 +283,67 @@ def test_workflow_service_preserves_dependency_configuration_problem(
     assert recovery["success"] is True
     assert recovery["recovery"]["problem_type"] == "dependency_configuration"
     assert recovery["recovery"]["mode"] == "minimal_environment_recovery"
+
+
+def test_workflow_service_preserves_mysql_missing_dependency_problem(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    package_path = tmp_path / "assets" / "mysql.tar.xz"
+    package_path.parent.mkdir(parents=True, exist_ok=True)
+    stage_dir = tmp_path / "assets" / "fake_mysql_pkg"
+    binary = stage_dir / "bin" / "mysqld"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    with tarfile.open(package_path, "w:xz") as archive:
+        archive.add(stage_dir, arcname="mysql-8.4")
+
+    install_result = service.install_object(
+        "mysql",
+        "mysql_service",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+        },
+    )
+    assert install_result["success"] is True
+
+    monkeypatch.setattr(
+        DatabaseServerComponent,
+        "_check_binary_dependencies",
+        lambda self, binary, env=None: ["libaio.so.1t64", "libnuma.so.1"],
+    )
+
+    result = service.start_object("mysql_service")
+    assert result["success"] is False
+
+    problems = service.list_problem_records(problem_type="dependency_configuration")
+    problem = next(
+        item
+        for item in problems
+        if item["summary"] == "Dependency object 'mysql_service' failed during 'start'"
+    )
+    problem_id = problem["problem_id"]
+
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert assets["assets"]["details"]["phase"] == "start"
+    assert assets["assets"]["details"]["missing_libraries"] == [
+        "libaio.so.1t64",
+        "libnuma.so.1",
+    ]
+    assert assets["assets"]["details"]["dependency_requirements"] == {}
+
+    recovery = service.recover_problem(problem_id)
+    assert recovery["success"] is True
+    assert recovery["recovery"]["problem_type"] == "dependency_configuration"
+    assert recovery["recovery"]["missing_libraries"] == [
+        "libaio.so.1t64",
+        "libnuma.so.1",
+    ]
 
 
 def test_workflow_service_preserves_service_runtime_problem(tmp_path: Path) -> None:
