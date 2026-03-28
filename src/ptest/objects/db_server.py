@@ -277,16 +277,29 @@ class DatabaseServerComponent(ServiceServerComponent):
                     return candidate
         if self.install_root:
             install_root = Path(self.install_root).expanduser().resolve()
-            for relative_path in (
-                Path("bin/mysqld"),
-                Path("bin/mysqld.cmd"),
-                Path("bin/mysqld.bat"),
-                Path("bin/mysqld.exe"),
-                Path("usr/sbin/mysqld"),
-                Path("usr/sbin/mysqld.cmd"),
-                Path("usr/sbin/mysqld.bat"),
-                Path("usr/sbin/mysqld.exe"),
-            ):
+            if os.name == "nt":
+                relative_paths = (
+                    Path("bin/mysqld.exe"),
+                    Path("bin/mysqld.cmd"),
+                    Path("bin/mysqld.bat"),
+                    Path("bin/mysqld"),
+                    Path("usr/sbin/mysqld.exe"),
+                    Path("usr/sbin/mysqld.cmd"),
+                    Path("usr/sbin/mysqld.bat"),
+                    Path("usr/sbin/mysqld"),
+                )
+            else:
+                relative_paths = (
+                    Path("bin/mysqld"),
+                    Path("bin/mysqld.exe"),
+                    Path("bin/mysqld.cmd"),
+                    Path("bin/mysqld.bat"),
+                    Path("usr/sbin/mysqld"),
+                    Path("usr/sbin/mysqld.exe"),
+                    Path("usr/sbin/mysqld.cmd"),
+                    Path("usr/sbin/mysqld.bat"),
+                )
+            for relative_path in relative_paths:
                 managed_binary = install_root / relative_path
                 if managed_binary.exists():
                     return managed_binary
