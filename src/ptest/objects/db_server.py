@@ -11,6 +11,7 @@ import subprocess
 import time
 import os
 import signal
+import ctypes
 from pathlib import Path
 from .service_base import ServiceServerComponent
 
@@ -586,6 +587,25 @@ with socketserver.TCPServer(("", PORT), Handler) as httpd:
 
     def _is_process_running(self, pid: int) -> bool:
         """检查进程是否运行"""
+        if os.name == "nt":
+            process_query_limited_information = 0x1000
+            still_active = 259
+            handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[attr-defined]
+                process_query_limited_information,
+                False,
+                pid,
+            )
+            if not handle:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                success = ctypes.windll.kernel32.GetExitCodeProcess(  # type: ignore[attr-defined]
+                    handle,
+                    ctypes.byref(exit_code),
+                )
+                return bool(success) and exit_code.value == still_active
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
         try:
             os.kill(pid, 0)
             return True
