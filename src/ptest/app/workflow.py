@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import socket
 import uuid
 from datetime import datetime
@@ -15,7 +16,15 @@ from ..contract.manager import ContractManager
 from ..data.generator import DataGenerationConfig, DataGenerator, DataTemplate
 from ..environment import EnvironmentManager
 from ..isolation.manager import IsolationManager
-from ..models import EnvironmentRecord, ExecutionRecord, ManagedObjectRecord, ToolRecord
+from ..models import (
+    DependencyAsset,
+    EnvironmentRecord,
+    ExecutionRecord,
+    InstallationSourceAsset,
+    ManagedObjectRecord,
+    MySQLLifecycleScenarioConfig,
+    ToolRecord,
+)
 from ..models import ProblemAssetRecord, ProblemRecord, ProblemRecoveryRecord
 from ..mock import MockConfig, MockServer
 from ..objects.manager import ObjectManager
@@ -27,6 +36,8 @@ from ..tools.manager import ToolManager
 
 class WorkflowService:
     """First-phase workflow orchestration service."""
+
+    DEFAULT_MANAGED_MYSQL_PORT = 13306
 
     def __init__(
         self,
@@ -132,8 +143,9 @@ class WorkflowService:
         self, obj_type: str, name: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         manager = self._get_object_manager()
+        install_params = self._normalize_object_install_params(obj_type, name, params)
         normalized_type = manager.normalize_type(obj_type)
-        result = manager.install(normalized_type, name, params or {})
+        result = manager.install(normalized_type, name, install_params)
         success = result.startswith("✓")
         materialized = manager.get_object(name) if success else None
         record = ManagedObjectRecord(
@@ -141,7 +153,7 @@ class WorkflowService:
             type_name=normalized_type,
             status="installed" if success else "error",
             installed=success,
-            config=params or {},
+            config=install_params,
             created_at=self._existing_object_created_at(name),
             updated_at=datetime.now().isoformat(),
             metadata=self._collect_object_metadata(materialized)
@@ -163,7 +175,7 @@ class WorkflowService:
                     "action": "install",
                     "object": record.to_dict(),
                     "message": result,
-                    "provided_params": params or {},
+                    "provided_params": install_params,
                 },
                 recovery={
                     "supported": False,
@@ -171,7 +183,7 @@ class WorkflowService:
                     "action": "install_object",
                     "object_name": name,
                     "object_type": normalized_type,
-                    "params": params or {},
+                    "params": install_params,
                 },
                 object_refs=[name],
             )
@@ -183,6 +195,132 @@ class WorkflowService:
             object=record.to_dict(),
             error_code="object_install_failed" if not success else None,
         )
+
+    def _normalize_object_install_params(
+        self,
+        obj_type: str,
+        name: str,
+        params: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        install_params = params.copy() if params else {}
+        if obj_type.lower() != "mysql":
+            return install_params
+        return self._build_mysql_service_install_params(name, install_params)
+
+    def _build_mysql_service_install_params(
+        self,
+        name: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        workspace_path = Path(params.get("workspace_path", self.root_path)).resolve()
+        instance_root = workspace_path / ".ptest" / "managed_objects" / name
+        directories = {
+            "instance_root": str(instance_root),
+            "install_dir": str(instance_root / "install"),
+            "data_dir": str(instance_root / "data"),
+            "config_dir": str(instance_root / "config"),
+            "lib_dir": str(instance_root / "lib"),
+            "files_dir": str(instance_root / "mysql-files"),
+            "log_dir": str(instance_root / "logs"),
+            "run_dir": str(instance_root / "run"),
+        }
+        port = self._coerce_mysql_port(
+            params.get("port", params.get("server_port")),
+        )
+        package_path_value = params.get(
+            "mysql_package_path", params.get("package_path")
+        )
+        source_asset = None
+        if isinstance(package_path_value, (str, Path)) and str(package_path_value):
+            package_path = Path(package_path_value).expanduser().resolve()
+            source_asset = InstallationSourceAsset(
+                product="mysql",
+                version=str(params.get("version", "8.4")),
+                source_type=str(params.get("source_type", "archive")),
+                path=str(package_path),
+                checksum_type=str(params.get("checksum_type", "")),
+                checksum_value=str(params.get("checksum_value", "")),
+                metadata={
+                    "managed_by": "ptest",
+                    "scenario_name": "mysql_full_lifecycle",
+                },
+            )
+
+        scenario = MySQLLifecycleScenarioConfig(
+            scenario_name="mysql_full_lifecycle",
+            product="mysql",
+            version=str(params.get("version", "8.4")),
+            workspace_path=str(workspace_path),
+            instance_name=name,
+            port=port,
+            runtime_backend=str(params.get("runtime_backend", "host")),
+            directories=directories.copy(),
+            boundary_checks={
+                "check_workspace_boundary": True,
+                "check_process_cleanup": True,
+                "check_port_release": True,
+                "check_object_cleanup": True,
+            },
+        )
+
+        normalized = params.copy()
+        dependency_assets = self._normalize_mysql_dependency_assets(
+            params.get("dependency_assets")
+        )
+        normalized.update(
+            {
+                "db_type": "mysql",
+                "workspace_path": str(workspace_path),
+                "server_host": str(params.get("server_host", "127.0.0.1")),
+                "server_port": port,
+                "runtime_backend": scenario.runtime_backend,
+                "instance_name": name,
+                "database_name": scenario.database_name,
+                "data_dir": directories["data_dir"],
+                "config_dir": directories["config_dir"],
+                "config_file": str(Path(directories["config_dir"]) / "my.cnf"),
+                "log_file": str(Path(directories["log_dir"]) / "mysql.log"),
+                "pid_file": str(Path(directories["run_dir"]) / "mysql.pid"),
+                "socket_file": str(Path(directories["run_dir"]) / "mysql.sock"),
+                "managed_instance": directories,
+                "dependency_assets": dependency_assets,
+                "scenario": scenario.to_dict(),
+            }
+        )
+        if source_asset is not None:
+            normalized["mysql_package_path"] = source_asset.path
+            normalized["source_asset"] = source_asset.to_dict()
+        return normalized
+
+    def _normalize_mysql_dependency_assets(self, value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        assets: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            path_value = item.get("path")
+            name_value = item.get("name")
+            if not isinstance(path_value, (str, Path)) or not str(path_value):
+                continue
+            asset = DependencyAsset(
+                name=str(name_value or Path(str(path_value)).name),
+                path=str(Path(path_value).expanduser().resolve()),
+                asset_type=str(item.get("asset_type", "library")),
+                required=bool(item.get("required", True)),
+                metadata=item.get("metadata", {})
+                if isinstance(item.get("metadata"), dict)
+                else {},
+            )
+            assets.append(asset.to_dict())
+        return assets
+
+    def _coerce_mysql_port(self, value: Any) -> int:
+        if isinstance(value, int) and value > 0:
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return self.DEFAULT_MANAGED_MYSQL_PORT
 
     def start_object(self, name: str) -> dict[str, Any]:
         return self._change_object_state(name, "start")
@@ -203,7 +341,17 @@ class WorkflowService:
             self._recover_object_runtime(obj, record)
         result = obj.uninstall()
         success = result.startswith("✓")
+        metadata = record.metadata.copy()
+        metadata.update(self._collect_object_metadata(obj))
+        record.metadata = metadata
+        record.updated_at = datetime.now().isoformat()
+        checks = None
         if success:
+            checks = self._collect_mysql_boundary_checks(
+                record,
+                action="uninstall",
+                object_removed=True,
+            )
             self.storage.delete_object(name)
         else:
             record.status = "error"
@@ -213,6 +361,8 @@ class WorkflowService:
             success=success,
             status="removed" if success else "error",
             message=result,
+            data=record.to_dict(),
+            checks=checks,
             error_code="object_uninstall_failed" if not success else None,
         )
 
@@ -854,8 +1004,17 @@ class WorkflowService:
         self, case_id: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         case_manager = CaseManager(self._bootstrap_environment())
-        result = case_manager.run_case(case_id, params=params)
-        self._persist_execution(case_id, result, case_manager)
+        result, case_definition = self._execute_case_with_bindings(
+            case_manager,
+            case_id,
+            params=params,
+        )
+        self._persist_execution(
+            case_id,
+            result,
+            case_manager,
+            case_definition_override=case_definition,
+        )
         payload = self._result_payload(result)
         payload["message"] = (
             f"Case '{case_id}' completed with status '{payload['status']}'"
@@ -895,7 +1054,10 @@ class WorkflowService:
             tasks = [
                 ExecutionTask(
                     task_id=case_id,
-                    func=lambda case_id=case_id: case_manager.run_case(case_id),
+                    func=lambda case_id=case_id: self._execute_case_with_bindings(
+                        case_manager,
+                        case_id,
+                    ),
                     timeout=float(timeout or 300),
                 )
                 for case_id in case_ids
@@ -905,9 +1067,15 @@ class WorkflowService:
             results: list[dict[str, Any]] = []
             for execution_result in execution_results:
                 case_result = execution_result.result
+                case_definition = None
+                if isinstance(case_result, tuple) and len(case_result) == 2:
+                    case_result, case_definition = case_result
                 if isinstance(case_result, TestCaseResult):
                     self._persist_execution(
-                        case_result.case_id, case_result, case_manager
+                        case_result.case_id,
+                        case_result,
+                        case_manager,
+                        case_definition_override=case_definition,
                     )
                     results.append(self._result_payload(case_result))
             return self._summarize_results(results)
@@ -919,7 +1087,10 @@ class WorkflowService:
         tasks = [
             ExecutionTask(
                 task_id=case_id,
-                func=lambda case_id=case_id: case_manager.run_case(case_id),
+                func=lambda case_id=case_id: self._execute_case_with_bindings(
+                    case_manager,
+                    case_id,
+                ),
             )
             for case_id in case_ids
         ]
@@ -927,8 +1098,16 @@ class WorkflowService:
         results = []
         for execution_result in execution_results:
             case_result = execution_result.result
+            case_definition = None
+            if isinstance(case_result, tuple) and len(case_result) == 2:
+                case_result, case_definition = case_result
             if isinstance(case_result, TestCaseResult):
-                self._persist_execution(case_result.case_id, case_result, case_manager)
+                self._persist_execution(
+                    case_result.case_id,
+                    case_result,
+                    case_manager,
+                    case_definition_override=case_definition,
+                )
                 results.append(self._result_payload(case_result))
         return self._summarize_results(results)
 
@@ -1399,6 +1578,13 @@ class WorkflowService:
             record.status = "error"
         metadata = record.metadata.copy()
         metadata.update(self._collect_object_metadata(obj))
+        if success and action == "stop":
+            metadata.setdefault("boundary_checks", {})
+            metadata["boundary_checks"]["stop"] = self._collect_mysql_boundary_checks(
+                record,
+                action="stop",
+                object_removed=False,
+            )
         record.metadata = metadata
         record.updated_at = datetime.now().isoformat()
         if success and action == "start":
@@ -1441,21 +1627,38 @@ class WorkflowService:
                 )
         self.storage.upsert_object(record)
         if not success:
+            problem_type = self._classify_object_state_problem(record, action, result)
+            config = record.config if isinstance(record.config, dict) else {}
+            missing_libraries = self._extract_missing_shared_libraries(result)
+            dependency_requirements = config.get("dependency_requirements", {})
             self._record_environment_dependency_problem(
-                problem_type="dependency_object",
+                problem_type=problem_type,
                 summary=f"Dependency object '{name}' failed during '{action}'",
                 details={
                     "phase": action,
                     "action": action,
                     "object": record.to_dict(),
                     "message": result,
+                    "missing_libraries": missing_libraries,
+                    "dependency_requirements": dependency_requirements
+                    if isinstance(dependency_requirements, dict)
+                    else {},
                 },
                 recovery={
                     "supported": False,
                     "mode": "minimal_environment_recovery",
-                    "action": action,
+                    "action": (
+                        "install_dependencies"
+                        if problem_type == "dependency_configuration"
+                        and missing_libraries
+                        else action
+                    ),
                     "object_name": name,
                     "required_state": "running" if action == "start" else "installed",
+                    "missing_libraries": missing_libraries,
+                    "dependency_requirements": dependency_requirements
+                    if isinstance(dependency_requirements, dict)
+                    else {},
                 },
                 object_refs=[name],
             )
@@ -1465,6 +1668,9 @@ class WorkflowService:
             message=result,
             data=record.to_dict(),
             object=record.to_dict(),
+            checks=record.metadata.get("boundary_checks", {}).get(action)
+            if success and action == "stop"
+            else None,
             error_code=f"object_{action}_failed" if not success else None,
         )
 
@@ -1489,6 +1695,129 @@ class WorkflowService:
             "reachable": False,
             "message": "target endpoint is not reachable",
         }
+
+    def _collect_mysql_boundary_checks(
+        self,
+        record: ManagedObjectRecord,
+        *,
+        action: str,
+        object_removed: bool,
+    ) -> dict[str, Any] | None:
+        config = record.config if isinstance(record.config, dict) else {}
+        if str(config.get("db_type", "")).lower() != "mysql":
+            return None
+
+        scenario = config.get("scenario", {})
+        if not isinstance(scenario, dict):
+            scenario = {}
+        boundary_config = scenario.get("boundary_checks", {})
+        if not isinstance(boundary_config, dict):
+            boundary_config = {}
+
+        managed_instance = config.get("managed_instance", {})
+        if not isinstance(managed_instance, dict):
+            managed_instance = {}
+
+        workspace_path = (
+            Path(str(config.get("workspace_path", self.root_path)))
+            .expanduser()
+            .resolve()
+        )
+        relevant_paths = {
+            **{key: str(value) for key, value in managed_instance.items()},
+            "config_file": str(config.get("config_file", "")),
+            "log_file": str(config.get("log_file", "")),
+            "pid_file": str(config.get("pid_file", "")),
+            "staged_package_path": str(config.get("staged_package_path", "")),
+        }
+        workspace_violations = [
+            path
+            for path in relevant_paths.values()
+            if path and not self._path_within_workspace(workspace_path, Path(path))
+        ]
+
+        pid_file = Path(str(config.get("pid_file", ""))).expanduser().resolve()
+        pid = self._read_pid_file(pid_file)
+        process_running = pid is not None and self._is_pid_running(pid)
+        host = str(config.get("server_host", "127.0.0.1"))
+        port = self._coerce_mysql_port(config.get("server_port", config.get("port")))
+        port_released = not self._is_host_port_reachable(host, port)
+
+        instance_root_value = str(managed_instance.get("instance_root", ""))
+        instance_root = (
+            Path(instance_root_value).expanduser().resolve()
+            if instance_root_value
+            else None
+        )
+        managed_paths_removed = bool(
+            instance_root is not None and not instance_root.exists()
+        )
+
+        checks: dict[str, Any] = {
+            "action": action,
+            "workspace_boundary": {
+                "enabled": bool(boundary_config.get("check_workspace_boundary", True)),
+                "ok": not workspace_violations,
+                "violations": workspace_violations,
+                "workspace_path": str(workspace_path),
+            },
+            "process_cleanup": {
+                "enabled": bool(boundary_config.get("check_process_cleanup", True)),
+                "ok": not process_running and not pid_file.exists(),
+                "pid": pid,
+                "pid_file": str(pid_file),
+                "pid_file_exists": pid_file.exists(),
+                "process_running": process_running,
+            },
+            "port_release": {
+                "enabled": bool(boundary_config.get("check_port_release", True)),
+                "ok": port_released,
+                "host": host,
+                "port": port,
+                "released": port_released,
+            },
+            "object_cleanup": {
+                "enabled": bool(boundary_config.get("check_object_cleanup", True)),
+                "ok": (
+                    managed_paths_removed
+                    if action == "uninstall"
+                    else record.status == "stopped"
+                ),
+                "object_removed": object_removed,
+                "managed_paths_removed": (
+                    managed_paths_removed if action == "uninstall" else None
+                ),
+                "instance_root": str(instance_root)
+                if instance_root is not None
+                else "",
+            },
+        }
+        checks["all_passed"] = all(
+            entry["ok"]
+            for entry in checks.values()
+            if isinstance(entry, dict) and entry.get("enabled", True)
+        )
+        return checks
+
+    def _path_within_workspace(self, workspace_path: Path, path: Path) -> bool:
+        try:
+            path.resolve().relative_to(workspace_path.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _read_pid_file(self, path: Path) -> int | None:
+        try:
+            return int(path.read_text(encoding="utf-8").strip())
+        except (FileNotFoundError, ValueError):
+            return None
+
+    def _is_pid_running(self, pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
 
     def _change_tool_state(self, name: str, action: str) -> dict[str, Any]:
         record = self.storage.get_tool(name)
@@ -1672,13 +2001,251 @@ class WorkflowService:
         materialized.status = record.status
         return materialized
 
+    def _execute_case_with_bindings(
+        self,
+        case_manager: CaseManager,
+        case_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[TestCaseResult, dict[str, Any] | None]:
+        resolved_params, failure = self._resolve_case_runtime_params(
+            case_manager,
+            case_id,
+            params=params,
+        )
+        case_definition = self._build_case_execution_definition(
+            case_manager,
+            case_id,
+            resolved_params,
+        )
+        if failure is not None:
+            return failure, case_definition
+        return case_manager.run_case(case_id, params=resolved_params), case_definition
+
+    def _resolve_case_runtime_params(
+        self,
+        case_manager: CaseManager,
+        case_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any] | None, TestCaseResult | None]:
+        resolved_params = params.copy() if params else {}
+        case_definition = case_manager.get_case(case_id)
+        if not isinstance(case_definition, dict):
+            return resolved_params or None, None
+        case_payload = self._unwrap_case_definition(case_definition)
+        if case_payload.get("type") != "database":
+            return resolved_params or None, None
+
+        object_name = resolved_params.get(
+            "object_name", case_payload.get("object_name")
+        )
+        if not isinstance(object_name, str) or not object_name:
+            return resolved_params or None, None
+
+        binding_params, failure_message = self._resolve_database_object_binding(
+            case_id,
+            case_payload,
+            object_name,
+        )
+        if failure_message is not None:
+            return resolved_params or None, self._build_case_preflight_error(
+                case_id,
+                failure_message,
+            )
+
+        for key, value in binding_params.items():
+            if key in case_payload or key in resolved_params:
+                continue
+            resolved_params[key] = value
+        resolved_params.setdefault("object_name", object_name)
+        return resolved_params, None
+
+    def _resolve_database_object_binding(
+        self,
+        case_id: str,
+        case_payload: dict[str, Any],
+        object_name: str,
+    ) -> tuple[dict[str, Any], str | None]:
+        record = self.storage.get_object(object_name)
+        if record is None:
+            message = (
+                f"Bound database object '{object_name}' does not exist for case "
+                f"'{case_id}'"
+            )
+            self._record_environment_dependency_problem(
+                problem_type="dependency_object",
+                summary=f"Database case '{case_id}' references a missing object",
+                details={
+                    "phase": "case_binding",
+                    "case_id": case_id,
+                    "case": case_payload,
+                    "object_name": object_name,
+                    "message": message,
+                },
+                recovery={
+                    "supported": False,
+                    "mode": "minimal_environment_recovery",
+                    "action": "install_object",
+                    "object_name": object_name,
+                    "required_state": "running",
+                },
+                object_refs=[object_name],
+            )
+            return {}, message
+
+        if record.status != "running":
+            message = (
+                f"Bound database object '{object_name}' is not running "
+                f"(status: {record.status})"
+            )
+            self._record_environment_dependency_problem(
+                problem_type="dependency_object",
+                summary=f"Database case '{case_id}' references an unavailable object",
+                details={
+                    "phase": "case_binding",
+                    "case_id": case_id,
+                    "case": case_payload,
+                    "object": record.to_dict(),
+                    "message": message,
+                },
+                recovery={
+                    "supported": False,
+                    "mode": "minimal_environment_recovery",
+                    "action": "start_object",
+                    "object_name": object_name,
+                    "required_state": "running",
+                },
+                object_refs=[object_name],
+            )
+            return {}, message
+
+        config = record.config if isinstance(record.config, dict) else {}
+        runtime = record.metadata.get("runtime", {})
+        runtime_details = (
+            runtime.get("details", {}) if isinstance(runtime, dict) else {}
+        )
+        if not isinstance(runtime_details, dict):
+            runtime_details = {}
+        db_type = str(
+            config.get("db_type", runtime_details.get("db_type", "mysql"))
+        ).lower()
+
+        if db_type == "mysql":
+            scenario = config.get("scenario", {})
+            mysql_config = config.get("mysql_config", {})
+            if not isinstance(scenario, dict):
+                scenario = {}
+            if not isinstance(mysql_config, dict):
+                mysql_config = {}
+            return (
+                {
+                    "db_type": "mysql",
+                    "host": str(config.get("server_host", "127.0.0.1")),
+                    "port": int(
+                        config.get(
+                            "server_port",
+                            self.DEFAULT_MANAGED_MYSQL_PORT,
+                        )
+                    ),
+                    "database": str(
+                        mysql_config.get(
+                            "database",
+                            scenario.get("database_name", "ptest_mysql"),
+                        )
+                    ),
+                    "username": str(mysql_config.get("username", "root")),
+                    "password": str(mysql_config.get("password", "")),
+                    "bound_object": {
+                        "name": object_name,
+                        "type_name": record.type_name,
+                        "db_type": db_type,
+                    },
+                },
+                None,
+            )
+
+        if db_type == "sqlite":
+            database_path = config.get("database")
+            if isinstance(database_path, str) and database_path:
+                return (
+                    {
+                        "db_type": "sqlite",
+                        "database": database_path,
+                        "bound_object": {
+                            "name": object_name,
+                            "type_name": record.type_name,
+                            "db_type": db_type,
+                        },
+                    },
+                    None,
+                )
+
+        message = (
+            f"Bound object '{object_name}' is not a supported database test target "
+            f"(db_type: {db_type})"
+        )
+        self._record_environment_dependency_problem(
+            problem_type="dependency_object",
+            summary=f"Database case '{case_id}' references an unsupported object",
+            details={
+                "phase": "case_binding",
+                "case_id": case_id,
+                "case": case_payload,
+                "object": record.to_dict(),
+                "message": message,
+            },
+            recovery={
+                "supported": False,
+                "mode": "minimal_environment_recovery",
+                "action": "rebind_case_object",
+                "object_name": object_name,
+                "required_state": "supported_database_target",
+            },
+            object_refs=[object_name],
+        )
+        return {}, message
+
+    def _build_case_preflight_error(
+        self,
+        case_id: str,
+        message: str,
+    ) -> TestCaseResult:
+        result = TestCaseResult(case_id)
+        result.status = "error"
+        result.error_message = message
+        result.end_time = datetime.now()
+        result.duration = (result.end_time - result.start_time).total_seconds()
+        return result
+
+    def _build_case_execution_definition(
+        self,
+        case_manager: CaseManager,
+        case_id: str,
+        params: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        case_definition = case_manager.get_case(case_id)
+        if not isinstance(case_definition, dict):
+            return None
+        if not params:
+            return case_definition
+        merged_data = case_manager._merge_params(  # noqa: SLF001
+            self._unwrap_case_definition(case_definition),
+            params,
+        )
+        merged_definition = dict(case_definition)
+        merged_definition["data"] = merged_data
+        return merged_definition
+
     def _persist_execution(
-        self, case_id: str, result: TestCaseResult, case_manager: CaseManager
+        self,
+        case_id: str,
+        result: TestCaseResult,
+        case_manager: CaseManager,
+        case_definition_override: dict[str, Any] | None = None,
     ) -> ExecutionRecord:
         execution_id = f"{case_id}_{uuid.uuid4().hex[:12]}"
         environment = self.get_environment_status()
         objects = self.list_objects()
-        case_definition = case_manager.get_case(case_id)
+        case_definition = case_definition_override or case_manager.get_case(case_id)
         result_payload = self._result_payload(result)
         record = ExecutionRecord(
             execution_id=execution_id,
@@ -2357,6 +2924,8 @@ class WorkflowService:
             "objects": details.get("objects"),
             "phase": details.get("phase"),
             "message": details.get("message"),
+            "missing_libraries": details.get("missing_libraries", []),
+            "dependency_requirements": details.get("dependency_requirements", {}),
             "hints": recovery,
         }
 
@@ -2570,6 +3139,37 @@ class WorkflowService:
         ):
             return "dependency_configuration"
         return "dependency_object"
+
+    def _classify_object_state_problem(
+        self,
+        record: ManagedObjectRecord,
+        action: str,
+        result: str,
+    ) -> str:
+        result_lower = result.lower()
+        if action == "start" and self._extract_missing_shared_libraries(result):
+            return "dependency_configuration"
+        config = record.config if isinstance(record.config, dict) else {}
+        if (
+            action == "start"
+            and str(config.get("db_type", "")).lower() == "mysql"
+            and (
+                ("missing" in result_lower and "library" in result_lower)
+                or "runtime backend" in result_lower
+                or "does not permit binding" in result_lower
+                or "operation not permitted" in result_lower
+            )
+        ):
+            return "dependency_configuration"
+        return "dependency_object"
+
+    def _extract_missing_shared_libraries(self, result: str) -> list[str]:
+        marker = "missing required shared libraries:"
+        result_lower = result.lower()
+        if marker not in result_lower:
+            return []
+        missing_text = result[result_lower.index(marker) + len(marker) :].strip()
+        return [item.strip() for item in missing_text.split(",") if item.strip()]
 
     def _environment_problem_context(self) -> dict[str, Any]:
         environment_record = self.storage.load_environment()

@@ -110,6 +110,53 @@ class PTestAPI:
     def create_object(self, obj_type: str, name: str, **kwargs: Any) -> dict[str, Any]:
         return self.workflow.install_object(obj_type, name, kwargs)
 
+    def get_object_status(self, name: str) -> dict[str, Any]:
+        result = self.workflow.get_object_status(name)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def start_object(self, name: str) -> dict[str, Any]:
+        result = self.workflow.start_object(name)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            checks=result.get("checks"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def stop_object(self, name: str) -> dict[str, Any]:
+        result = self.workflow.stop_object(name)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            checks=result.get("checks"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def uninstall_object(self, name: str) -> dict[str, Any]:
+        result = self.workflow.uninstall_object(name)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            checks=result.get("checks"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
     def list_objects(self) -> dict[str, Any]:
         objects = self.workflow.list_objects()
         return self._api_response(
@@ -430,13 +477,13 @@ class PTestAPI:
             status="ok",
             message="System info retrieved",
             data={
-                "version": "1.5.0",
-                "api_version": "1.5.0",
+                "version": "1.6.0",
+                "api_version": "1.6.0",
                 "work_path": str(self.work_path),
                 "environment_initialized": env_status.get("initialized", False),
                 "environment_path": env_status.get("path"),
                 "isolation_engines": list(self.isolation_manager.engines.keys()),
-                "framework_version": "PTEST-1.5.0",
+                "framework_version": "PTEST-1.6.0",
             },
         )
 

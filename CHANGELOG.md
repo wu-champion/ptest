@@ -1,3 +1,27 @@
+## [1.6.0] - 2026-03-27
+
+### Added - 新增功能
+
+- 新增 MySQL 全生命周期主案例，当前可在受管工作区内完成 `install -> start -> use -> stop -> uninstall`
+- `mysql` 主对象语义已收口为数据库服务产品对象，不再默认落到通用连接对象语义
+- MySQL 主案例已支持真实 `deb-bundle` 安装源接入，并可将核心 `.deb` 解包到受管 rootfs
+- 已新增可重复执行的 MySQL 主案例脚本入口 `scripts/mysql_full_lifecycle_scenario.py`
+- 用户文档新增 MySQL 全生命周期实践，按测试工程师分步操作方式展示真实使用流程
+
+### Changed - 改进
+
+- MySQL 主案例当前运行模型已明确为“受管工作区 + host runtime backend”
+- `install` 已从“仅处理主包”扩展为“主包 + 依赖资产”的受管安装流程
+- 数据库 case 已支持通过 `object_name` 绑定已管理的 MySQL 对象，并自动补齐连接参数
+- README、快速开始和用户手册已重写为更贴近测试工程师真实使用习惯的表达方式
+- README 已前移说明 `ptest / ptestx` 命名关系，避免首次安装和案例阅读时混淆
+
+### Fixed - 修复
+
+- MySQL 真实启动前已增加 runtime backend 能力预检，不再把受限环境中的 bind 失败模糊地表现为中途启动错误
+- MySQL `stop` / `uninstall` 已形成更完整的边界检查和清理闭环
+- 文档中的工作区使用方式已降低对重复 `--path` 的依赖，更符合单工作区日常操作模式
+
 ## [1.5.0] - 2026-03-26
 
 ### Added - 新增功能

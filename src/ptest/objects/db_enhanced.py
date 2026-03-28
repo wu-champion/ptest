@@ -3,6 +3,12 @@
 增强的数据库对象 - 正确的服务端/客户端分离架构
 """
 
+import shutil
+import subprocess
+import tarfile
+import os
+from pathlib import Path
+
 from .base import BaseManagedObject
 from .db_server import DatabaseServerComponent
 from .db_client import DatabaseClientComponent
@@ -30,16 +36,19 @@ class DatabaseServerObject(BaseManagedObject):
 
         self.env_manager.logger.info(f"Installing database server: {self.name}")
 
+        db_type = str(params.get("db_type", "sqlite")).lower()
+        if db_type == "mysql":
+            return self._install_mysql_managed_instance(params)
+
         # 准备服务端配置
         server_config = {
-            "db_type": params.get("db_type", "sqlite"),
+            "db_type": db_type,
             "host": params.get("server_host", "localhost"),
-            "port": params.get(
-                "server_port", self._get_default_port(params.get("db_type", "sqlite"))
-            ),
+            "port": params.get("server_port", self._get_default_port(db_type)),
             "data_dir": params.get("data_dir", f"/tmp/{self.name}_data"),
             "log_file": params.get("log_file", f"/tmp/{self.name}.log"),
             "pid_file": params.get("pid_file", f"/tmp/{self.name}.pid"),
+            "config_file": params.get("config_file", ""),
         }
 
         # 添加数据库特定配置
@@ -60,6 +69,375 @@ class DatabaseServerObject(BaseManagedObject):
 
         except Exception as e:
             return f"✗ Failed to install database server: {str(e)}"
+
+    def _install_mysql_managed_instance(self, params: Dict[str, Any]) -> str:
+        package_path_value = params.get("mysql_package_path")
+        if not isinstance(package_path_value, str) or not package_path_value:
+            return "✗ MySQL installation requires mysql_package_path"
+
+        package_path = Path(package_path_value).expanduser().resolve()
+        if not package_path.exists():
+            return f"✗ MySQL package does not exist: {package_path}"
+        if not package_path.is_file():
+            return f"✗ MySQL package path is not a file: {package_path}"
+        if not package_path.stat().st_size:
+            return f"✗ MySQL package is empty: {package_path}"
+
+        managed_instance = params.get("managed_instance", {})
+        if not isinstance(managed_instance, dict):
+            return "✗ Managed instance layout is missing for MySQL installation"
+
+        required_dirs = (
+            "instance_root",
+            "install_dir",
+            "data_dir",
+            "config_dir",
+            "lib_dir",
+            "files_dir",
+            "log_dir",
+            "run_dir",
+        )
+        missing_dir_keys = [key for key in required_dirs if key not in managed_instance]
+        if missing_dir_keys:
+            joined = ", ".join(sorted(missing_dir_keys))
+            return f"✗ Managed instance layout is incomplete: missing {joined}"
+
+        instance_paths = {
+            key: Path(str(managed_instance[key])).expanduser().resolve()
+            for key in required_dirs
+        }
+
+        for path in instance_paths.values():
+            path.mkdir(parents=True, exist_ok=True)
+        instance_paths["files_dir"].chmod(0o700)
+
+        config_file_value = params.get("config_file")
+        if not isinstance(config_file_value, str) or not config_file_value:
+            return "✗ MySQL managed instance requires config_file"
+        config_file = Path(config_file_value).expanduser().resolve()
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+
+        staged_package = instance_paths["install_dir"] / package_path.name
+        if staged_package != package_path:
+            shutil.copy2(package_path, staged_package)
+        params["staged_package_path"] = str(staged_package.resolve())
+        extracted_install_root, dependency_requirements = self._extract_mysql_package(
+            staged_package=staged_package,
+            install_dir=instance_paths["install_dir"],
+        )
+        params["dependency_requirements"] = dependency_requirements
+        runtime_library_paths = self._prepare_mysql_dependencies(
+            dependency_assets=params.get("dependency_assets", []),
+            lib_dir=instance_paths["lib_dir"],
+        )
+        params["runtime_library_paths"] = runtime_library_paths
+        params["mysql_binary"] = self._resolve_mysql_binary_path(extracted_install_root)
+
+        mysql_config = {
+            "max_connections": 100,
+            "innodb_buffer_pool_size": "256M",
+            **params.get("mysql_config", {}),
+        }
+        mysql_server_options = self._filter_mysql_server_options(mysql_config)
+
+        config_content = self._build_mysql_config(
+            host=str(params.get("server_host", "127.0.0.1")),
+            port=int(params.get("server_port", self._get_default_port("mysql"))),
+            data_dir=instance_paths["data_dir"],
+            files_dir=instance_paths["files_dir"],
+            log_file=Path(
+                str(params.get("log_file", instance_paths["log_dir"] / "mysql.log"))
+            ).resolve(),
+            pid_file=Path(
+                str(params.get("pid_file", instance_paths["run_dir"] / "mysql.pid"))
+            ).resolve(),
+            socket_file=Path(
+                str(params.get("socket_file", instance_paths["run_dir"] / "mysql.sock"))
+            ).resolve(),
+            mysql_config=mysql_server_options,
+        )
+        config_file.write_text(config_content, encoding="utf-8")
+
+        server_config = {
+            "db_type": "mysql",
+            "host": str(params.get("server_host", "127.0.0.1")),
+            "port": int(params.get("server_port", self._get_default_port("mysql"))),
+            "runtime_backend": str(params.get("runtime_backend", "host")),
+            "data_dir": str(instance_paths["data_dir"]),
+            "log_file": str(
+                Path(
+                    str(params.get("log_file", instance_paths["log_dir"] / "mysql.log"))
+                ).resolve()
+            ),
+            "pid_file": str(
+                Path(
+                    str(params.get("pid_file", instance_paths["run_dir"] / "mysql.pid"))
+                ).resolve()
+            ),
+            "socket_file": str(
+                Path(
+                    str(
+                        params.get(
+                            "socket_file",
+                            instance_paths["run_dir"] / "mysql.sock",
+                        )
+                    )
+                ).resolve()
+            ),
+            "config_file": str(config_file),
+            "database_name": str(params.get("database_name", "ptest_mysql")),
+            "mysql_config": mysql_config,
+            "install_root": str(extracted_install_root),
+            "managed_instance": {
+                key: str(path) for key, path in instance_paths.items()
+            },
+            "source_asset": params.get("source_asset", {}),
+            "staged_package_path": str(staged_package.resolve()),
+            "mysql_binary": self._resolve_mysql_binary_path(extracted_install_root),
+            "workspace_path": params.get("workspace_path", ""),
+            "runtime_library_paths": runtime_library_paths,
+            "dependency_assets": params.get("dependency_assets", []),
+            "dependency_requirements": dependency_requirements,
+        }
+
+        try:
+            self.server_component = DatabaseServerComponent(server_config)
+            self.installed = True
+            self.status = "installed"
+            return (
+                f"✓ {get_colored_text('Database Server', 92)} object '{self.name}' "
+                f"(mysql) installed in managed workspace"
+            )
+        except Exception as e:
+            return f"✗ Failed to install MySQL managed instance: {str(e)}"
+
+    def _prepare_mysql_dependencies(
+        self,
+        *,
+        dependency_assets: Any,
+        lib_dir: Path,
+    ) -> list[str]:
+        if not isinstance(dependency_assets, list):
+            return []
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        runtime_library_paths: list[str] = []
+        for item in dependency_assets:
+            if not isinstance(item, dict):
+                continue
+            source_value = item.get("path")
+            if not isinstance(source_value, str) or not source_value:
+                continue
+            source_path = Path(source_value).expanduser().resolve()
+            if not source_path.exists():
+                continue
+            if source_path.is_file() and source_path.suffix == ".deb":
+                extract_root = lib_dir / source_path.stem
+                if extract_root.exists():
+                    shutil.rmtree(extract_root)
+                extract_root.mkdir(parents=True, exist_ok=True)
+                self._extract_dependency_deb_package(source_path, extract_root)
+                runtime_library_paths.extend(
+                    self._discover_shared_library_dirs(extract_root)
+                )
+                continue
+            target_path = lib_dir / source_path.name
+            if source_path.is_dir():
+                if target_path.exists():
+                    shutil.rmtree(target_path)
+                shutil.copytree(source_path, target_path)
+                runtime_library_paths.extend(
+                    self._discover_shared_library_dirs(target_path)
+                )
+            else:
+                shutil.copy2(source_path, target_path)
+                runtime_library_paths.append(str(lib_dir.resolve()))
+        return list(dict.fromkeys(path for path in runtime_library_paths if path))
+
+    def _extract_dependency_deb_package(
+        self,
+        package_path: Path,
+        target_dir: Path,
+    ) -> None:
+        subprocess.run(
+            ["dpkg-deb", "-x", str(package_path), str(target_dir)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _discover_shared_library_dirs(self, root: Path) -> list[str]:
+        if root.is_file():
+            return [str(root.parent.resolve())] if ".so" in root.name else []
+
+        library_dirs: list[str] = []
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            if ".so" not in path.name:
+                continue
+            directory = str(path.parent.resolve())
+            if directory not in library_dirs:
+                library_dirs.append(directory)
+        return library_dirs
+
+    def _build_mysql_config(
+        self,
+        *,
+        host: str,
+        port: int,
+        data_dir: Path,
+        files_dir: Path,
+        log_file: Path,
+        pid_file: Path,
+        socket_file: Path,
+        mysql_config: Dict[str, Any],
+    ) -> str:
+        lines = [
+            "[mysqld]",
+            f"bind-address={host}",
+            f"port={port}",
+            f"datadir={data_dir}",
+            f"secure-file-priv={files_dir}",
+            f"log-error={log_file}",
+            f"pid-file={pid_file}",
+            f"socket={socket_file}",
+            "mysqlx=0",
+            "skip-networking=0",
+        ]
+        for key, value in mysql_config.items():
+            lines.append(f"{key}={value}")
+        lines.append("")
+        return "\n".join(lines)
+
+    def _filter_mysql_server_options(
+        self,
+        mysql_config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        reserved_keys = {"health_check_mode"}
+        return {
+            key: value
+            for key, value in mysql_config.items()
+            if key not in reserved_keys
+        }
+
+    def _extract_mysql_package(
+        self, *, staged_package: Path, install_dir: Path
+    ) -> tuple[Path, dict[str, Any]]:
+        if staged_package.name.endswith(".deb-bundle.tar"):
+            return self._extract_mysql_deb_bundle(
+                staged_package=staged_package,
+                install_dir=install_dir,
+            )
+        if tarfile.is_tarfile(staged_package):
+            with tarfile.open(staged_package) as archive:
+                archive.extractall(install_dir)
+            extracted_roots = sorted(
+                path
+                for path in install_dir.iterdir()
+                if path.is_dir() and path.name != "__MACOSX"
+            )
+            if len(extracted_roots) == 1:
+                return extracted_roots[0], {}
+            return install_dir, {}
+        return install_dir, {}
+
+    def _extract_mysql_deb_bundle(
+        self, *, staged_package: Path, install_dir: Path
+    ) -> tuple[Path, dict[str, Any]]:
+        bundle_dir = install_dir / "_deb_bundle"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(staged_package) as archive:
+            archive.extractall(bundle_dir)
+
+        rootfs_dir = install_dir / "mysql-rootfs"
+        rootfs_dir.mkdir(parents=True, exist_ok=True)
+
+        package_names = {
+            "server_core": "mysql-community-server-core_",
+            "client_core": "mysql-community-client-core_",
+            "common": "mysql-common_",
+        }
+        matched_packages: dict[str, Path] = {}
+        for package_type, prefix in package_names.items():
+            matches = sorted(bundle_dir.glob(f"{prefix}*.deb"))
+            if matches:
+                matched_packages[package_type] = matches[0]
+
+        server_core = matched_packages.get("server_core")
+        if server_core is None:
+            raise FileNotFoundError(
+                "MySQL DEB bundle is missing mysql-community-server-core package"
+            )
+        dependency_requirements = self._read_deb_dependency_requirements(server_core)
+
+        for package in matched_packages.values():
+            self._extract_deb_package(package, rootfs_dir)
+
+        return rootfs_dir, dependency_requirements
+
+    def _extract_deb_package(self, package_path: Path, rootfs_dir: Path) -> None:
+        subprocess.run(
+            ["dpkg-deb", "-x", str(package_path), str(rootfs_dir)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _read_deb_dependency_requirements(self, package_path: Path) -> dict[str, Any]:
+        result = subprocess.run(
+            ["dpkg-deb", "-f", str(package_path), "Depends"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        raw_depends = result.stdout.strip()
+        if not raw_depends:
+            return {
+                "package": package_path.name,
+                "raw": "",
+                "external_packages": [],
+            }
+
+        external_packages: list[str] = []
+        for requirement in raw_depends.split(","):
+            for alternative in requirement.split("|"):
+                name = alternative.strip().split(" ", 1)[0]
+                if name and name not in external_packages:
+                    external_packages.append(name)
+
+        return {
+            "package": package_path.name,
+            "raw": raw_depends,
+            "external_packages": external_packages,
+        }
+
+    def _resolve_mysql_binary_path(self, install_root: Path) -> str:
+        if os.name == "nt":
+            candidates = (
+                install_root / "bin" / "mysqld.exe",
+                install_root / "bin" / "mysqld.cmd",
+                install_root / "bin" / "mysqld.bat",
+                install_root / "bin" / "mysqld",
+                install_root / "usr" / "sbin" / "mysqld.exe",
+                install_root / "usr" / "sbin" / "mysqld.cmd",
+                install_root / "usr" / "sbin" / "mysqld.bat",
+                install_root / "usr" / "sbin" / "mysqld",
+            )
+        else:
+            candidates = (
+                install_root / "bin" / "mysqld",
+                install_root / "bin" / "mysqld.exe",
+                install_root / "bin" / "mysqld.cmd",
+                install_root / "bin" / "mysqld.bat",
+                install_root / "usr" / "sbin" / "mysqld",
+                install_root / "usr" / "sbin" / "mysqld.exe",
+                install_root / "usr" / "sbin" / "mysqld.cmd",
+                install_root / "usr" / "sbin" / "mysqld.bat",
+            )
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+        return str(candidates[0])
 
     def start(self) -> str:
         """启动数据库服务端"""
@@ -105,15 +483,30 @@ class DatabaseServerObject(BaseManagedObject):
     def uninstall(self) -> str:
         """卸载数据库服务端"""
         if self.status == "running":
-            self.stop()
+            stop_result = self.stop()
+            if "✓" not in stop_result:
+                return stop_result
 
         self.env_manager.logger.info(f"Removing database server: {self.name}")
 
         try:
+            managed_instance: dict[str, Any] = {}
             if self.server_component:
                 if self.server_component.status == "running":
-                    self.server_component.stop()
+                    success, message = self.server_component.stop()
+                    if not success:
+                        return f"✗ Failed to stop database server during uninstall: {message}"
+                config = getattr(self.server_component, "config", {})
+                if isinstance(config, dict):
+                    managed_instance = config.get("managed_instance", {})
                 self.server_component = None
+
+            if isinstance(managed_instance, dict):
+                instance_root_value = managed_instance.get("instance_root")
+                if isinstance(instance_root_value, str) and instance_root_value:
+                    instance_root = Path(instance_root_value).expanduser().resolve()
+                    if instance_root.exists():
+                        shutil.rmtree(instance_root)
 
             self.installed = False
             self.status = "removed"

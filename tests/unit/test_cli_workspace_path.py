@@ -130,3 +130,92 @@ def test_cli_execution_artifacts_use_workspace_path(
     assert exit_code == 0
     assert execution_id in captured.out
     assert "artifact_index.json" in captured.out
+
+
+def test_cli_mysql_install_accepts_dependency_assets(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    dependency_a = tmp_path / "deps" / "libaio.so.1t64"
+    dependency_b = tmp_path / "deps" / "libnuma.so.1"
+
+    args = cli.setup_cli().parse_args(
+        [
+            "obj",
+            "install",
+            "mysql",
+            "mysql_service",
+            "--package-path",
+            str(tmp_path / "mysql.tar.xz"),
+            "--dependency-asset",
+            str(dependency_a),
+            "--dependency-asset",
+            str(dependency_b),
+            "--path",
+            str(workspace),
+        ]
+    )
+
+    assert args.package_path.endswith("mysql.tar.xz")
+    assert args.dependency_assets == [str(dependency_a), str(dependency_b)]
+    assert Path(args.path) == workspace
+
+
+def test_cli_mysql_install_forwards_dependency_assets(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    WorkflowService(workspace).init_environment()
+    package_path = tmp_path / "assets" / "mysql.tar.xz"
+    package_path.parent.mkdir(parents=True, exist_ok=True)
+    package_path.write_text("fake-package", encoding="utf-8")
+    dependency_path = tmp_path / "deps" / "libaio.so.1t64"
+    dependency_path.parent.mkdir(parents=True, exist_ok=True)
+    dependency_path.write_text("fake-lib", encoding="utf-8")
+
+    captured_params: dict[str, object] = {}
+
+    def fake_install_object(
+        self: WorkflowService,
+        obj_type: str,
+        name: str,
+        params: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        captured_params["obj_type"] = obj_type
+        captured_params["name"] = name
+        captured_params["params"] = params or {}
+        return {
+            "success": True,
+            "message": "installed",
+        }
+
+    monkeypatch.setattr(WorkflowService, "install_object", fake_install_object)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "obj",
+            "install",
+            "mysql",
+            "mysql_service",
+            "--package-path",
+            str(package_path),
+            "--dependency-asset",
+            str(dependency_path),
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "installed" in captured.out
+    assert captured_params["obj_type"] == "mysql"
+    assert captured_params["name"] == "mysql_service"
+    assert captured_params["params"] == {
+        "mysql_package_path": str(package_path),
+        "dependency_assets": [{"path": str(dependency_path)}],
+        "workspace_path": str(workspace.resolve()),
+        "driver": "mysql",
+    }

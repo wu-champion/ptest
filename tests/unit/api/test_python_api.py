@@ -113,6 +113,60 @@ class TestTestCaseManagement(unittest.TestCase):
         self.assertIsInstance(result["data"], list)
 
 
+class TestObjectManagement(unittest.TestCase):
+    """对象管理功能测试"""
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp(prefix="ptest_object_test_")
+        self.api = PTestAPI(work_path=self.test_dir)
+        self.api.init_environment()
+
+    def tearDown(self):
+        if Path(self.test_dir).exists():
+            shutil.rmtree(self.test_dir)
+
+    def test_object_lifecycle_methods_delegate_to_workflow(self):
+        calls: list[tuple[str, str]] = []
+
+        def _result(action: str) -> dict[str, object]:
+            return {
+                "success": True,
+                "status": action,
+                "message": f"{action} ok",
+                "data": {"name": "demo_object"},
+                "checks": {"action": action},
+            }
+
+        self.api.workflow.get_object_status = lambda name: _result("status")  # type: ignore[method-assign]
+        self.api.workflow.start_object = lambda name: (
+            calls.append(("start", name)) or _result("running")
+        )  # type: ignore[method-assign]
+        self.api.workflow.stop_object = lambda name: (
+            calls.append(("stop", name)) or _result("stopped")
+        )  # type: ignore[method-assign]
+        self.api.workflow.uninstall_object = lambda name: (
+            calls.append(("uninstall", name)) or _result("removed")
+        )  # type: ignore[method-assign]
+
+        status = self.api.get_object_status("demo_object")
+        started = self.api.start_object("demo_object")
+        stopped = self.api.stop_object("demo_object")
+        removed = self.api.uninstall_object("demo_object")
+
+        self.assertTrue(status["success"])
+        self.assertTrue(started["success"])
+        self.assertTrue(stopped["success"])
+        self.assertTrue(removed["success"])
+        self.assertEqual(
+            calls,
+            [
+                ("start", "demo_object"),
+                ("stop", "demo_object"),
+                ("uninstall", "demo_object"),
+            ],
+        )
+
+
 class TestReportGeneration(unittest.TestCase):
     """报告生成功能测试"""
 
@@ -157,7 +211,7 @@ class TestSystemInfo(unittest.TestCase):
         self.assertTrue(info["success"])
         self.assertIn("version", info["data"])
         self.assertIn("api_version", info["data"])
-        self.assertEqual(info["data"]["version"], "1.5.0")
+        self.assertEqual(info["data"]["version"], "1.6.0")
         self.assertIn("isolation_engines", info["data"])
 
 
@@ -199,6 +253,7 @@ def run_api_tests():
         TestPTestAPI,
         TestEnvironmentManagement,
         TestTestCaseManagement,
+        TestObjectManagement,
         TestReportGeneration,
         TestSystemInfo,
         TestContextManager,

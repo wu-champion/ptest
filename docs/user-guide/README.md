@@ -5,6 +5,7 @@
 ## 推荐阅读顺序
 
 1. [basic-usage.md](basic-usage.md)
+2. [mysql-full-lifecycle.md](mysql-full-lifecycle.md)
 
 ## 适用范围
 
@@ -13,6 +14,11 @@
 - 测试工程师
 - 自动化测试使用者
 - 需要快速上手 `ptest` CLI / Python API 的项目成员
+
+## 当前说明
+
+- SQLite 等轻量对象可以直接作为最小主线示例
+- MySQL 全生命周期主案例当前基于 `host` runtime backend，需要执行环境支持真实服务运行
 
 ## 与其他目录的关系
 

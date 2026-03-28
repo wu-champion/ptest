@@ -121,21 +121,38 @@ jobs:
           VERSION=$(grep -oP '(?<=version = ")[^"]+' pyproject.toml)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: 准备 Release Notes
+        id: release_notes
+        run: |
+          TAG="v${{ steps.get_version.outputs.version }}"
+          VERSION="${{ steps.get_version.outputs.version }}"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+
+          if [ -f "$NOTES_FILE" ]; then
+            echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+            echo "使用仓库中的 release notes: $NOTES_FILE"
+          else
+            FALLBACK_FILE="$RUNNER_TEMP/release-notes-${VERSION}.md"
+            cat > "$FALLBACK_FILE" <<EOF
+          ## ptest ${TAG}
+
+          本次版本通过手动触发 CD 工作流创建 Release。
+
+          安装命令：
+          \`\`\`bash
+          pip install ptestx==${VERSION}
+          \`\`\`
+          EOF
+            echo "path=$FALLBACK_FILE" >> "$GITHUB_OUTPUT"
+            echo "未找到版本专用 release notes，已生成默认说明。"
+          fi
+
       - name: 创建 Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.get_version.outputs.version }}
           name: Release v${{ steps.get_version.outputs.version }}
-          body: |
-            ## ptest v${{ steps.get_version.outputs.version }}
-            
-            ### 更新内容
-            - 自动化发布
-            
-            ### 安装
-            ```bash
-            pip install ptestx==${{ steps.get_version.outputs.version }}
-            ```
+          body_path: ${{ steps.release_notes.outputs.path }}
           files: dist/*
           draft: false
           prerelease: false

@@ -120,7 +120,9 @@ class TestExecutor:
             result.end_time = datetime.now()
             result.duration = (result.end_time - result.start_time).total_seconds()
             if not result.error_message:
-                result.output = str(test_output)
+                result.output = (
+                    test_output if not isinstance(test_output, str) else test_output
+                )
 
         return result
 
@@ -325,14 +327,21 @@ class TestExecutor:
             password = case_data.get("password", "")
             query = case_data.get("query", "")
             expected_result = case_data.get("expected_result", None)
+            operations = case_data.get("operations", [])
 
             self.env_manager.logger.info(f"Executing database test: {db_type} {query}")
 
             if db_type == "mysql":
+                if isinstance(operations, list) and operations:
+                    return self._execute_mysql_operations(
+                        host, port, database, username, password, operations
+                    )
                 return self._execute_mysql_query(
                     host, port, database, username, password, query, expected_result
                 )
             elif db_type == "sqlite":
+                if isinstance(operations, list) and operations:
+                    return self._execute_sqlite_operations(database, operations)
                 return self._execute_sqlite_query(database, query, expected_result)
             else:
                 return False, f"Unsupported database type: {db_type}"
@@ -401,6 +410,36 @@ class TestExecutor:
         except Exception as e:
             return False, f"MySQL error: {str(e)}"
 
+    def _execute_mysql_operations(
+        self,
+        host: str,
+        port: int,
+        database: str,
+        username: str,
+        password: str,
+        operations: list[dict[str, Any]],
+    ) -> Tuple[bool, Any]:
+        """执行 MySQL 多步操作测试"""
+        if not PYMYSQL_AVAILABLE:
+            return False, "pymysql module not installed. Run: pip install pymysql"
+
+        try:
+            connection = pymysql.connect(  # type: ignore
+                host=host,
+                port=port,
+                user=username,
+                password=password,
+                database=database,
+                charset="utf8mb4",
+            )
+            success, result = self._execute_database_operations(connection, operations)
+            connection.close()
+            if success:
+                return True, result
+            return False, f"MySQL operation error: {result}"
+        except Exception as e:
+            return False, f"MySQL error: {str(e)}"
+
     def _execute_sqlite_query(
         self, database: str, query: str, expected_result: Any
     ) -> Tuple[bool, Any]:
@@ -453,6 +492,124 @@ class TestExecutor:
 
         except Exception as e:
             return False, f"SQLite error: {str(e)}"
+
+    def _execute_sqlite_operations(
+        self,
+        database: str,
+        operations: list[dict[str, Any]],
+    ) -> Tuple[bool, Any]:
+        """执行 SQLite 多步操作测试"""
+        try:
+            connection = sqlite3.connect(database)
+            connection.row_factory = sqlite3.Row
+            success, result = self._execute_database_operations(connection, operations)
+            connection.close()
+            if success:
+                return True, result
+            return False, f"SQLite operation error: {result}"
+        except Exception as e:
+            return False, f"SQLite error: {str(e)}"
+
+    def _execute_database_operations(
+        self,
+        connection: Any,
+        operations: list[dict[str, Any]],
+    ) -> Tuple[bool, Any]:
+        """按顺序执行多步数据库操作并进行断言。"""
+        step_results: list[dict[str, Any]] = []
+
+        for index, operation in enumerate(operations, start=1):
+            if not isinstance(operation, dict):
+                return False, f"Operation {index} is not a valid mapping"
+
+            query = str(operation.get("query", "")).strip()
+            if not query:
+                return False, f"Operation {index} is missing query"
+
+            expected_result = operation.get("expected_result")
+            step_name = str(operation.get("name", f"step_{index}"))
+
+            with connection.cursor() as cursor:
+                cursor.execute(query)
+                result: Any
+                if query.upper().startswith("SELECT"):
+                    result = self._normalize_database_rows(
+                        cursor.fetchall(),
+                        getattr(cursor, "description", None),
+                    )
+                else:
+                    connection.commit()
+                    result = {
+                        "rowcount": getattr(cursor, "rowcount", 0),
+                    }
+
+            valid, validation_message = self._validate_database_result(
+                expected_result,
+                result,
+            )
+            if not valid:
+                return (
+                    False,
+                    f"Operation {index} ({step_name}) failed validation: {validation_message}",
+                )
+
+            step_results.append(
+                {
+                    "index": index,
+                    "name": step_name,
+                    "query": query,
+                    "result": result,
+                }
+            )
+
+        return True, step_results
+
+    def _normalize_database_rows(
+        self,
+        rows: Any,
+        description: Any,
+    ) -> list[dict[str, Any]]:
+        """将数据库查询结果统一转换为 dict 列表。"""
+        normalized: list[dict[str, Any]] = []
+        if not isinstance(rows, list):
+            rows = list(rows)
+        columns = [desc[0] for desc in description] if description else []
+        for row in rows:
+            if isinstance(row, dict):
+                normalized.append(row)
+            elif isinstance(row, sqlite3.Row):
+                normalized.append(dict(row))
+            elif columns:
+                normalized.append(dict(zip(columns, row)))
+            else:
+                normalized.append({"value": row})
+        return normalized
+
+    def _validate_database_result(
+        self,
+        expected_result: Any,
+        result: Any,
+    ) -> Tuple[bool, str]:
+        """校验数据库操作结果。"""
+        if expected_result is None:
+            return True, ""
+        if isinstance(expected_result, dict) and "count" in expected_result:
+            expected_count = expected_result["count"]
+            if isinstance(result, list):
+                if len(result) == 1 and "count" in result[0]:
+                    actual_count = result[0]["count"]
+                else:
+                    actual_count = len(result)
+            elif isinstance(result, dict) and "rowcount" in result:
+                actual_count = result["rowcount"]
+            else:
+                actual_count = 0
+            if actual_count != expected_count:
+                return False, f"Expected {expected_count} rows, got {actual_count}"
+            return True, ""
+        if not self._compare_response(expected_result, result):
+            return False, f"Expected {expected_result}, got {result}"
+        return True, ""
 
     def _execute_web_test(self, case_data: Dict[str, Any]) -> Tuple[bool, Any]:
         """执行Web测试"""
