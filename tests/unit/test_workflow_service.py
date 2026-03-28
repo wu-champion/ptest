@@ -29,8 +29,8 @@ def _create_fake_mysql_archive(package_path: Path) -> Path:
     stage_dir = package_path.parent / "fake_mysql_pkg"
     bin_dir = stage_dir / "mysql-8.4" / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
-    fake_mysqld = bin_dir / "mysqld"
-    fake_mysqld.write_text(
+    fake_mysqld_script = bin_dir / "mysqld.py"
+    fake_mysqld_script.write_text(
         textwrap.dedent(
             """\
             #!/usr/bin/env python3
@@ -125,7 +125,23 @@ def _create_fake_mysql_archive(package_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
+    fake_mysqld_script.chmod(0o755)
+    fake_mysqld = bin_dir / "mysqld"
+    fake_mysqld.write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            exec "$(command -v python3)" "$(dirname "$0")/mysqld.py" "$@"
+            """
+        ),
+        encoding="utf-8",
+    )
     fake_mysqld.chmod(0o755)
+    fake_mysqld_cmd = bin_dir / "mysqld.cmd"
+    fake_mysqld_cmd.write_text(
+        '@echo off\r\npython "%~dp0mysqld.py" %*\r\n',
+        encoding="utf-8",
+    )
     with tarfile.open(package_path, "w:xz") as archive:
         archive.add(stage_dir / "mysql-8.4", arcname="mysql-8.4")
     return package_path
@@ -402,13 +418,19 @@ def test_workflow_service_builds_mysql_scenario_defaults(tmp_path: Path) -> None
     assert config["scenario"]["boundary_checks"]["check_workspace_boundary"] is True
     managed_instance = config["managed_instance"]
     assert managed_instance["instance_root"].startswith(str(tmp_path.resolve()))
-    assert managed_instance["data_dir"].endswith("mysql_service/data")
-    assert managed_instance["lib_dir"].endswith("mysql_service/lib")
-    assert managed_instance["files_dir"].endswith("mysql_service/mysql-files")
-    assert config["config_file"].endswith("mysql_service/config/my.cnf")
-    assert config["log_file"].endswith("mysql_service/logs/mysql.log")
-    assert config["pid_file"].endswith("mysql_service/run/mysql.pid")
-    assert config["socket_file"].endswith("mysql_service/run/mysql.sock")
+    assert _normalized_path(managed_instance["data_dir"]).endswith("mysql_service/data")
+    assert _normalized_path(managed_instance["lib_dir"]).endswith("mysql_service/lib")
+    assert _normalized_path(managed_instance["files_dir"]).endswith(
+        "mysql_service/mysql-files"
+    )
+    assert _normalized_path(config["config_file"]).endswith(
+        "mysql_service/config/my.cnf"
+    )
+    assert _normalized_path(config["log_file"]).endswith("mysql_service/logs/mysql.log")
+    assert _normalized_path(config["pid_file"]).endswith("mysql_service/run/mysql.pid")
+    assert _normalized_path(config["socket_file"]).endswith(
+        "mysql_service/run/mysql.sock"
+    )
     assert Path(config["config_file"]).exists()
     assert (
         Path(config["config_file"]).read_text(encoding="utf-8").startswith("[mysqld]")
@@ -484,7 +506,7 @@ def test_workflow_service_installs_mysql_from_deb_bundle(
     assert install_result["success"] is True
     config = install_result["object"]["config"]
     assert config["staged_package_path"].endswith(".deb-bundle.tar")
-    assert config["mysql_binary"].endswith("usr/sbin/mysqld")
+    assert _normalized_path(config["mysql_binary"]).endswith("usr/sbin/mysqld")
     assert Path(config["mysql_binary"]).exists()
     assert config["source_asset"]["source_type"] == "archive"
     assert config["dependency_requirements"] == {
@@ -619,7 +641,10 @@ def test_workflow_service_starts_mysql_managed_instance(tmp_path: Path) -> None:
     details = status["object"]["metadata"]["runtime"]["details"]
     assert details["pid"]
     assert details["endpoint"].endswith(f":{mysql_port}")
-    assert details["mysql_binary"].endswith("bin/mysqld")
+    normalized_binary = _normalized_path(details["mysql_binary"])
+    assert normalized_binary.endswith("bin/mysqld") or normalized_binary.endswith(
+        "bin/mysqld.cmd"
+    )
 
     stop_result = service.stop_object("mysql_service")
     assert stop_result["success"] is True
@@ -736,7 +761,7 @@ def test_workflow_service_uninstalls_mysql_managed_instance(tmp_path: Path) -> N
     uninstall_result = service.uninstall_object("mysql_service")
     assert uninstall_result["success"] is True
     assert uninstall_result["status"] == "removed"
-    assert instance_root.exists() is False
+    assert not instance_root.exists()
     checks = uninstall_result["checks"]
     assert checks["workspace_boundary"]["ok"] is True
     assert checks["process_cleanup"]["ok"] is True

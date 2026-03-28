@@ -268,13 +268,28 @@ class DatabaseServerComponent(ServiceServerComponent):
 
     def _resolve_mysql_binary(self) -> Path:
         if self.mysql_binary:
-            return Path(self.mysql_binary).expanduser().resolve()
+            configured = Path(self.mysql_binary).expanduser().resolve()
+            if configured.exists():
+                return configured
+            for suffix in (".cmd", ".bat", ".exe"):
+                candidate = Path(f"{configured}{suffix}")
+                if candidate.exists():
+                    return candidate
         if self.install_root:
-            managed_binary = (
-                Path(self.install_root).expanduser().resolve() / "bin" / "mysqld"
-            )
-            if managed_binary.exists():
-                return managed_binary
+            install_root = Path(self.install_root).expanduser().resolve()
+            for relative_path in (
+                Path("bin/mysqld"),
+                Path("bin/mysqld.cmd"),
+                Path("bin/mysqld.bat"),
+                Path("bin/mysqld.exe"),
+                Path("usr/sbin/mysqld"),
+                Path("usr/sbin/mysqld.cmd"),
+                Path("usr/sbin/mysqld.bat"),
+                Path("usr/sbin/mysqld.exe"),
+            ):
+                managed_binary = install_root / relative_path
+                if managed_binary.exists():
+                    return managed_binary
         return Path("mysqld")
 
     def _build_mysql_process_env(self) -> dict[str, str]:

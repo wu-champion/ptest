@@ -413,7 +413,13 @@ class DatabaseServerObject(BaseManagedObject):
     def _resolve_mysql_binary_path(self, install_root: Path) -> str:
         candidates = (
             install_root / "bin" / "mysqld",
+            install_root / "bin" / "mysqld.cmd",
+            install_root / "bin" / "mysqld.bat",
+            install_root / "bin" / "mysqld.exe",
             install_root / "usr" / "sbin" / "mysqld",
+            install_root / "usr" / "sbin" / "mysqld.cmd",
+            install_root / "usr" / "sbin" / "mysqld.bat",
+            install_root / "usr" / "sbin" / "mysqld.exe",
         )
         for candidate in candidates:
             if candidate.exists():
