@@ -1,7 +1,5 @@
 # MySQL 全生命周期实践
 
-[中文](./mysql-full-lifecycle.md) | [English](./mysql-full-lifecycle.en.md)
-
 这篇文档不是一个“把一串命令贴完就结束”的自动化示例。  
 它更接近测试工程师在真实工作里的使用方式：
 
@@ -281,14 +279,6 @@ runtime backend: host
   "object_name": "mysql_demo",
   "operations": [
     {
-      "name": "create_database",
-      "query": "CREATE DATABASE IF NOT EXISTS ptest_mysql_demo"
-    },
-    {
-      "name": "use_database",
-      "query": "USE ptest_mysql_demo"
-    },
-    {
       "name": "create_table",
       "query": "CREATE TABLE IF NOT EXISTS crud_items (id INT PRIMARY KEY, name VARCHAR(32))"
     },
@@ -373,16 +363,8 @@ ptest case run mysql_crud_case
 
 - 解析绑定对象 `mysql_demo`
 - 自动补齐数据库连接信息
-- 按顺序执行建库、用库、建表和 CRUD 操作
+- 按顺序执行 CRUD 操作
 - 记录执行结果
-
-这里的数据库流程现在是显式展开的：
-
-- 先 `CREATE DATABASE`
-- 再 `USE` 指定库
-- 再建表并做 CRUD
-
-也就是说，当前主案例不再依赖框架在启动后静默创建业务库。
 
 如果这一步成功，你通常会看到类似结果：
 
@@ -506,60 +488,7 @@ ptest problem recover <problem_id>
 - `problem assets` 会告诉你这次失败保留下来了哪些信息
 - `problem recover` 会告诉你当前这类问题至少还能做什么恢复动作
 
-### 第 10 步：如果对象进入失败保留态，使用 clear / reset
-
-从这一版开始，MySQL 主案例已经支持两类失败保留状态：
-
-- `install_failed_preserved`
-- `start_failed_preserved`
-
-你可以先查看对象状态：
-
-```bash
-ptest obj status mysql_demo
-```
-
-如果对象进入失败保留态，通常会看到类似结果：
-
-```text
-对象名称: mysql_demo
-当前状态: start_failed_preserved
-可用动作: clear, reset
-failure_state.phase: start
-```
-
-这时有两个显式动作：
-
-```bash
-ptest obj clear mysql_demo
-ptest obj reset mysql_demo
-```
-
-两者区别是：
-
-- `clear`
-  只清理失败现场
-- `reset`
-  把整个对象重置回初始状态
-
-当前第一版规则是：
-
-- `install_failed_preserved`
-  - `clear` 后对象会被移除
-- `start_failed_preserved`
-  - `clear` 后对象会回到 `installed`
-- 对正常状态对象，`clear` 会被拒绝
-
-如果你只是想先分析失败原因，建议先看：
-
-```bash
-ptest obj status mysql_demo
-ptest problem list
-```
-
-再决定用 `clear` 还是 `reset`。
-
-### 第 11 步：停止 MySQL 对象
+### 第 10 步：停止 MySQL 对象
 
 ```bash
 ptest obj stop mysql_demo
@@ -579,7 +508,7 @@ ptest obj stop mysql_demo
 端口释放检查: passed
 ```
 
-### 第 12 步：卸载 MySQL 对象
+### 第 11 步：卸载 MySQL 对象
 
 ```bash
 ptest obj uninstall mysql_demo
@@ -595,7 +524,7 @@ ptest obj uninstall mysql_demo
 对象清理检查: passed
 ```
 
-### 第 13 步：在测试结束后，生成报告
+### 第 12 步：在测试结束后，生成报告
 
 到这一步，你已经完成了：
 
@@ -625,7 +554,7 @@ format: html
 report_path: ~/ptest/mysql-demo/.ptest/reports/latest/index.html
 ```
 
-### 第 14 步：如果需要，再销毁整个工作区
+### 第 13 步：如果需要，再销毁整个工作区
 
 ```bash
 cd ..
