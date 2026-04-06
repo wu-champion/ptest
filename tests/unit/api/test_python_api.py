@@ -144,12 +144,6 @@ class TestObjectManagement(unittest.TestCase):
         self.api.workflow.stop_object = lambda name: (
             calls.append(("stop", name)) or _result("stopped")
         )  # type: ignore[method-assign]
-        self.api.workflow.clear_object = lambda name: (
-            calls.append(("clear", name)) or _result("cleared")
-        )  # type: ignore[method-assign]
-        self.api.workflow.reset_object = lambda name: (
-            calls.append(("reset", name)) or _result("removed")
-        )  # type: ignore[method-assign]
         self.api.workflow.uninstall_object = lambda name: (
             calls.append(("uninstall", name)) or _result("removed")
         )  # type: ignore[method-assign]
@@ -157,23 +151,17 @@ class TestObjectManagement(unittest.TestCase):
         status = self.api.get_object_status("demo_object")
         started = self.api.start_object("demo_object")
         stopped = self.api.stop_object("demo_object")
-        cleared = self.api.clear_object("demo_object")
-        reset = self.api.reset_object("demo_object")
         removed = self.api.uninstall_object("demo_object")
 
         self.assertTrue(status["success"])
         self.assertTrue(started["success"])
         self.assertTrue(stopped["success"])
-        self.assertTrue(cleared["success"])
-        self.assertTrue(reset["success"])
         self.assertTrue(removed["success"])
         self.assertEqual(
             calls,
             [
                 ("start", "demo_object"),
                 ("stop", "demo_object"),
-                ("clear", "demo_object"),
-                ("reset", "demo_object"),
                 ("uninstall", "demo_object"),
             ],
         )

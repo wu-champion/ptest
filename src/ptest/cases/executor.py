@@ -369,7 +369,7 @@ class TestExecutor:
                 port=port,
                 user=username,
                 password=password,
-                database=database or None,
+                database=database,
                 charset="utf8mb4",
             )
 
@@ -429,7 +429,7 @@ class TestExecutor:
                 port=port,
                 user=username,
                 password=password,
-                database=database or None,
+                database=database,
                 charset="utf8mb4",
             )
             success, result = self._execute_database_operations(connection, operations)

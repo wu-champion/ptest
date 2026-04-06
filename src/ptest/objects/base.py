@@ -1,6 +1,5 @@
 # ptest/objects/base.py
 from abc import ABC, abstractmethod
-from ..models import OBJECT_STATUS_STOPPED
 # from ..environment import EnvironmentManager
 
 
@@ -15,7 +14,7 @@ class BaseManagedObject(ABC):
     ) -> None:
         self.name = name
         self.type_name = type_name
-        self.status = OBJECT_STATUS_STOPPED
+        self.status = "stopped"
         self.installed = False
         self.env_manager = env_manager
 
