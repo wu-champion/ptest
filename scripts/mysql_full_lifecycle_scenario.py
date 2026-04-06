@@ -15,13 +15,22 @@ from ptest.api import PTestAPI
 DEFAULT_OBJECT_NAME = "mysql_demo"
 DEFAULT_CASE_NAME = "mysql_full_lifecycle_crud"
 DEFAULT_REPORT_FORMAT = "json"
+DEFAULT_DATABASE_NAME = "ptest_mysql_demo"
 
 
-def _build_crud_case(object_name: str) -> dict[str, Any]:
+def _build_crud_case(object_name: str, database_name: str) -> dict[str, Any]:
     return {
         "type": "database",
         "object_name": object_name,
         "operations": [
+            {
+                "name": "create_database",
+                "query": f"CREATE DATABASE IF NOT EXISTS {database_name}",
+            },
+            {
+                "name": "use_database",
+                "query": f"USE {database_name}",
+            },
             {
                 "name": "create_table",
                 "query": (
@@ -121,6 +130,11 @@ def parse_args() -> argparse.Namespace:
         help=f"可选，默认 case 名为 {DEFAULT_CASE_NAME}",
     )
     parser.add_argument(
+        "--database-name",
+        default=DEFAULT_DATABASE_NAME,
+        help=f"可选，主案例显式创建并使用的数据库名，默认 {DEFAULT_DATABASE_NAME}",
+    )
+    parser.add_argument(
         "--report-format",
         default=DEFAULT_REPORT_FORMAT,
         choices=["json", "html", "xml", "junit"],
@@ -176,8 +190,8 @@ def main() -> int:
             api.create_test_case(
                 test_type="database",
                 name=args.case_name,
-                description="MySQL 全生命周期主案例 - 标准 CRUD",
-                content=_build_crud_case(args.object_name),
+                description="MySQL 全生命周期主案例 - 显式建库 / 用库 / CRUD",
+                content=_build_crud_case(args.object_name, args.database_name),
                 tags=["mysql", "lifecycle", "crud", "scenario"],
             ),
         )

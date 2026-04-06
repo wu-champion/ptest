@@ -1,11 +1,14 @@
 # ptest 用户文档
 
+[中文主入口](../../README.md) | [English Entry](../../README.en.md)
+
 `user-guide/` 目录面向框架使用者，提供安装、入门和基础操作说明。
 
 ## 推荐阅读顺序
 
 1. [basic-usage.md](basic-usage.md)
 2. [mysql-full-lifecycle.md](mysql-full-lifecycle.md)
+3. [mysql-full-lifecycle.en.md](mysql-full-lifecycle.en.md)
 
 ## 适用范围
 
