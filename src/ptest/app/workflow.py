@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import os
 import socket
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +24,16 @@ from ..models import (
     InstallationSourceAsset,
     ManagedObjectRecord,
     MySQLLifecycleScenarioConfig,
+    OBJECT_STATUS_ERROR,
+    OBJECT_STATUS_INSTALL_FAILED_PRESERVED,
+    OBJECT_STATUS_INSTALLED,
+    OBJECT_STATUS_RUNNING,
+    OBJECT_STATUS_START_FAILED_PRESERVED,
+    OBJECT_STATUS_STOPPED,
     ToolRecord,
+    is_clearable_object_status,
+    is_failure_preserved_object_status,
+    is_resettable_object_status,
 )
 from ..models import ProblemAssetRecord, ProblemRecord, ProblemRecoveryRecord
 from ..mock import MockConfig, MockServer
@@ -147,11 +157,21 @@ class WorkflowService:
         normalized_type = manager.normalize_type(obj_type)
         result = manager.install(normalized_type, name, install_params)
         success = result.startswith("✓")
-        materialized = manager.get_object(name) if success else None
+        materialized = manager.get_object(name)
+        record_status = (
+            OBJECT_STATUS_INSTALLED
+            if success
+            else self._resolve_install_failure_status(
+                normalized_type,
+                install_params,
+                result,
+                materialized,
+            )
+        )
         record = ManagedObjectRecord(
             name=name,
             type_name=normalized_type,
-            status="installed" if success else "error",
+            status=record_status,
             installed=success,
             config=install_params,
             created_at=self._existing_object_created_at(name),
@@ -160,6 +180,11 @@ class WorkflowService:
             if materialized
             else {},
         )
+        if record.status == OBJECT_STATUS_INSTALL_FAILED_PRESERVED:
+            record.metadata["failure_state"] = self._build_failure_state_metadata(
+                phase="install",
+                message=result,
+            )
         self.storage.upsert_object(record)
         if not success:
             problem_type = self._classify_object_install_problem(
@@ -446,12 +471,165 @@ class WorkflowService:
         if record is None:
             return self._not_found_result("object", name)
         record = self._refresh_object_record(record)
+        object_payload = self._build_object_status_payload(record)
         return self._operation_result(
             success=True,
             status=record.status,
             message=f"Object '{name}' status retrieved",
-            data=record.to_dict(),
-            object=record.to_dict(),
+            data=object_payload,
+            object=object_payload,
+        )
+
+    def clear_object(self, name: str) -> dict[str, Any]:
+        record = self.storage.get_object(name)
+        if record is None:
+            return self._not_found_result("object", name)
+        if not is_clearable_object_status(record.status):
+            return self._operation_result(
+                success=False,
+                status="invalid_state",
+                message=(
+                    f"Object '{name}' is in state '{record.status}' and cannot be "
+                    "cleared; use reset or uninstall instead"
+                ),
+                data=self._build_object_status_payload(record),
+                object=self._build_object_status_payload(record),
+                error="object_state_not_clearable",
+                error_code="object_state_not_clearable",
+            )
+
+        previous_status = record.status
+        if previous_status == OBJECT_STATUS_INSTALL_FAILED_PRESERVED:
+            cleanup = self._cleanup_preserved_object_state(
+                record,
+                remove_installation=True,
+            )
+            if not cleanup["success"]:
+                return self._operation_result(
+                    success=False,
+                    status="error",
+                    message=cleanup["message"],
+                    data=record.to_dict(),
+                    object=record.to_dict(),
+                    error=cleanup["message"],
+                    error_code="object_clear_failed",
+                )
+            self.storage.delete_object(name)
+            payload = {
+                "name": name,
+                "previous_status": previous_status,
+                "status": "removed",
+                "cleanup": cleanup["details"],
+            }
+            return self._operation_result(
+                success=True,
+                status="removed",
+                message=f"✓ Cleared preserved install failure for object '{name}'",
+                data=payload,
+                object=payload,
+            )
+
+        cleanup = self._cleanup_preserved_object_state(
+            record,
+            remove_installation=False,
+        )
+        if not cleanup["success"]:
+            return self._operation_result(
+                success=False,
+                status="error",
+                message=cleanup["message"],
+                data=record.to_dict(),
+                object=record.to_dict(),
+                error=cleanup["message"],
+                error_code="object_clear_failed",
+            )
+        record.status = OBJECT_STATUS_INSTALLED
+        record.installed = True
+        record.updated_at = datetime.now().isoformat()
+        metadata = record.metadata.copy()
+        metadata.pop("connectivity_check", None)
+        metadata.pop("failure_state", None)
+        metadata["last_clear"] = {
+            "previous_status": previous_status,
+            "cleared_at": record.updated_at,
+            "cleanup": cleanup["details"],
+        }
+        record.metadata = metadata
+        self.storage.upsert_object(record)
+        object_payload = self._build_object_status_payload(record)
+        return self._operation_result(
+            success=True,
+            status=record.status,
+            message=f"✓ Cleared preserved start failure for object '{name}'",
+            data=object_payload,
+            object=object_payload,
+        )
+
+    def reset_object(self, name: str) -> dict[str, Any]:
+        record = self.storage.get_object(name)
+        if record is None:
+            return self._not_found_result("object", name)
+        if not is_resettable_object_status(record.status):
+            return self._operation_result(
+                success=False,
+                status="invalid_state",
+                message=(
+                    f"Object '{name}' is in state '{record.status}' and cannot be reset"
+                ),
+                data=self._build_object_status_payload(record),
+                object=self._build_object_status_payload(record),
+                error="object_state_not_resettable",
+                error_code="object_state_not_resettable",
+            )
+
+        previous_status = record.status
+        if previous_status == OBJECT_STATUS_INSTALL_FAILED_PRESERVED:
+            cleanup = self._cleanup_preserved_object_state(
+                record,
+                remove_installation=True,
+            )
+            if not cleanup["success"]:
+                return self._operation_result(
+                    success=False,
+                    status="error",
+                    message=cleanup["message"],
+                    data=record.to_dict(),
+                    object=record.to_dict(),
+                    error=cleanup["message"],
+                    error_code="object_reset_failed",
+                )
+            self.storage.delete_object(name)
+            payload = {
+                "name": name,
+                "previous_status": previous_status,
+                "status": "removed",
+                "cleanup": cleanup["details"],
+            }
+            return self._operation_result(
+                success=True,
+                status="removed",
+                message=f"✓ Reset object '{name}' to initial state",
+                data=payload,
+                object=payload,
+            )
+
+        uninstall_result = self.uninstall_object(name)
+        if not uninstall_result.get("success"):
+            uninstall_result["error_code"] = "object_reset_failed"
+            return uninstall_result
+
+        payload = {
+            "name": name,
+            "previous_status": previous_status,
+            "status": "removed",
+        }
+        return self._operation_result(
+            success=True,
+            status="removed",
+            message=f"✓ Reset object '{name}' to initial state",
+            data=payload,
+            object=payload,
+            checks=uninstall_result.get("checks"),
         )
 
     def add_case(self, case_id: str, case_data: dict[str, Any]) -> dict[str, Any]:
@@ -1568,16 +1746,26 @@ class WorkflowService:
         success = result.startswith("✓")
         if success:
             status_map = {
-                "start": "running",
-                "stop": "stopped",
-                "restart": "running",
+                "start": OBJECT_STATUS_RUNNING,
+                "stop": OBJECT_STATUS_STOPPED,
+                "restart": OBJECT_STATUS_RUNNING,
             }
             record.status = status_map[action]
             record.installed = True
         else:
-            record.status = "error"
+            record.status = self._resolve_object_action_failure_status(
+                record,
+                obj,
+                action,
+                result,
+            )
         metadata = record.metadata.copy()
         metadata.update(self._collect_object_metadata(obj))
+        if not success and is_failure_preserved_object_status(record.status):
+            metadata["failure_state"] = self._build_failure_state_metadata(
+                phase=action,
+                message=result,
+            )
         if success and action == "stop":
             metadata.setdefault("boundary_checks", {})
             metadata["boundary_checks"]["stop"] = self._collect_mysql_boundary_checks(
@@ -1590,13 +1778,25 @@ class WorkflowService:
         if success and action == "start":
             connectivity_issue = self._detect_object_connectivity_issue(record)
             if connectivity_issue is not None:
-                record.status = "error"
+                record.status = self._resolve_start_failure_status(
+                    record,
+                    obj,
+                    result,
+                    connectivity_issue=connectivity_issue,
+                )
                 record.metadata["connectivity_check"] = connectivity_issue
-                self.storage.upsert_object(record)
                 validation_message = (
                     f"✗ Object '{name}' started but is unreachable at "
                     f"{connectivity_issue['target']}: {connectivity_issue['message']}"
                 )
+                if is_failure_preserved_object_status(record.status):
+                    record.metadata["failure_state"] = (
+                        self._build_failure_state_metadata(
+                            phase="start",
+                            message=validation_message,
+                        )
+                    )
+                self.storage.upsert_object(record)
                 self._record_environment_dependency_problem(
                     problem_type="dependency_object",
                     summary=f"Dependency object '{name}' failed pre-run validation",
@@ -1619,7 +1819,7 @@ class WorkflowService:
                 )
                 return self._operation_result(
                     success=False,
-                    status=record.status,
+                    status="error",
                     message=validation_message,
                     data=record.to_dict(),
                     object=record.to_dict(),
@@ -1664,7 +1864,7 @@ class WorkflowService:
             )
         return self._operation_result(
             success=success,
-            status=record.status,
+            status=record.status if success else "error",
             message=result,
             data=record.to_dict(),
             object=record.to_dict(),
@@ -1849,6 +2049,338 @@ class WorkflowService:
             error_code=f"tool_{action}_failed" if not success else None,
         )
 
+    def _resolve_install_failure_status(
+        self,
+        normalized_type: str,
+        install_params: dict[str, Any],
+        result: str,
+        materialized: Any | None,
+    ) -> str:
+        if normalized_type != "database_server":
+            return OBJECT_STATUS_ERROR
+
+        if not self._install_failure_has_preservable_artifacts(
+            install_params,
+            materialized,
+        ):
+            return OBJECT_STATUS_ERROR
+        return OBJECT_STATUS_INSTALL_FAILED_PRESERVED
+
+    def _resolve_object_action_failure_status(
+        self,
+        record: ManagedObjectRecord,
+        obj: Any,
+        action: str,
+        result: str,
+    ) -> str:
+        if action == "start":
+            return self._resolve_start_failure_status(record, obj, result)
+        return OBJECT_STATUS_ERROR
+
+    def _resolve_start_failure_status(
+        self,
+        record: ManagedObjectRecord,
+        obj: Any,
+        result: str,
+        *,
+        connectivity_issue: dict[str, Any] | None = None,
+    ) -> str:
+        if record.status not in {
+            OBJECT_STATUS_INSTALLED,
+            OBJECT_STATUS_STOPPED,
+        }:
+            return OBJECT_STATUS_ERROR
+
+        if not self._start_failure_has_preservable_artifacts(
+            record,
+            obj,
+            connectivity_issue=connectivity_issue,
+        ):
+            return OBJECT_STATUS_ERROR
+        return OBJECT_STATUS_START_FAILED_PRESERVED
+
+    def _install_failure_has_preservable_artifacts(
+        self,
+        install_params: dict[str, Any],
+        materialized: Any | None,
+    ) -> bool:
+        path_candidates: list[str] = []
+
+        managed_instance = install_params.get("managed_instance")
+        if isinstance(managed_instance, dict):
+            instance_root = managed_instance.get("instance_root")
+            if isinstance(instance_root, str) and instance_root:
+                path_candidates.append(instance_root)
+
+        for key in ("staged_package_path", "install_root", "config_file"):
+            value = install_params.get(key)
+            if isinstance(value, str) and value:
+                path_candidates.append(value)
+
+        runtime_snapshot = (
+            self._collect_object_metadata(materialized) if materialized else {}
+        )
+        runtime_details = runtime_snapshot.get("runtime", {}).get("details", {})
+        if isinstance(runtime_details, dict):
+            for key in ("staged_package_path", "install_root", "config_file"):
+                value = runtime_details.get(key)
+                if isinstance(value, str) and value:
+                    path_candidates.append(value)
+
+        return self._any_path_exists(path_candidates)
+
+    def _start_failure_has_preservable_artifacts(
+        self,
+        record: ManagedObjectRecord,
+        obj: Any,
+        *,
+        connectivity_issue: dict[str, Any] | None = None,
+    ) -> bool:
+        if connectivity_issue is not None:
+            return True
+
+        path_candidates: list[str] = []
+        config = record.config if isinstance(record.config, dict) else {}
+        for key in ("config_file", "install_root", "log_file", "mysql_binary"):
+            value = config.get(key)
+            if isinstance(value, str) and value:
+                path_candidates.append(value)
+
+        runtime_snapshot = self._collect_object_metadata(obj)
+        runtime_details = runtime_snapshot.get("runtime", {}).get("details", {})
+        if isinstance(runtime_details, dict):
+            for key in ("config_file", "install_root", "log_file", "mysql_binary"):
+                value = runtime_details.get(key)
+                if isinstance(value, str) and value:
+                    path_candidates.append(value)
+
+        if config.get("runtime_library_paths") or config.get("dependency_requirements"):
+            return True
+
+        return self._any_path_exists(path_candidates)
+
+    def _any_path_exists(self, values: list[str]) -> bool:
+        for value in values:
+            try:
+                if Path(value).expanduser().exists():
+                    return True
+            except OSError:
+                continue
+        return False
+
+    def _build_object_status_payload(
+        self,
+        record: ManagedObjectRecord,
+    ) -> dict[str, Any]:
+        payload = record.to_dict()
+        linked_problems = self._list_recent_problem_summaries_for_object(record.name)
+        payload["available_actions"] = {
+            "clear": is_clearable_object_status(record.status),
+            "reset": is_resettable_object_status(record.status),
+        }
+        metadata = payload.get("metadata", {})
+        if isinstance(metadata, dict):
+            failure_state = metadata.get("failure_state")
+            if isinstance(failure_state, dict):
+                payload["failure_state"] = failure_state
+        payload["suggested_actions"] = self._build_object_suggested_actions(
+            record.status,
+            linked_problems,
+        )
+        if linked_problems:
+            payload["linked_problems"] = linked_problems
+        return payload
+
+    def _build_object_suggested_actions(
+        self,
+        status: str,
+        linked_problems: list[dict[str, Any]],
+    ) -> list[str]:
+        actions: list[str] = []
+        if is_clearable_object_status(status):
+            actions.append("clear")
+        if is_resettable_object_status(status):
+            actions.append("reset")
+        if is_failure_preserved_object_status(status):
+            actions.append("inspect_preserved_artifacts")
+        if linked_problems:
+            actions.append(f"review_problem:{linked_problems[0]['problem_id']}")
+        return actions
+
+    def _list_recent_problem_summaries_for_object(
+        self,
+        object_name: str,
+        *,
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        matches: list[dict[str, Any]] = []
+        for record in self.storage.load_problem_records().values():
+            if object_name not in record.object_refs:
+                continue
+            matches.append(
+                {
+                    "problem_id": record.problem_id,
+                    "problem_type": record.problem_type,
+                    "summary": record.summary,
+                    "latest_action": record.latest_action,
+                    "created_at": record.created_at,
+                }
+            )
+        matches.sort(key=lambda item: item["created_at"], reverse=True)
+        return matches[:limit]
+
+    def _build_failure_state_metadata(
+        self,
+        *,
+        phase: str,
+        message: str,
+    ) -> dict[str, Any]:
+        return {
+            "phase": phase,
+            "message": message,
+            "preserved_at": datetime.now().isoformat(),
+        }
+
+    def _cleanup_preserved_object_state(
+        self,
+        record: ManagedObjectRecord,
+        *,
+        remove_installation: bool,
+    ) -> dict[str, Any]:
+        config = record.config if isinstance(record.config, dict) else {}
+        details: dict[str, Any] = {
+            "remove_installation": remove_installation,
+            "runtime_cleanup": {},
+            "managed_paths_removed": False,
+        }
+        runtime_cleanup = self._cleanup_object_runtime_artifacts(config)
+        details["runtime_cleanup"] = runtime_cleanup
+        if not runtime_cleanup["success"]:
+            return {
+                "success": False,
+                "message": runtime_cleanup["message"],
+                "details": details,
+            }
+
+        if remove_installation:
+            removal = self._remove_managed_object_paths(config)
+            details["managed_paths_removed"] = removal["removed"]
+            if not removal["success"]:
+                return {
+                    "success": False,
+                    "message": removal["message"],
+                    "details": details,
+                }
+
+        return {
+            "success": True,
+            "message": "Preserved object state cleared",
+            "details": details,
+        }
+
+    def _cleanup_object_runtime_artifacts(
+        self,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        pid_file = self._optional_path_from_config(config.get("pid_file"))
+        socket_file = self._optional_path_from_config(config.get("socket_file"))
+        pid = self._read_pid_file(pid_file) if pid_file is not None else None
+        process_stopped = True
+        if pid is not None and self._is_pid_running(pid):
+            try:
+                os.kill(pid, 15)
+            except OSError as exc:
+                return {
+                    "success": False,
+                    "message": f"Failed to stop preserved process {pid}: {exc}",
+                    "pid": pid,
+                }
+            for _ in range(20):
+                if not self._is_pid_running(pid):
+                    break
+                time.sleep(0.1)
+            process_stopped = not self._is_pid_running(pid)
+            if not process_stopped:
+                return {
+                    "success": False,
+                    "message": f"Preserved process {pid} did not exit in time",
+                    "pid": pid,
+                }
+
+        removed_files: list[str] = []
+        for path in (pid_file, socket_file):
+            if path is None or not path.exists():
+                continue
+            try:
+                path.unlink()
+                removed_files.append(str(path))
+            except OSError as exc:
+                return {
+                    "success": False,
+                    "message": f"Failed to remove preserved runtime file {path}: {exc}",
+                    "pid": pid,
+                }
+        return {
+            "success": True,
+            "message": "Preserved runtime artifacts cleaned",
+            "pid": pid,
+            "process_stopped": process_stopped,
+            "removed_files": removed_files,
+        }
+
+    def _remove_managed_object_paths(self, config: dict[str, Any]) -> dict[str, Any]:
+        managed_instance = config.get("managed_instance", {})
+        if isinstance(managed_instance, dict):
+            instance_root = self._optional_path_from_config(
+                managed_instance.get("instance_root")
+            )
+            if instance_root is not None and instance_root.exists():
+                try:
+                    shutil.rmtree(instance_root)
+                    return {
+                        "success": True,
+                        "message": "Managed instance root removed",
+                        "removed": True,
+                        "path": str(instance_root),
+                    }
+                except OSError as exc:
+                    return {
+                        "success": False,
+                        "message": f"Failed to remove managed instance root: {exc}",
+                        "removed": False,
+                    }
+
+        removed_any = False
+        for key in ("staged_package_path", "config_file", "install_root"):
+            path = self._optional_path_from_config(config.get(key))
+            if path is None or not path.exists():
+                continue
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                removed_any = True
+            except OSError as exc:
+                return {
+                    "success": False,
+                    "message": f"Failed to remove preserved install artifact {path}: {exc}",
+                    "removed": removed_any,
+                }
+        return {
+            "success": True,
+            "message": "Managed object artifacts removed",
+            "removed": removed_any,
+        }
+
+    def _optional_path_from_config(self, value: Any) -> Path | None:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            return Path(value).expanduser().resolve()
+        except OSError:
+            return None
+
     def _materialize_object(self, record: ManagedObjectRecord) -> Any:
         manager = self._get_object_manager()
         obj = manager.create_object(record.type_name, record.name, record.config)
@@ -1889,18 +2421,18 @@ class WorkflowService:
             install_result = obj.install(record.config)
             if isinstance(install_result, str) and install_result.startswith("✓"):
                 recovery["mode"] = "rebuild_connector"
-                if record.status == "running":
+                if record.status == OBJECT_STATUS_RUNNING:
                     start_result = obj.start()
                     if not (
                         isinstance(start_result, str) and start_result.startswith("✓")
                     ):
-                        effective_status = "installed"
+                        effective_status = OBJECT_STATUS_INSTALLED
                         recovery["recovered"] = False
                         warnings.append(
                             "Database runtime could not be resumed; downgraded to installed"
                         )
             else:
-                effective_status = "error"
+                effective_status = OBJECT_STATUS_ERROR
                 recovery["recovered"] = False
                 warnings.append(str(install_result))
         elif (
@@ -1910,18 +2442,18 @@ class WorkflowService:
             if isinstance(install_result, str) and install_result.startswith("✓"):
                 recovery["mode"] = "rebuild_server_component"
                 component = getattr(obj, "server_component", None)
-                if record.status == "running" and component is not None:
-                    component.status = "running"
+                if record.status == OBJECT_STATUS_RUNNING and component is not None:
+                    component.status = OBJECT_STATUS_RUNNING
                     success, message = component.health_check()
                     if success:
-                        obj.status = "running"
+                        obj.status = OBJECT_STATUS_RUNNING
                     else:
-                        obj.status = "installed"
-                        effective_status = "installed"
+                        obj.status = OBJECT_STATUS_INSTALLED
+                        effective_status = OBJECT_STATUS_INSTALLED
                         recovery["recovered"] = False
                         warnings.append(message)
             else:
-                effective_status = "error"
+                effective_status = OBJECT_STATUS_ERROR
                 recovery["recovered"] = False
                 warnings.append(str(install_result))
         elif (
@@ -1930,22 +2462,24 @@ class WorkflowService:
             install_result = obj.install(record.config)
             if isinstance(install_result, str) and install_result.startswith("✓"):
                 recovery["mode"] = "rebuild_client_connection"
-                if record.status == "running":
+                if record.status == OBJECT_STATUS_RUNNING:
                     start_result = obj.start()
                     if not (
                         isinstance(start_result, str) and start_result.startswith("✓")
                     ):
-                        effective_status = "installed"
+                        effective_status = OBJECT_STATUS_INSTALLED
                         recovery["recovered"] = False
                         warnings.append(
                             "Database client connection could not be resumed"
                         )
             else:
-                effective_status = "error"
+                effective_status = OBJECT_STATUS_ERROR
                 recovery["recovered"] = False
                 warnings.append(str(install_result))
-        elif record.status == "running":
-            effective_status = "installed" if record.installed else "stopped"
+        elif record.status == OBJECT_STATUS_RUNNING:
+            effective_status = (
+                OBJECT_STATUS_INSTALLED if record.installed else OBJECT_STATUS_STOPPED
+            )
             recovery["mode"] = "downgraded_nonrecoverable_runtime"
             recovery["recovered"] = False
             warnings.append(
@@ -2136,32 +2670,27 @@ class WorkflowService:
                 scenario = {}
             if not isinstance(mysql_config, dict):
                 mysql_config = {}
-            return (
-                {
-                    "db_type": "mysql",
-                    "host": str(config.get("server_host", "127.0.0.1")),
-                    "port": int(
-                        config.get(
-                            "server_port",
-                            self.DEFAULT_MANAGED_MYSQL_PORT,
-                        )
-                    ),
-                    "database": str(
-                        mysql_config.get(
-                            "database",
-                            scenario.get("database_name", "ptest_mysql"),
-                        )
-                    ),
-                    "username": str(mysql_config.get("username", "root")),
-                    "password": str(mysql_config.get("password", "")),
-                    "bound_object": {
-                        "name": object_name,
-                        "type_name": record.type_name,
-                        "db_type": db_type,
-                    },
+            binding = {
+                "db_type": "mysql",
+                "host": str(config.get("server_host", "127.0.0.1")),
+                "port": int(
+                    config.get(
+                        "server_port",
+                        self.DEFAULT_MANAGED_MYSQL_PORT,
+                    )
+                ),
+                "username": str(mysql_config.get("username", "root")),
+                "password": str(mysql_config.get("password", "")),
+                "bound_object": {
+                    "name": object_name,
+                    "type_name": record.type_name,
+                    "db_type": db_type,
                 },
-                None,
-            )
+            }
+            database_name = str(mysql_config.get("database", "")).strip()
+            if database_name:
+                binding["database"] = database_name
+            return (binding, None)
 
         if db_type == "sqlite":
             database_path = config.get("database")
