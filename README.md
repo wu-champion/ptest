@@ -1,5 +1,7 @@
 # ptest
 
+[中文](./README.md) | [English](./README.en.md)
+
 `ptest` 想解决的，不只是“把测试跑起来”。
 
 它更想解决测试工程师在真实工作里反复遇到、却很少被一个工具完整接住的那些事情：
@@ -79,6 +81,15 @@ ptest --version
 也就是说，`ptest` 会管理目录、配置、状态、记录和清理边界；  
 真实 `mysqld` 进程运行在宿主执行环境能力之上。
 
+现在这条主案例里的数据库测试流程，也已经明确展开成：
+
+- 显式创建数据库
+- 显式选择数据库
+- 建表
+- CRUD
+
+这样案例更接近测试工程师真实验证数据库产品时的操作节奏，而不是由框架静默代做业务库准备。
+
 ## 为什么这个案例重要
 
 很多工具能演示“连上一个数据库，跑一条 SQL”。  
@@ -133,6 +144,7 @@ ptest case run mysql_crud_case
 如果你只想先快速理解这条链路，直接看这里：
 
 - [MySQL 全生命周期实践](./docs/user-guide/mysql-full-lifecycle.md)
+- [MySQL Full Lifecycle Walkthrough](./docs/user-guide/mysql-full-lifecycle.en.md)
 
 如果你更像一个真实测试工程师那样，一步一步创建环境、安装对象、跑 CRUD、查看记录，再手动停止和卸载对象，也建议直接从这篇文档开始。里面已经按分步操作方式重写了。
 
