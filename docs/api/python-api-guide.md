@@ -1,6 +1,6 @@
 # ptest Python API 指南
 
-本文档描述当前 `1.6.0` 主线下的 Python API 使用方式。
+本文档描述当前 `1.7.0` 主线下的 Python API 使用方式。
 
 当前推荐入口是 `PTestAPI`，它直接基于统一工作流服务工作，而不是旧的 `TestFramework` 风格接口。
 

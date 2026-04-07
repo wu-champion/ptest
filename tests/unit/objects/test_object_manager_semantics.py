@@ -56,6 +56,11 @@ def test_mysql_component_places_defaults_file_before_runtime_flags(
     )
     monkeypatch.setattr(
         DatabaseServerComponent,
+        "_check_runtime_backend_capabilities",
+        lambda self: (True, "host runtime backend preflight passed"),
+    )
+    monkeypatch.setattr(
+        DatabaseServerComponent,
         "health_check",
         lambda self: (True, "ok"),
     )
