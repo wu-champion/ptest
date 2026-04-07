@@ -5,8 +5,59 @@ from datetime import datetime
 from typing import Any
 
 
+OBJECT_STATUS_CREATED = "created"
+OBJECT_STATUS_INSTALLED = "installed"
+OBJECT_STATUS_RUNNING = "running"
+OBJECT_STATUS_STOPPED = "stopped"
+OBJECT_STATUS_REMOVED = "removed"
+OBJECT_STATUS_ERROR = "error"
+
+OBJECT_STATUS_INSTALL_FAILED_PRESERVED = "install_failed_preserved"
+OBJECT_STATUS_START_FAILED_PRESERVED = "start_failed_preserved"
+
+OBJECT_NORMAL_STATUSES = frozenset(
+    {
+        OBJECT_STATUS_INSTALLED,
+        OBJECT_STATUS_RUNNING,
+        OBJECT_STATUS_STOPPED,
+    }
+)
+OBJECT_FAILURE_PRESERVED_STATUSES = frozenset(
+    {
+        OBJECT_STATUS_INSTALL_FAILED_PRESERVED,
+        OBJECT_STATUS_START_FAILED_PRESERVED,
+    }
+)
+OBJECT_CLEARABLE_STATUSES = frozenset(OBJECT_FAILURE_PRESERVED_STATUSES)
+OBJECT_RESETTABLE_STATUSES = frozenset(
+    {
+        OBJECT_STATUS_INSTALLED,
+        OBJECT_STATUS_RUNNING,
+        OBJECT_STATUS_STOPPED,
+        OBJECT_STATUS_INSTALL_FAILED_PRESERVED,
+        OBJECT_STATUS_START_FAILED_PRESERVED,
+    }
+)
+
+
 def _now_iso() -> str:
     return datetime.now().isoformat()
+
+
+def is_failure_preserved_object_status(status: str) -> bool:
+    return status in OBJECT_FAILURE_PRESERVED_STATUSES
+
+
+def is_normal_object_status(status: str) -> bool:
+    return status in OBJECT_NORMAL_STATUSES
+
+
+def is_clearable_object_status(status: str) -> bool:
+    return status in OBJECT_CLEARABLE_STATUSES
+
+
+def is_resettable_object_status(status: str) -> bool:
+    return status in OBJECT_RESETTABLE_STATUSES
 
 
 @dataclass
@@ -31,7 +82,7 @@ class EnvironmentRecord:
 class ManagedObjectRecord:
     name: str
     type_name: str
-    status: str = "created"
+    status: str = OBJECT_STATUS_CREATED
     installed: bool = False
     config: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=_now_iso)
