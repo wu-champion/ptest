@@ -232,6 +232,10 @@ class DatabaseServerComponent(ServiceServerComponent):
             self.status = "running"
             healthy, message = self.health_check()
             if healthy:
+                database_ready, database_message = self._ensure_mysql_database()
+                if not database_ready:
+                    self.status = "error"
+                    return False, database_message
                 return True, f"MySQL server started on {self.endpoint}"
             self.status = "error"
             return False, f"MySQL server started but health check failed: {message}"

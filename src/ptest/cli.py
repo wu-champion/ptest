@@ -151,20 +151,6 @@ def setup_cli() -> argparse.ArgumentParser:
     )
     stop_obj_parser.add_argument("name", help="Object name")
 
-    clear_obj_parser = obj_subparsers.add_parser(
-        "clear",
-        help="Clear preserved failure artifacts for a test object",
-        parents=[workspace_parent],
-    )
-    clear_obj_parser.add_argument("name", help="Object name")
-
-    reset_obj_parser = obj_subparsers.add_parser(
-        "reset",
-        help="Reset a test object back to its initial state",
-        parents=[workspace_parent],
-    )
-    reset_obj_parser.add_argument("name", help="Object name")
-
     restart_obj_parser = obj_subparsers.add_parser(
         "restart", help="Restart a test object", parents=[workspace_parent]
     )
@@ -553,8 +539,7 @@ def _handle_object_command(
 
     if not hasattr(args, "obj_action") or not args.obj_action:
         print_colored(
-            "请指定操作: install/start/stop/clear/reset/restart/uninstall/list/status",
-            93,
+            "请指定操作: install/start/stop/restart/uninstall/list/status", 93
         )
         return False
 
@@ -591,8 +576,6 @@ def _handle_object_command(
     action_handlers = {
         "start": service.start_object,
         "stop": service.stop_object,
-        "clear": service.clear_object,
-        "reset": service.reset_object,
         "restart": service.restart_object,
         "uninstall": service.uninstall_object,
         "status": service.get_object_status,
