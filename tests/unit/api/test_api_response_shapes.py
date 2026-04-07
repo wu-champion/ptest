@@ -199,6 +199,6 @@ def test_api_runs_mysql_case_bound_to_managed_object(
         "port": 3307,
         "user": "root",
         "password": "",
-        "database": "ptest_mysql",
+        "database": None,
         "charset": "utf8mb4",
     }

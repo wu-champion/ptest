@@ -9,6 +9,12 @@ from pathlib import Path
 import ptest.cases.executor as case_executor_module
 from ptest.app import WorkflowService
 from ptest.contract.manager import APIContract, APIEndpoint, ContractManager
+from ptest.models import (
+    OBJECT_STATUS_ERROR,
+    OBJECT_STATUS_INSTALL_FAILED_PRESERVED,
+    OBJECT_STATUS_START_FAILED_PRESERVED,
+    OBJECT_STATUS_INSTALLED,
+)
 from ptest.mock import MockConfig, MockServer
 from ptest.objects.db_enhanced import DatabaseServerObject
 from ptest.objects.db_server import DatabaseServerComponent
@@ -179,18 +185,41 @@ class _FakeMySQLCursor:
     def execute(self, query: str) -> None:
         self.query = query
         normalized = " ".join(query.strip().upper().split())
+        if normalized.startswith("CREATE DATABASE"):
+            databases = self.state.setdefault("databases", set())
+            if isinstance(databases, set):
+                database_name = query.strip().rstrip(";").split()[-1].strip("`")
+                databases.add(database_name)
+            self.rowcount = 1
+            self.description = []
+            self._rows = []
+            return
+        if normalized.startswith("USE "):
+            self.state["active_database"] = (
+                query.strip().rstrip(";").split()[-1].strip("`")
+            )
+            self.rowcount = 0
+            self.description = []
+            self._rows = []
+            return
         if normalized.startswith("CREATE TABLE"):
+            if not self.state.get("active_database"):
+                raise RuntimeError("No database selected")
             self.rowcount = 0
             self.description = []
             self._rows = []
             return
         if normalized.startswith("INSERT INTO"):
+            if not self.state.get("active_database"):
+                raise RuntimeError("No database selected")
             self.state["rows"] = [{"id": 1, "name": "alpha"}]
             self.rowcount = 1
             self.description = []
             self._rows = []
             return
         if normalized.startswith("UPDATE"):
+            if not self.state.get("active_database"):
+                raise RuntimeError("No database selected")
             rows = self.state.setdefault("rows", [])
             if isinstance(rows, list) and rows:
                 first_row = rows[0]
@@ -201,6 +230,8 @@ class _FakeMySQLCursor:
             self._rows = []
             return
         if normalized.startswith("DELETE"):
+            if not self.state.get("active_database"):
+                raise RuntimeError("No database selected")
             rows = self.state.get("rows", [])
             self.rowcount = len(rows) if isinstance(rows, list) else 0
             self.state["rows"] = []
@@ -687,6 +718,19 @@ def test_workflow_service_reports_missing_mysql_runtime_dependencies(
     assert "missing required shared libraries" in start_result["message"]
     assert "libaio.so.1t64" in start_result["message"]
     assert "libnuma.so.1" in start_result["message"]
+    status = service.get_object_status("mysql_service")
+    assert status["success"] is True
+    assert status["object"]["status"] == OBJECT_STATUS_START_FAILED_PRESERVED
+    assert status["object"]["failure_state"]["phase"] == "start"
+    assert status["object"]["available_actions"] == {
+        "clear": True,
+        "reset": True,
+    }
+    assert "clear" in status["object"]["suggested_actions"]
+    assert "reset" in status["object"]["suggested_actions"]
+    assert status["object"]["linked_problems"][0]["problem_type"] == (
+        "dependency_configuration"
+    )
 
 
 def test_workflow_service_reports_mysql_runtime_backend_preflight_failure(
@@ -731,6 +775,19 @@ def test_workflow_service_reports_mysql_runtime_backend_preflight_failure(
     assert start_result["status"] == "error"
     assert "does not permit binding" in start_result["message"]
     assert "Operation not permitted" in start_result["message"]
+    status = service.get_object_status("mysql_service")
+    assert status["success"] is True
+    assert status["object"]["status"] == OBJECT_STATUS_START_FAILED_PRESERVED
+    assert status["object"]["failure_state"]["phase"] == "start"
+    assert status["object"]["available_actions"] == {
+        "clear": True,
+        "reset": True,
+    }
+    assert "clear" in status["object"]["suggested_actions"]
+    assert "reset" in status["object"]["suggested_actions"]
+    assert status["object"]["linked_problems"][0]["problem_type"] == (
+        "dependency_configuration"
+    )
 
 
 def test_workflow_service_uninstalls_mysql_managed_instance(tmp_path: Path) -> None:
@@ -830,7 +887,7 @@ def test_workflow_service_binds_database_case_to_mysql_object(
         "port": 3307,
         "user": "root",
         "password": "",
-        "database": "ptest_mysql",
+        "database": None,
         "charset": "utf8mb4",
     }
 
@@ -841,7 +898,7 @@ def test_workflow_service_binds_database_case_to_mysql_object(
     assert case_payload["db_type"] == "mysql"
     assert case_payload["host"] == "127.0.0.1"
     assert case_payload["port"] == 3307
-    assert case_payload["database"] == "ptest_mysql"
+    assert "database" not in case_payload
 
 
 def test_workflow_service_reports_missing_bound_database_object(
@@ -953,6 +1010,14 @@ def test_workflow_service_runs_mysql_crud_case_with_bound_object(
             "object_name": "mysql_service",
             "operations": [
                 {
+                    "name": "create_database",
+                    "query": "CREATE DATABASE IF NOT EXISTS ptest_mysql_demo",
+                },
+                {
+                    "name": "use_database",
+                    "query": "USE ptest_mysql_demo",
+                },
+                {
                     "name": "create_table",
                     "query": "CREATE TABLE crud_items (id INT, name VARCHAR(32))",
                 },
@@ -996,11 +1061,13 @@ def test_workflow_service_runs_mysql_crud_case_with_bound_object(
     assert run_result["status"] == "passed"
     output = run_result["output"]
     assert isinstance(output, list)
-    assert len(output) == 7
-    assert output[0]["name"] == "create_table"
-    assert output[2]["result"] == [{"id": 1, "name": "alpha"}]
-    assert output[4]["result"] == [{"id": 1, "name": "beta"}]
-    assert output[6]["result"] == [{"count": 0}]
+    assert len(output) == 9
+    assert output[0]["name"] == "create_database"
+    assert output[1]["name"] == "use_database"
+    results_by_name = {item["name"]: item["result"] for item in output}
+    assert results_by_name["select_after_insert"] == [{"id": 1, "name": "alpha"}]
+    assert results_by_name["select_after_update"] == [{"id": 1, "name": "beta"}]
+    assert results_by_name["select_after_delete"] == [{"count": 0}]
 
 
 def test_workflow_service_requires_bound_database_object_to_be_running(
@@ -1054,8 +1121,193 @@ def test_workflow_service_rejects_invalid_mysql_package_path(tmp_path: Path) -> 
     assert install_result["status"] == "error"
     assert "does not exist" in install_result["message"]
     assert install_result["object"]["type_name"] == "database_server"
+    assert install_result["object"]["status"] == OBJECT_STATUS_ERROR
     assert install_result["object"]["config"]["mysql_package_path"].endswith(
         "missing-mysql.tar.xz"
+    )
+
+
+def test_workflow_service_preserves_mysql_install_failure_after_artifacts_exist(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+
+    def fail_extract_package(
+        self: DatabaseServerObject,
+        *,
+        staged_package: Path,
+        install_dir: Path,
+    ) -> tuple[Path, dict[str, object]]:
+        raise RuntimeError(
+            f"simulated extraction failure for {staged_package.name} in {install_dir}"
+        )
+
+    monkeypatch.setattr(
+        DatabaseServerObject,
+        "_extract_mysql_package",
+        fail_extract_package,
+    )
+
+    install_result = service.install_object(
+        "mysql",
+        "mysql_service",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+        },
+    )
+
+    assert install_result["success"] is False
+    assert install_result["status"] == "error"
+    assert install_result["object"]["status"] == OBJECT_STATUS_INSTALL_FAILED_PRESERVED
+    config = install_result["object"]["config"]
+    assert Path(config["managed_instance"]["instance_root"]).exists()
+    assert Path(config["staged_package_path"]).exists()
+
+    status = service.get_object_status("mysql_service")
+    assert status["success"] is True
+    assert status["object"]["status"] == OBJECT_STATUS_INSTALL_FAILED_PRESERVED
+    assert status["object"]["failure_state"]["phase"] == "install"
+    assert status["object"]["available_actions"] == {
+        "clear": True,
+        "reset": True,
+    }
+    assert "clear" in status["object"]["suggested_actions"]
+    assert "reset" in status["object"]["suggested_actions"]
+    assert status["object"]["linked_problems"][0]["problem_type"] == (
+        "dependency_object"
+    )
+
+
+def test_workflow_service_clears_preserved_mysql_install_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+
+    def fail_extract_package(
+        self: DatabaseServerObject,
+        *,
+        staged_package: Path,
+        install_dir: Path,
+    ) -> tuple[Path, dict[str, object]]:
+        raise RuntimeError(
+            f"simulated extraction failure for {staged_package.name} in {install_dir}"
+        )
+
+    monkeypatch.setattr(
+        DatabaseServerObject,
+        "_extract_mysql_package",
+        fail_extract_package,
+    )
+
+    install_result = service.install_object(
+        "mysql",
+        "mysql_service",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+        },
+    )
+    assert install_result["success"] is False
+    instance_root = Path(
+        install_result["object"]["config"]["managed_instance"]["instance_root"]
+    )
+    assert instance_root.exists()
+
+    clear_result = service.clear_object("mysql_service")
+    assert clear_result["success"] is True
+    assert clear_result["status"] == "removed"
+    assert not instance_root.exists()
+    assert service.storage.get_object("mysql_service") is None
+    assert (
+        service.get_object_status("mysql_service")["error_code"] == "object_not_found"
+    )
+
+
+def test_workflow_service_clears_preserved_mysql_start_failure_to_installed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+
+    install_result = service.install_object(
+        "mysql",
+        "mysql_service",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": _find_free_port(),
+        },
+    )
+    assert install_result["success"] is True
+
+    monkeypatch.setattr(
+        DatabaseServerComponent,
+        "_check_binary_dependencies",
+        lambda self, binary, env=None: ["libaio.so.1t64"],
+    )
+
+    start_result = service.start_object("mysql_service")
+    assert start_result["success"] is False
+
+    clear_result = service.clear_object("mysql_service")
+    assert clear_result["success"] is True
+    assert clear_result["status"] == OBJECT_STATUS_INSTALLED
+
+    status = service.get_object_status("mysql_service")
+    assert status["success"] is True
+    assert status["object"]["status"] == OBJECT_STATUS_INSTALLED
+    assert "failure_state" not in status["object"]
+    assert status["object"]["available_actions"] == {
+        "clear": False,
+        "reset": True,
+    }
+    assert "clear" not in status["object"]["suggested_actions"]
+    assert "reset" in status["object"]["suggested_actions"]
+
+
+def test_workflow_service_resets_running_mysql_object(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_service",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+            "mysql_config": {"health_check_mode": "tcp"},
+        },
+    )
+    assert install_result["success"] is True
+    instance_root = Path(
+        install_result["object"]["config"]["managed_instance"]["instance_root"]
+    )
+    assert instance_root.exists()
+
+    start_result = service.start_object("mysql_service")
+    assert start_result["success"] is True
+
+    reset_result = service.reset_object("mysql_service")
+    assert reset_result["success"] is True
+    assert reset_result["status"] == "removed"
+    assert not instance_root.exists()
+    assert service.storage.get_object("mysql_service") is None
+    assert (
+        service.get_object_status("mysql_service")["error_code"] == "object_not_found"
     )
 
 

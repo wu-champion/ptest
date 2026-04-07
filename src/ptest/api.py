@@ -133,6 +133,29 @@ class PTestAPI:
             error_code=result.get("error_code"),
         )
 
+    def clear_object(self, name: str) -> dict[str, Any]:
+        result = self.workflow.clear_object(name)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
+    def reset_object(self, name: str) -> dict[str, Any]:
+        result = self.workflow.reset_object(name)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            checks=result.get("checks"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
     def stop_object(self, name: str) -> dict[str, Any]:
         result = self.workflow.stop_object(name)
         return self._api_response(
