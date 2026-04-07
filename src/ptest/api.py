@@ -500,13 +500,13 @@ class PTestAPI:
             status="ok",
             message="System info retrieved",
             data={
-                "version": "1.6.0",
-                "api_version": "1.6.0",
+                "version": "1.7.0",
+                "api_version": "1.7.0",
                 "work_path": str(self.work_path),
                 "environment_initialized": env_status.get("initialized", False),
                 "environment_path": env_status.get("path"),
                 "isolation_engines": list(self.isolation_manager.engines.keys()),
-                "framework_version": "PTEST-1.6.0",
+                "framework_version": "PTEST-1.7.0",
             },
         )
 

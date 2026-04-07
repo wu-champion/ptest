@@ -316,6 +316,11 @@ def test_workflow_service_preserves_mysql_missing_dependency_problem(
         "_check_binary_dependencies",
         lambda self, binary, env=None: ["libaio.so.1t64", "libnuma.so.1"],
     )
+    monkeypatch.setattr(
+        DatabaseServerComponent,
+        "_check_runtime_backend_capabilities",
+        lambda self: (True, "host runtime backend preflight passed"),
+    )
 
     result = service.start_object("mysql_service")
     assert result["success"] is False
