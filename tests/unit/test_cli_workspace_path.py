@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ptest import cli
 from ptest.app import WorkflowService
+from ptest.storage import LocalCliStateStorage
 
 
 def test_cli_supports_global_workspace_path(tmp_path: Path) -> None:
@@ -53,7 +54,8 @@ def test_cli_reports_uninitialized_workspace_clearly(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "Workspace is not initialized" in captured.out
+    assert "Workspace is not available" in captured.out
+    assert "path does not exist" in captured.out
     assert str(workspace.resolve()) in captured.out
 
 
@@ -219,3 +221,226 @@ def test_cli_mysql_install_forwards_dependency_assets(
         "workspace_path": str(workspace.resolve()),
         "driver": "mysql",
     }
+
+
+def test_cli_uses_active_workspace_for_case_commands(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    WorkflowService(workspace).init_environment()
+    LocalCliStateStorage().set_active_workspace(workspace)
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(sys, "argv", ["ptest", "case", "list"])
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Using active workspace" in captured.out
+    assert str(workspace.resolve()) in captured.out
+    assert "[]" in captured.out
+
+
+def test_cli_explicit_path_overrides_active_workspace(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    active_workspace = tmp_path / "active"
+    explicit_workspace = tmp_path / "explicit"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    WorkflowService(active_workspace).init_environment()
+    WorkflowService(explicit_workspace).init_environment()
+    LocalCliStateStorage().set_active_workspace(active_workspace)
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ptest", "case", "list", "--path", str(explicit_workspace)],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Using active workspace" not in captured.out
+    assert "[]" in captured.out
+
+
+def test_cli_init_sets_active_workspace(tmp_path: Path, monkeypatch, capsys) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ptest", "init", "--path", str(workspace)],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Active workspace set to" in captured.out
+    assert LocalCliStateStorage().get_active_workspace() == workspace.resolve()
+
+
+def test_cli_workspace_use_rejects_destroyed_workspace(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    workspace = tmp_path / "workspace"
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.destroy_environment()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ptest", "workspace", "use", str(workspace)],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Workspace is not available" in captured.out
+    assert "workspace has been destroyed" in captured.out
+
+
+def test_cli_destroyed_current_workspace_does_not_fallback_to_active(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    active_workspace = tmp_path / "active"
+    destroyed_workspace = tmp_path / "destroyed"
+    WorkflowService(active_workspace).init_environment()
+    destroyed_service = WorkflowService(destroyed_workspace)
+    destroyed_service.init_environment()
+    destroyed_service.destroy_environment()
+    LocalCliStateStorage().set_active_workspace(active_workspace)
+
+    monkeypatch.chdir(destroyed_workspace)
+    monkeypatch.setattr(sys, "argv", ["ptest", "status"])
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Workspace is not available" in captured.out
+    assert str(destroyed_workspace.resolve()) in captured.out
+    assert "workspace has been destroyed" in captured.out
+    assert "Using active workspace" not in captured.out
+
+
+def test_cli_env_destroy_does_not_use_active_workspace(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    service = WorkflowService(workspace)
+    service.init_environment()
+    LocalCliStateStorage().set_active_workspace(workspace)
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(sys, "argv", ["ptest", "env", "destroy"])
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "No workspace resolved" in captured.out
+    assert service.get_environment_status()["initialized"] is True
+
+
+def test_cli_workspace_status_reports_active_workspace(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    WorkflowService(workspace).init_environment()
+    LocalCliStateStorage().set_active_workspace(workspace)
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(sys, "argv", ["ptest", "workspace", "status"])
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Active workspace" in captured.out
+    assert str(workspace.resolve()) in captured.out
+    assert "Default resolution" in captured.out
+    assert "active workspace" in captured.out
+
+
+def test_cli_exec_alias_matches_execution_command(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.add_case(
+        "sqlite_smoke",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(workspace / "sample.db"),
+            "query": "SELECT 1 as value",
+            "expected_result": [{"value": 1}],
+        },
+    )
+    service.run_case("sqlite_smoke")
+    execution_id = service.list_execution_records("sqlite_smoke")[0]["execution_id"]
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "exec",
+            "artifacts",
+            execution_id,
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert execution_id in captured.out
+    assert "artifact_index.json" in captured.out
