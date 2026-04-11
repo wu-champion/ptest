@@ -223,7 +223,7 @@ class TestSystemInfo(unittest.TestCase):
         self.assertTrue(info["success"])
         self.assertIn("version", info["data"])
         self.assertIn("api_version", info["data"])
-        self.assertEqual(info["data"]["version"], "1.7.0")
+        self.assertEqual(info["data"]["version"], "1.8.0")
         self.assertIn("isolation_engines", info["data"])
 
 
