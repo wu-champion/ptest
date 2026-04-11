@@ -105,6 +105,12 @@ def test_workflow_service_preserves_and_replays_api_problem(
     assert replay["success"] is True
     assert replay["replay"]["response"]["status_code"] == 200
     assert replay["replay"]["request"]["url"] == "https://example.test/api/demo"
+    assert replay["replay"]["comparison"]["original_failure"]["status_code"] == 404
+    assert replay["replay"]["comparison"]["replay_response"]["status_code"] == 200
+    assert replay["replay"]["comparison"]["status_code_changed"] is True
+    assert replay["replay"]["comparison"]["expectation"]["reproduced"] is False
+    assert replay["replay"]["comparison"]["assertion_outcome"] == "not_reproduced"
+    assert replay["replay"]["reproduced"] is False
     assert replay["recovery_action"]["action_type"] == "replay"
     assert replay["recovery_action"]["status"] == "completed"
 

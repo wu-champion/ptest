@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
+import re
 import socket
 import time
 import uuid
@@ -12,6 +14,7 @@ from typing import Any, cast
 
 from ..cases.manager import CaseManager
 from ..cases.result import TestCaseResult
+from ..assertions.factory import AssertionFactory
 from ..config import DEFAULT_CONFIG
 from ..contract.manager import ContractManager
 from ..data.generator import DataGenerationConfig, DataGenerator, DataTemplate
@@ -47,6 +50,24 @@ from ..reports.generator import ReportGenerator
 from ..suites import SuiteManager
 from ..storage import WorkspaceStorage
 from ..tools.manager import ToolManager
+
+
+class _ReplayResponseView:
+    def __init__(self, status_code: int, headers: dict[str, Any], body: Any) -> None:
+        self.status_code = status_code
+        self.headers = headers
+        self._body = body
+        if isinstance(body, str):
+            self.text = body
+        elif isinstance(body, (dict, list)):
+            self.text = json.dumps(body, ensure_ascii=False, sort_keys=True)
+        else:
+            self.text = str(body)
+
+    def json(self) -> Any:
+        if isinstance(self._body, str):
+            raise ValueError("response body is not json")
+        return self._body
 
 
 class WorkflowService:
@@ -1559,6 +1580,9 @@ class WorkflowService:
                 "body": response_body,
             },
         }
+        comparison = self._build_api_replay_comparison(assets, replay_result)
+        replay_result["comparison"] = comparison
+        replay_result["reproduced"] = comparison["expectation"]["reproduced"]
         recovery_action = self._record_problem_recovery_action(
             record,
             assets,
@@ -3095,11 +3119,7 @@ class WorkflowService:
         problem_id = f"problem_{record.execution_id}"
         now = datetime.now().isoformat()
         problem_artifact_refs = self._problem_artifact_refs(artifact_refs)
-        observed_response = {
-            "output": record.output,
-            "error": record.error_message,
-            "status": record.status,
-        }
+        observed_response = self._build_api_observed_response(record, case_payload)
         preservation = self._build_preservation_summary(
             {
                 "request_context": (
@@ -3172,6 +3192,28 @@ class WorkflowService:
             },
         )
         return problem_record, problem_assets
+
+    def _build_api_observed_response(
+        self, record: ExecutionRecord, case_payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        assertions = case_payload.get("assertions", [])
+        expected_status: int | None = None
+        if not assertions:
+            raw_expected_status = case_payload.get("expected_status", 200)
+            if isinstance(raw_expected_status, int):
+                expected_status = raw_expected_status
+        expected_response = case_payload.get("expected_response")
+        return {
+            "output": record.output,
+            "error": record.error_message,
+            "status": record.status,
+            "expected_status": expected_status,
+            "expected_response": expected_response,
+            "observed_status_code": self._extract_api_observed_status_code(
+                record.error_message
+            ),
+            "observed_body": self._extract_api_observed_body(record),
+        }
 
     def _build_data_problem_records(
         self,
@@ -3438,6 +3480,241 @@ class WorkflowService:
             return ast.literal_eval(raw_actual)
         except (SyntaxError, ValueError):
             return raw_actual
+
+    def _extract_api_observed_status_code(self, error_message: str) -> int | None:
+        matched = re.search(r"Expected status \d+, got (\d+)", error_message)
+        if matched is None:
+            return None
+        try:
+            return int(matched.group(1))
+        except ValueError:
+            return None
+
+    def _extract_api_observed_body(self, record: ExecutionRecord) -> Any:
+        if record.output not in (None, ""):
+            return record.output
+        marker = "Actual:"
+        if marker not in record.error_message:
+            return None
+        raw_actual = record.error_message.split(marker, maxsplit=1)[1].strip()
+        try:
+            return ast.literal_eval(raw_actual)
+        except (SyntaxError, ValueError):
+            return raw_actual
+
+    def _compare_problem_values(self, expected: Any, actual: Any) -> bool:
+        if isinstance(expected, dict) and isinstance(actual, dict):
+            for key, expected_value in expected.items():
+                if key not in actual:
+                    return False
+                if not self._compare_problem_values(expected_value, actual[key]):
+                    return False
+            return True
+        if isinstance(expected, list) and isinstance(actual, list):
+            if len(expected) != len(actual):
+                return False
+            for exp_item, act_item in zip(expected, actual):
+                if not self._compare_problem_values(exp_item, act_item):
+                    return False
+            return True
+        return expected == actual
+
+    def _evaluate_api_assertions(
+        self,
+        response: _ReplayResponseView,
+        assertions_config: list[Any],
+    ) -> list[str]:
+        failures: list[str] = []
+        actual_json = None
+        content_type = str(response.headers.get("content-type", ""))
+        if content_type.startswith("application/json"):
+            try:
+                actual_json = response.json()
+            except Exception:
+                actual_json = None
+
+        for idx, assertion_item in enumerate(assertions_config):
+            if not isinstance(assertion_item, dict):
+                failures.append(f"Assertion {idx}: invalid format")
+                continue
+            assertion_type = assertion_item.get("type", "")
+            if not assertion_type:
+                failures.append(f"Assertion {idx}: missing 'type'")
+                continue
+
+            try:
+                actual: Any
+                expected: Any
+                kwargs: dict[str, Any]
+                if assertion_type in ("status_code", "statuscode"):
+                    actual = response.status_code
+                    expected = assertion_item.get("expected")
+                    kwargs = {}
+                elif assertion_type in ("json_path", "jsonpath"):
+                    actual = actual_json if actual_json is not None else {}
+                    expected = assertion_item.get("expected")
+                    kwargs = {"path": assertion_item.get("path", "")}
+                elif assertion_type in ("body", "bodyassertion"):
+                    actual = response.text
+                    expected = assertion_item.get("expected")
+                    kwargs = {}
+                elif assertion_type in ("header", "headerassertion"):
+                    actual = dict(response.headers)
+                    expected = assertion_item.get("expected")
+                    kwargs = {"header_name": assertion_item.get("header", "")}
+                elif assertion_type in ("regex", "regexassertion"):
+                    actual = response.text
+                    expected = assertion_item.get("expected")
+                    kwargs = {}
+                elif assertion_type in ("schema", "schemaassertion"):
+                    actual = actual_json if actual_json is not None else {}
+                    expected = assertion_item.get("expected")
+                    kwargs = {"schema": assertion_item.get("schema", {})}
+                else:
+                    actual = response
+                    expected = assertion_item.get("expected")
+                    kwargs = {
+                        key: value
+                        for key, value in assertion_item.items()
+                        if key not in ("type", "expected", "description")
+                    }
+                assertion = AssertionFactory.create(assertion_type)
+                result = assertion.assert_value(actual, expected=expected, **kwargs)
+                if result.passed:
+                    continue
+                message = f"Assertion {idx} ({assertion_type}) failed: {result.message}"
+                if result.extra:
+                    message += f" - {result.extra}"
+                failures.append(message)
+            except ValueError as exc:
+                failures.append(f"Assertion {idx} ({assertion_type}): {str(exc)}")
+            except Exception as exc:
+                failures.append(
+                    f"Assertion {idx} ({assertion_type}): unexpected error: {str(exc)}"
+                )
+
+        return failures
+
+    def _evaluate_api_replay_expectation(
+        self,
+        case_payload: dict[str, Any],
+        replay_response: dict[str, Any],
+    ) -> dict[str, Any]:
+        status_code = int(replay_response.get("status_code", 0))
+        headers = replay_response.get("headers", {})
+        body = replay_response.get("body")
+        response_view = _ReplayResponseView(
+            status_code=status_code,
+            headers=headers if isinstance(headers, dict) else {},
+            body=body,
+        )
+        assertions = case_payload.get("assertions", [])
+        if assertions:
+            failures = self._evaluate_api_assertions(response_view, assertions)
+            reproduced = bool(failures)
+            return {
+                "reproduced": reproduced,
+                "status": "reproduced" if reproduced else "not_reproduced",
+                "reason": (
+                    failures[0]
+                    if failures
+                    else "replay response now satisfies the original assertions"
+                ),
+                "failed_assertions": failures,
+            }
+
+        expected_status = case_payload.get("expected_status", 200)
+        if isinstance(expected_status, int) and status_code != expected_status:
+            return {
+                "reproduced": True,
+                "status": "reproduced",
+                "reason": f"Expected status {expected_status}, got {status_code}",
+                "expected_status": expected_status,
+                "actual_status": status_code,
+                "failed_assertions": [],
+            }
+
+        expected_response = case_payload.get("expected_response", {})
+        if expected_response:
+            if not self._compare_problem_values(expected_response, body):
+                return {
+                    "reproduced": True,
+                    "status": "reproduced",
+                    "reason": "Replay response body still does not match expected_response",
+                    "expected_response": expected_response,
+                    "actual_response": body,
+                    "failed_assertions": [],
+                }
+
+        return {
+            "reproduced": False,
+            "status": "not_reproduced",
+            "reason": "replay response now satisfies the original expectation",
+            "expected_status": expected_status
+            if isinstance(expected_status, int)
+            else None,
+            "failed_assertions": [],
+        }
+
+    def _build_api_replay_comparison(
+        self,
+        assets: ProblemAssetRecord,
+        replay_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        details = assets.details if isinstance(assets.details, dict) else {}
+        case_payload = details.get("case", {})
+        preserved_response = details.get("response", {})
+        replay_response = replay_result.get("response", {})
+        expectation = self._evaluate_api_replay_expectation(
+            case_payload if isinstance(case_payload, dict) else {},
+            replay_response if isinstance(replay_response, dict) else {},
+        )
+
+        preserved_status = (
+            preserved_response.get("observed_status_code")
+            if isinstance(preserved_response, dict)
+            else None
+        )
+        replay_status = (
+            replay_response.get("status_code")
+            if isinstance(replay_response, dict)
+            else None
+        )
+        preserved_body = (
+            preserved_response.get("observed_body")
+            if isinstance(preserved_response, dict)
+            else None
+        )
+        replay_body = (
+            replay_response.get("body") if isinstance(replay_response, dict) else None
+        )
+        return {
+            "original_failure": {
+                "status_code": preserved_status,
+                "body": preserved_body,
+                "error": (
+                    preserved_response.get("error")
+                    if isinstance(preserved_response, dict)
+                    else None
+                ),
+            },
+            "replay_response": {
+                "status_code": replay_status,
+                "body": replay_body,
+            },
+            "status_code_changed": (
+                None
+                if preserved_status is None or replay_status is None
+                else preserved_status != replay_status
+            ),
+            "response_body_changed": (
+                None
+                if preserved_body is None
+                else not self._compare_problem_values(preserved_body, replay_body)
+            ),
+            "expectation": expectation,
+            "assertion_outcome": expectation["status"],
+        }
 
     def _build_recovery_plan(
         self, record: ProblemRecord, assets: ProblemAssetRecord

@@ -202,7 +202,11 @@ print(recovery["data"]["mode"])
 replay = api.replay_problem(problem_id)
 print(replay["data"])
 print(replay["recovery_action"])
+print(replay["replay"]["comparison"])
 ```
+
+对于 `api_response` 问题，`replay["replay"]["comparison"]` 会直接给出原始失败现场与当前 replay 结果的对比摘要，
+并通过 `assertion_outcome` / `reproduced` 告诉你这次 replay 是否仍然复现原问题。
 
 ## 报告
 

@@ -143,6 +143,55 @@ def test_cli_problem_replay_reports_unsupported_for_data_problem(
     assert "does not support replay" in captured.out
 
 
+def test_cli_problem_replay_outputs_comparison_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.add_case(
+        "api_failure_case",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(404, {"message": "missing"}),
+    )
+    service.run_case("api_failure_case")
+    problem_id = service.list_problem_records(case_id="api_failure_case")[0][
+        "problem_id"
+    ]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(200, {"message": "ok"}),
+    )
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ptest", "problem", "replay", problem_id, "--path", str(workspace)],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert '"comparison"' in captured.out
+    assert '"status_code_changed": true' in captured.out
+    assert '"assertion_outcome": "not_reproduced"' in captured.out
+
+
 def test_cli_problem_list_reports_filters_and_empty_results(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

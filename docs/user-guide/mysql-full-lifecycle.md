@@ -508,6 +508,7 @@ ptest problem recover <problem_id>
 - `problem assets` 会告诉你这次失败保留下来了哪些信息
 - `problem recover` 会告诉你当前这类问题至少还能做什么恢复动作
 - 只有 `capabilities.can_replay=true` 的问题，才适合继续执行 `problem replay`
+- 对 `api_response` 问题，`problem replay` 还会直接给出 comparison 摘要，帮助判断问题是否仍然复现
 
 ### 第 10 步：如果对象进入失败保留态，使用 clear / reset
 

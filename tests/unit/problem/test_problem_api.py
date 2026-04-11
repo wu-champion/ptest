@@ -104,6 +104,46 @@ def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
     assert replay["replay"] is None
 
 
+def test_api_replay_exposes_comparison_summary(tmp_path: Path, monkeypatch) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    created = api.create_test_case(
+        "api",
+        "demo",
+        content={
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+    case_id = created["data"]["case_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(404, {"message": "missing"}),
+    )
+    run_result = api.run_test_case(case_id)
+    assert run_result["success"] is False
+
+    problems = api.list_problem_records(case_id=case_id)
+    problem_id = problems["data"][0]["problem_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(200, {"message": "ok"}),
+    )
+    replay = api.replay_problem(problem_id)
+
+    assert replay["success"] is True
+    assert replay["replay"]["comparison"]["original_failure"]["status_code"] == 404
+    assert replay["replay"]["comparison"]["replay_response"]["status_code"] == 200
+    assert replay["replay"]["comparison"]["status_code_changed"] is True
+    assert replay["replay"]["comparison"]["expectation"]["reproduced"] is False
+    assert replay["replay"]["comparison"]["assertion_outcome"] == "not_reproduced"
+    assert replay["replay"]["reproduced"] is False
+
+
 def test_api_problem_list_reports_empty_results_with_filters(tmp_path: Path) -> None:
     api = PTestAPI(work_path=tmp_path)
     api.init_environment()

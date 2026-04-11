@@ -109,6 +109,7 @@ ptest problem replay <problem_id>
 - `problem list` 会返回 `count`、当前生效的 `filters` 以及 `problems`
 - `problem show` 和 `problem assets` 现在都会直接给出 `capabilities`
 - `capabilities.can_replay=true` 时，才适合执行 `problem replay`
+- `api_response` 类型在 `problem replay` 后会直接给出 comparison 摘要，帮助判断这次 replay 是否仍然复现原问题
 - `problem recover` 用于查看该问题类型当前支持的最小恢复/验证入口
 
 ### 6. 销毁工作区资源
