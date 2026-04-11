@@ -302,6 +302,14 @@ class WorkspaceStorage:
             return ProblemRecord.from_dict(data)
         return self.load_problem_records().get(problem_id)
 
+    def get_problem_records_by_ids(self, problem_ids: list[str]) -> list[ProblemRecord]:
+        records: list[ProblemRecord] = []
+        for problem_id in problem_ids:
+            record = self.get_problem_record(problem_id)
+            if record is not None:
+                records.append(record)
+        return records
+
     def save_problem_assets(self, record: ProblemAssetRecord) -> ProblemAssetRecord:
         self.ensure_layout()
         self._write_json(
@@ -343,6 +351,16 @@ class WorkspaceStorage:
         mapping = data.get("case_to_problems", {})
         problem_ids = mapping.get(case_id, [])
         return problem_ids if isinstance(problem_ids, list) else []
+
+    def list_problem_records_for_execution(
+        self, execution_id: str
+    ) -> list[ProblemRecord]:
+        return self.get_problem_records_by_ids(
+            self.list_problem_ids_for_execution(execution_id)
+        )
+
+    def list_problem_records_for_case(self, case_id: str) -> list[ProblemRecord]:
+        return self.get_problem_records_by_ids(self.list_problem_ids_for_case(case_id))
 
     def get_execution_artifact_index(self, execution_id: str) -> dict[str, Any] | None:
         self.ensure_layout()

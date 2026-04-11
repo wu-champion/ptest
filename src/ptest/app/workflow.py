@@ -27,6 +27,11 @@ from ..models import (
     OBJECT_STATUS_ERROR,
     OBJECT_STATUS_INSTALL_FAILED_PRESERVED,
     OBJECT_STATUS_INSTALLED,
+    PROBLEM_ACTION_PRESERVED,
+    PROBLEM_PRESERVATION_FAILED,
+    PROBLEM_PRESERVATION_PARTIAL,
+    PROBLEM_PRESERVATION_SUCCESS,
+    PROBLEM_STATUS_OPEN,
     OBJECT_STATUS_RUNNING,
     OBJECT_STATUS_START_FAILED_PRESERVED,
     OBJECT_STATUS_STOPPED,
@@ -1373,7 +1378,10 @@ class WorkflowService:
         case_id: str | None = None,
         execution_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        records = self.storage.load_problem_records().values()
+        records = self._list_problem_record_models(
+            case_id=case_id,
+            execution_id=execution_id,
+        )
         filtered = []
         for record in records:
             if problem_type is not None and record.problem_type != problem_type:
@@ -2885,12 +2893,49 @@ class WorkflowService:
             return
         problem_record, problem_assets = built
 
-        self.storage.save_problem_record(problem_record)
-        self.storage.save_problem_assets(problem_assets)
+        self._save_problem_bundle(problem_record, problem_assets)
         problems = record.metadata.setdefault("problems", [])
         if isinstance(problems, list):
-            problems.append(problem_record.to_dict())
+            problem_dict = problem_record.to_dict()
+            existing_index = next(
+                (
+                    idx
+                    for idx, item in enumerate(problems)
+                    if isinstance(item, dict)
+                    and item.get("problem_id") == problem_record.problem_id
+                ),
+                None,
+            )
+            if existing_index is None:
+                problems.append(problem_dict)
+            else:
+                problems[existing_index] = problem_dict
             self.storage.save_execution(record)
+
+    def _list_problem_record_models(
+        self,
+        *,
+        case_id: str | None = None,
+        execution_id: str | None = None,
+    ) -> list[ProblemRecord]:
+        if execution_id is not None and case_id is not None:
+            execution_records = {
+                record.problem_id: record
+                for record in self.storage.list_problem_records_for_execution(
+                    execution_id
+                )
+            }
+            case_problem_ids = set(self.storage.list_problem_ids_for_case(case_id))
+            return [
+                record
+                for problem_id, record in execution_records.items()
+                if problem_id in case_problem_ids
+            ]
+        if execution_id is not None:
+            return self.storage.list_problem_records_for_execution(execution_id)
+        if case_id is not None:
+            return self.storage.list_problem_records_for_case(case_id)
+        return list(self.storage.load_problem_records().values())
 
     def _existing_object_created_at(self, name: str) -> str:
         record = self.storage.get_object(name)
@@ -3008,23 +3053,7 @@ class WorkflowService:
         summary = self._build_problem_summary(record)
         problem_id = f"problem_{record.execution_id}"
         now = datetime.now().isoformat()
-        problem_record = ProblemRecord(
-            problem_id=problem_id,
-            problem_type="api_response",
-            summary=summary,
-            status="open",
-            preservation_status="success",
-            execution_id=record.execution_id,
-            case_id=record.case_id,
-            environment_id=environment_id,
-            object_refs=object_refs,
-            artifact_refs=self._problem_artifact_refs(artifact_refs),
-            log_refs=log_refs,
-            latest_action="preserved",
-            created_at=now,
-            updated_at=now,
-            metadata={"source": "execution_failure"},
-        )
+        problem_artifact_refs = self._problem_artifact_refs(artifact_refs)
         observed_response = {
             "output": record.output,
             "error": record.error_message,
@@ -3046,8 +3075,8 @@ class WorkflowService:
                 ),
                 "execution_artifacts": (
                     bool(
-                        problem_record.artifact_refs.get("execution_artifacts")
-                        or problem_record.artifact_refs.get("artifact_index")
+                        problem_artifact_refs.get("execution_artifacts")
+                        or problem_artifact_refs.get("artifact_index")
                     ),
                     "execution artifacts were not preserved",
                 ),
@@ -3057,14 +3086,26 @@ class WorkflowService:
                 ),
             }
         )
-        problem_record.preservation_status = preservation["status"]
-        problem_record.metadata["preservation"] = preservation
-        problem_assets = ProblemAssetRecord(
+        problem_record = self._new_problem_record(
             problem_id=problem_id,
             problem_type="api_response",
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
+            execution_id=record.execution_id,
+            case_id=record.case_id,
+            environment_id=environment_id,
+            object_refs=object_refs,
+            artifact_refs=problem_artifact_refs,
+            log_refs=log_refs,
+            created_at=now,
+            updated_at=now,
+            metadata={"source": "execution_failure"},
+        )
+        problem_assets = self._new_problem_assets(
+            problem_id=problem_id,
+            problem_type="api_response",
+            summary=summary,
+            preservation=preservation,
             execution_id=record.execution_id,
             case_id=record.case_id,
             environment_id=environment_id,
@@ -3084,7 +3125,10 @@ class WorkflowService:
             },
             created_at=now,
             updated_at=now,
-            metadata={"source_execution": record.execution_id},
+            metadata={
+                "source": "execution_failure",
+                "source_execution": record.execution_id,
+            },
         )
         return problem_record, problem_assets
 
@@ -3166,32 +3210,26 @@ class WorkflowService:
                 ),
             }
         )
-        problem_record = ProblemRecord(
+        problem_record = self._new_problem_record(
             problem_id=problem_id,
             problem_type="data_state",
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id=record.execution_id,
             case_id=record.case_id,
             environment_id=environment_id,
             object_refs=object_refs,
             artifact_refs=self._problem_artifact_refs(artifact_refs),
             log_refs=log_refs,
-            latest_action="preserved",
             created_at=now,
             updated_at=now,
-            metadata={
-                "source": "execution_failure",
-                "preservation": preservation,
-            },
+            metadata={"source": "execution_failure"},
         )
-        problem_assets = ProblemAssetRecord(
+        problem_assets = self._new_problem_assets(
             problem_id=problem_id,
             problem_type="data_state",
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id=record.execution_id,
             case_id=record.case_id,
             environment_id=environment_id,
@@ -3202,7 +3240,10 @@ class WorkflowService:
             details={**details, "preservation": preservation},
             created_at=now,
             updated_at=now,
-            metadata={"source_execution": record.execution_id},
+            metadata={
+                "source": "execution_failure",
+                "source_execution": record.execution_id,
+            },
         )
         return problem_record, problem_assets
 
@@ -3304,32 +3345,26 @@ class WorkflowService:
                 ),
             }
         )
-        problem_record = ProblemRecord(
+        problem_record = self._new_problem_record(
             problem_id=problem_id,
             problem_type="service_runtime",
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id=record.execution_id,
             case_id=record.case_id,
             environment_id=environment_id,
             object_refs=runtime_object_refs,
             artifact_refs=self._problem_artifact_refs(artifact_refs),
             log_refs=log_refs,
-            latest_action="preserved",
             created_at=now,
             updated_at=now,
-            metadata={
-                "source": "execution_failure",
-                "preservation": preservation,
-            },
+            metadata={"source": "execution_failure"},
         )
-        problem_assets = ProblemAssetRecord(
+        problem_assets = self._new_problem_assets(
             problem_id=problem_id,
             problem_type="service_runtime",
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id=record.execution_id,
             case_id=record.case_id,
             environment_id=environment_id,
@@ -3340,7 +3375,10 @@ class WorkflowService:
             details={**details, "preservation": preservation},
             created_at=now,
             updated_at=now,
-            metadata={"source_execution": record.execution_id},
+            metadata={
+                "source": "execution_failure",
+                "source_execution": record.execution_id,
+            },
         )
         return problem_record, problem_assets
 
@@ -3516,32 +3554,26 @@ class WorkflowService:
                 ),
             }
         )
-        problem_record = ProblemRecord(
+        problem_record = self._new_problem_record(
             problem_id=problem_id,
             problem_type=problem_type,
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id="",
             case_id="",
             environment_id=env_context["environment_id"],
             object_refs=refs,
             artifact_refs={},
             log_refs=env_context["log_refs"],
-            latest_action="preserved",
             created_at=now,
             updated_at=now,
-            metadata={
-                "source": "environment_dependency",
-                "preservation": preservation,
-            },
+            metadata={"source": "environment_dependency"},
         )
-        problem_assets = ProblemAssetRecord(
+        problem_assets = self._new_problem_assets(
             problem_id=problem_id,
             problem_type=problem_type,
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id="",
             case_id="",
             environment_id=env_context["environment_id"],
@@ -3559,8 +3591,7 @@ class WorkflowService:
             updated_at=now,
             metadata={"source": "environment_dependency"},
         )
-        self.storage.save_problem_record(problem_record)
-        self.storage.save_problem_assets(problem_assets)
+        self._save_problem_bundle(problem_record, problem_assets)
         return problem_id
 
     def _record_problem_recovery_action(
@@ -3611,9 +3642,103 @@ class WorkflowService:
         assets.metadata["latest_recovery"] = latest_recovery
         assets.updated_at = now
 
-        self.storage.save_problem_record(record)
-        self.storage.save_problem_assets(assets)
+        self._save_problem_bundle(record, assets)
         return recovery_record
+
+    def _new_problem_record(
+        self,
+        *,
+        problem_id: str,
+        problem_type: str,
+        summary: str,
+        preservation: dict[str, Any],
+        execution_id: str,
+        case_id: str,
+        environment_id: str,
+        object_refs: list[str],
+        artifact_refs: dict[str, Any],
+        log_refs: dict[str, Any],
+        created_at: str,
+        updated_at: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ProblemRecord:
+        record_metadata = dict(metadata or {})
+        record_metadata["preservation"] = preservation
+        return ProblemRecord(
+            problem_id=problem_id,
+            problem_type=problem_type,
+            summary=summary,
+            status=PROBLEM_STATUS_OPEN,
+            preservation_status=self._problem_preservation_status(preservation),
+            execution_id=execution_id,
+            case_id=case_id,
+            environment_id=environment_id,
+            object_refs=list(object_refs),
+            artifact_refs=dict(artifact_refs),
+            log_refs=dict(log_refs),
+            latest_action=PROBLEM_ACTION_PRESERVED,
+            created_at=created_at,
+            updated_at=updated_at,
+            metadata=record_metadata,
+        )
+
+    def _new_problem_assets(
+        self,
+        *,
+        problem_id: str,
+        problem_type: str,
+        summary: str,
+        preservation: dict[str, Any],
+        execution_id: str,
+        case_id: str,
+        environment_id: str,
+        object_refs: list[str],
+        artifact_refs: dict[str, Any],
+        log_refs: dict[str, Any],
+        recovery: dict[str, Any],
+        details: dict[str, Any],
+        created_at: str,
+        updated_at: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ProblemAssetRecord:
+        asset_metadata = dict(metadata or {})
+        asset_metadata["preservation"] = preservation
+        return ProblemAssetRecord(
+            problem_id=problem_id,
+            problem_type=problem_type,
+            summary=summary,
+            status=PROBLEM_STATUS_OPEN,
+            preservation_status=self._problem_preservation_status(preservation),
+            execution_id=execution_id,
+            case_id=case_id,
+            environment_id=environment_id,
+            object_refs=list(object_refs),
+            artifact_refs=dict(artifact_refs),
+            log_refs=dict(log_refs),
+            recovery=dict(recovery),
+            details=dict(details),
+            created_at=created_at,
+            updated_at=updated_at,
+            metadata=asset_metadata,
+        )
+
+    def _problem_preservation_status(self, preservation: dict[str, Any]) -> str:
+        status = preservation.get("status", PROBLEM_PRESERVATION_SUCCESS)
+        if status in {
+            PROBLEM_PRESERVATION_SUCCESS,
+            PROBLEM_PRESERVATION_PARTIAL,
+            PROBLEM_PRESERVATION_FAILED,
+        }:
+            return cast(str, status)
+        return PROBLEM_PRESERVATION_SUCCESS
+
+    def _save_problem_bundle(
+        self,
+        problem_record: ProblemRecord,
+        problem_assets: ProblemAssetRecord,
+    ) -> None:
+        self.storage.save_problem_record(problem_record)
+        self.storage.save_problem_assets(problem_assets)
 
     def _build_preservation_summary(
         self,

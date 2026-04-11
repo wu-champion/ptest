@@ -34,6 +34,8 @@ def test_workspace_storage_persists_problem_records_and_assets(tmp_path: Path) -
 
     loaded_record = storage.get_problem_record("problem_exec_001")
     loaded_assets = storage.get_problem_assets("problem_exec_001")
+    execution_records = storage.list_problem_records_for_execution("exec_001")
+    case_records = storage.list_problem_records_for_case("api_case_001")
 
     assert loaded_record is not None
     assert loaded_record.problem_type == "api_response"
@@ -41,6 +43,8 @@ def test_workspace_storage_persists_problem_records_and_assets(tmp_path: Path) -
     assert loaded_assets.recovery["replay"]["url"] == "https://example.test/health"
     assert storage.list_problem_ids_for_execution("exec_001") == ["problem_exec_001"]
     assert storage.list_problem_ids_for_case("api_case_001") == ["problem_exec_001"]
+    assert [item.problem_id for item in execution_records] == ["problem_exec_001"]
+    assert [item.problem_id for item in case_records] == ["problem_exec_001"]
 
     recovery = ProblemRecoveryRecord(
         action_id="recovery_001",

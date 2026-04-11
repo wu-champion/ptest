@@ -39,6 +39,14 @@ OBJECT_RESETTABLE_STATUSES = frozenset(
     }
 )
 
+PROBLEM_STATUS_OPEN = "open"
+
+PROBLEM_PRESERVATION_SUCCESS = "success"
+PROBLEM_PRESERVATION_PARTIAL = "partial"
+PROBLEM_PRESERVATION_FAILED = "failed"
+
+PROBLEM_ACTION_PRESERVED = "preserved"
+
 
 def _now_iso() -> str:
     return datetime.now().isoformat()

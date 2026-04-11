@@ -65,6 +65,13 @@ def test_workflow_service_preserves_and_replays_api_problem(
     problem = service.get_problem_record(problem_id)
     assert problem["success"] is True
     assert problem["problem"]["execution_id"]
+    assert problem["problem"]["metadata"]["preservation"]["status"] == "partial"
+
+    filtered = service.list_problem_records(
+        case_id="api_failure_case",
+        execution_id=problem["problem"]["execution_id"],
+    )
+    assert [item["problem_id"] for item in filtered] == [problem_id]
 
     assets = service.get_problem_assets(problem_id)
     assert assets["success"] is True
@@ -80,6 +87,7 @@ def test_workflow_service_preserves_and_replays_api_problem(
         assets["assets"]["details"]["preservation"]["missing_reasons"]["log_index"]
         == "log index is not available"
     )
+    assert assets["assets"]["metadata"]["preservation"]["status"] == "partial"
 
     monkeypatch.setattr(
         requests,
@@ -97,6 +105,10 @@ def test_workflow_service_preserves_and_replays_api_problem(
     assert problem["success"] is True
     assert problem["problem"]["latest_action"] == "replay:completed"
     assert problem["problem"]["metadata"]["latest_recovery"]["action_type"] == "replay"
+
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert assets["assets"]["metadata"]["latest_recovery"]["action_type"] == "replay"
 
     latest_recovery = service.get_problem_recovery(problem_id)
     assert latest_recovery["success"] is True
@@ -136,6 +148,7 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert assets["assets"]["details"]["actual_result"] == [{"value": 1}]
     assert assets["assets"]["recovery"]["mode"] == "minimal_state_hints"
     assert assets["assets"]["recovery"]["supported"] is False
+    assert assets["assets"]["metadata"]["preservation"]["status"] == "partial"
 
     recovery = service.recover_problem(problem_id)
     assert recovery["success"] is True
@@ -152,6 +165,12 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert (
         problem["problem"]["metadata"]["latest_recovery"]["mode"]
         == "minimal_state_hints"
+    )
+
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert (
+        assets["assets"]["metadata"]["latest_recovery"]["mode"] == "minimal_state_hints"
     )
 
 
@@ -186,6 +205,7 @@ def test_workflow_service_preserves_environment_init_problem(
         ]
         == "related object snapshot is not available"
     )
+    assert assets["assets"]["metadata"]["preservation"]["status"] == "partial"
 
     recovery = service.recover_problem(problem_id)
     assert recovery["success"] is True
