@@ -1174,7 +1174,21 @@ def _handle_problem_command(
             case_id=getattr(args, "case_id", None),
             execution_id=getattr(args, "execution_id", None),
         )
-        print(json.dumps(records, indent=2, ensure_ascii=False))
+        filters = {
+            key: value
+            for key, value in {
+                "problem_type": getattr(args, "problem_type", None),
+                "case_id": getattr(args, "case_id", None),
+                "execution_id": getattr(args, "execution_id", None),
+            }.items()
+            if value is not None
+        }
+        payload = {
+            "count": len(records),
+            "filters": filters,
+            "problems": records,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
         return True
 
     if args.problem_action == "show":

@@ -303,12 +303,23 @@ class PTestAPI:
             case_id=case_id,
             execution_id=execution_id,
         )
+        filters = {
+            key: value
+            for key, value in {
+                "problem_type": problem_type,
+                "case_id": case_id,
+                "execution_id": execution_id,
+            }.items()
+            if value is not None
+        }
         return self._api_response(
             success=True,
             status="ok",
             message=f"Retrieved {len(records)} problem records",
             data=records,
             problems=records,
+            count=len(records),
+            filters=filters,
         )
 
     def get_problem_record(self, problem_id: str) -> dict[str, Any]:

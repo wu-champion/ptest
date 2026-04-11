@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -140,3 +141,43 @@ def test_cli_problem_replay_reports_unsupported_for_data_problem(
 
     assert exit_code == 1
     assert "does not support replay" in captured.out
+
+
+def test_cli_problem_list_reports_filters_and_empty_results(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "list",
+            "--type",
+            "service_runtime",
+            "--case-id",
+            "missing_case",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["count"] == 0
+    assert payload["problems"] == []
+    assert payload["filters"] == {
+        "problem_type": "service_runtime",
+        "case_id": "missing_case",
+    }

@@ -44,6 +44,8 @@ def test_api_exposes_problem_records(tmp_path: Path, monkeypatch) -> None:
     assert problems["success"] is True
     assert len(problems["data"]) == 1
     assert len(problems["problems"]) == 1
+    assert problems["count"] == 1
+    assert problems["filters"] == {"case_id": case_id}
 
     problem_id = problems["data"][0]["problem_id"]
     detail = api.get_problem_record(problem_id)
@@ -100,3 +102,22 @@ def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
     assert replay["success"] is False
     assert replay["error_code"] == "problem_replay_unsupported"
     assert replay["replay"] is None
+
+
+def test_api_problem_list_reports_empty_results_with_filters(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+
+    problems = api.list_problem_records(
+        problem_type="service_runtime",
+        case_id="missing_case",
+    )
+
+    assert problems["success"] is True
+    assert problems["data"] == []
+    assert problems["problems"] == []
+    assert problems["count"] == 0
+    assert problems["filters"] == {
+        "problem_type": "service_runtime",
+        "case_id": "missing_case",
+    }
