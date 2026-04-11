@@ -1390,31 +1390,64 @@ class WorkflowService:
                 continue
             if execution_id is not None and record.execution_id != execution_id:
                 continue
-            filtered.append(record.to_dict())
+            filtered.append(self._problem_record_payload(record))
         return sorted(filtered, key=lambda item: item["created_at"], reverse=True)
-
-    def get_problem_record(self, problem_id: str) -> dict[str, Any]:
-        record = self.storage.get_problem_record(problem_id)
-        if record is None:
-            return self._not_found_result("problem", problem_id)
-        return self._operation_result(
-            success=True,
-            status="ok",
-            message=f"Problem '{problem_id}' retrieved",
-            data=record.to_dict(),
-            problem=record.to_dict(),
-        )
 
     def get_problem_assets(self, problem_id: str) -> dict[str, Any]:
         assets = self.storage.get_problem_assets(problem_id)
         if assets is None:
             return self._not_found_result("problem_assets", problem_id)
+        payload = self._problem_assets_payload(assets)
         return self._operation_result(
             success=True,
             status="ok",
             message=f"Assets for problem '{problem_id}' retrieved",
-            data=assets.to_dict(),
-            assets=assets.to_dict(),
+            data=payload,
+            assets=payload,
+        )
+
+    def _problem_record_payload(self, record: ProblemRecord) -> dict[str, Any]:
+        payload = record.to_dict()
+        metadata = payload.get("metadata", {})
+        preservation = metadata.get("preservation", {})
+        capabilities = metadata.get("capabilities", {})
+        if isinstance(preservation, dict):
+            payload["preservation"] = preservation
+        if isinstance(capabilities, dict):
+            payload["capabilities"] = capabilities
+        return payload
+
+    def _problem_assets_payload(self, assets: ProblemAssetRecord) -> dict[str, Any]:
+        payload = assets.to_dict()
+        metadata = payload.get("metadata", {})
+        details = payload.get("details", {})
+        preservation = {}
+        if isinstance(details, dict):
+            raw_preservation = details.get("preservation", {})
+            if isinstance(raw_preservation, dict):
+                preservation = raw_preservation
+        if not preservation and isinstance(metadata, dict):
+            raw_preservation = metadata.get("preservation", {})
+            if isinstance(raw_preservation, dict):
+                preservation = raw_preservation
+        capabilities = metadata.get("capabilities", {})
+        if isinstance(preservation, dict):
+            payload["preservation"] = preservation
+        if isinstance(capabilities, dict):
+            payload["capabilities"] = capabilities
+        return payload
+
+    def get_problem_record(self, problem_id: str) -> dict[str, Any]:
+        record = self.storage.get_problem_record(problem_id)
+        if record is None:
+            return self._not_found_result("problem", problem_id)
+        payload = self._problem_record_payload(record)
+        return self._operation_result(
+            success=True,
+            status="ok",
+            message=f"Problem '{problem_id}' retrieved",
+            data=payload,
+            problem=payload,
         )
 
     def get_problem_recovery(self, problem_id: str) -> dict[str, Any]:

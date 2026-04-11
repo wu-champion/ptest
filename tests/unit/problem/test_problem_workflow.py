@@ -68,6 +68,8 @@ def test_workflow_service_preserves_and_replays_api_problem(
     assert problem["problem"]["metadata"]["preservation"]["status"] == "partial"
     assert problem["problem"]["metadata"]["capabilities"]["can_replay"] is True
     assert problem["problem"]["metadata"]["capabilities"]["can_recover"] is True
+    assert problem["problem"]["capabilities"]["can_replay"] is True
+    assert problem["problem"]["preservation"]["status"] == "partial"
 
     filtered = service.list_problem_records(
         case_id="api_failure_case",
@@ -91,6 +93,8 @@ def test_workflow_service_preserves_and_replays_api_problem(
     )
     assert assets["assets"]["metadata"]["preservation"]["status"] == "partial"
     assert assets["assets"]["metadata"]["capabilities"]["can_replay"] is True
+    assert assets["assets"]["capabilities"]["can_replay"] is True
+    assert assets["assets"]["preservation"]["status"] == "partial"
 
     monkeypatch.setattr(
         requests,
@@ -157,6 +161,8 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert assets["assets"]["metadata"]["preservation"]["status"] == "partial"
     assert assets["assets"]["metadata"]["capabilities"]["can_replay"] is False
     assert assets["assets"]["metadata"]["capabilities"]["can_recover"] is True
+    assert assets["assets"]["capabilities"]["can_recover"] is True
+    assert assets["assets"]["preservation"]["status"] == "partial"
 
     recovery = service.recover_problem(problem_id)
     assert recovery["success"] is True

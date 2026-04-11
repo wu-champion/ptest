@@ -300,6 +300,9 @@ ptest problem assets <problem_id>
 ptest problem recover <problem_id>
 ```
 
+`problem show` and `problem assets` now expose `capabilities` directly.
+Only problems with `capabilities.can_replay=true` should use `ptest problem replay <problem_id>`.
+
 ### Step 10: If the object enters a preserved-failure state, use clear / reset
 
 Current first-pass preserved states include:

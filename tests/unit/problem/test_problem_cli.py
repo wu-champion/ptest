@@ -62,6 +62,7 @@ def test_cli_problem_show_uses_workspace_path(
     assert exit_code == 0
     assert problem_id in captured.out
     assert "api_response" in captured.out
+    assert '"capabilities"' in captured.out
 
 
 def test_cli_problem_recover_outputs_data_recovery_plan(

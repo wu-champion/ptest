@@ -503,8 +503,10 @@ ptest problem recover <problem_id>
 例如：
 
 - `problem show` 会告诉你问题类型、来源执行、当前状态
+- `problem show` / `problem assets` 还会直接给出 `capabilities`
 - `problem assets` 会告诉你这次失败保留下来了哪些信息
 - `problem recover` 会告诉你当前这类问题至少还能做什么恢复动作
+- 只有 `capabilities.can_replay=true` 的问题，才适合继续执行 `problem replay`
 
 ### 第 10 步：如果对象进入失败保留态，使用 clear / reset
 

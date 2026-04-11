@@ -184,11 +184,12 @@ assets = api.get_problem_assets(problem_id)
 recovery = api.recover_problem(problem_id)
 
 print(detail["data"]["problem_type"])
+print(detail["data"]["capabilities"])
 print(assets["data"]["preservation_status"])
 print(recovery["data"]["mode"])
 ```
 
-如果问题类型支持最小重放：
+如果 `detail["data"]["capabilities"]["can_replay"]` 为 `True`，则可以继续做最小重放：
 
 ```python
 replay = api.replay_problem(problem_id)

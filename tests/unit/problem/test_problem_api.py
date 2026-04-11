@@ -50,6 +50,8 @@ def test_api_exposes_problem_records(tmp_path: Path, monkeypatch) -> None:
     assert detail["data"]["problem_type"] == "api_response"
     assert detail["data"]["metadata"]["capabilities"]["can_replay"] is True
     assert detail["data"]["metadata"]["capabilities"]["can_recover"] is True
+    assert detail["data"]["capabilities"]["can_replay"] is True
+    assert detail["data"]["preservation"]["status"] == "partial"
 
 
 def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:

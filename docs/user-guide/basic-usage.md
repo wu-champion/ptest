@@ -101,7 +101,14 @@ ptest problem list
 ptest problem show <problem_id>
 ptest problem assets <problem_id>
 ptest problem recover <problem_id>
+ptest problem replay <problem_id>
 ```
+
+说明：
+
+- `problem show` 和 `problem assets` 现在都会直接给出 `capabilities`
+- `capabilities.can_replay=true` 时，才适合执行 `problem replay`
+- `problem recover` 用于查看该问题类型当前支持的最小恢复/验证入口
 
 ### 6. 销毁工作区资源
 
