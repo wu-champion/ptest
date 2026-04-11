@@ -502,6 +502,7 @@ ptest problem recover <problem_id>
 
 例如：
 
+- `problem list` 会告诉你当前返回了多少条记录，以及这次列表使用了哪些筛选条件
 - `problem show` 会告诉你问题类型、来源执行、当前状态
 - `problem show` / `problem assets` 还会直接给出 `capabilities`
 - `problem assets` 会告诉你这次失败保留下来了哪些信息

@@ -367,7 +367,7 @@ def setup_cli() -> argparse.ArgumentParser:
     )
     problem_list_parser = problem_subparsers.add_parser(
         "list",
-        help="List problem records",
+        help="List problem records with count and applied filters",
         parents=[workspace_parent],
     )
     problem_list_parser.add_argument(
@@ -379,25 +379,25 @@ def setup_cli() -> argparse.ArgumentParser:
     problem_list_parser.add_argument("--execution-id", help="Filter by execution ID")
     problem_show_parser = problem_subparsers.add_parser(
         "show",
-        help="Show a single problem record",
+        help="Show a single problem record with direct capabilities",
         parents=[workspace_parent],
     )
     problem_show_parser.add_argument("problem_id", help="Problem ID")
     problem_assets_parser = problem_subparsers.add_parser(
         "assets",
-        help="Show problem assets",
+        help="Show problem assets and preserved context",
         parents=[workspace_parent],
     )
     problem_assets_parser.add_argument("problem_id", help="Problem ID")
     problem_replay_parser = problem_subparsers.add_parser(
         "replay",
-        help="Replay a replayable problem",
+        help="Replay a replayable problem when capabilities allow it",
         parents=[workspace_parent],
     )
     problem_replay_parser.add_argument("problem_id", help="Problem ID")
     problem_recover_parser = problem_subparsers.add_parser(
         "recover",
-        help="Show the minimal recovery plan for a problem",
+        help="Show the minimal recovery or validation plan for a problem",
         parents=[workspace_parent],
     )
     problem_recover_parser.add_argument("problem_id", help="Problem ID")

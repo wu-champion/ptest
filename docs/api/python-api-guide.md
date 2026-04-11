@@ -175,7 +175,9 @@ print(artifacts["data"]["contents"]["result/execution.json"])
 
 ```python
 problems = api.list_problem_records(case_id=case_id)
-print(problems["data"])
+print(problems["count"])
+print(problems["filters"])
+print(problems["problems"])
 
 problem_id = problems["data"][0]["problem_id"]
 
@@ -188,6 +190,11 @@ print(detail["data"]["capabilities"])
 print(assets["data"]["preservation_status"])
 print(recovery["data"]["mode"])
 ```
+
+其中：
+
+- `list_problem_records()` 现在会稳定返回 `count`、`filters`、`problems`
+- `get_problem_record()` / `get_problem_assets()` 仍保留 `data`，同时也会给出更直接的 `problem` / `assets` 别名字段
 
 如果 `detail["data"]["capabilities"]["can_replay"]` 为 `True`，则可以继续做最小重放：
 

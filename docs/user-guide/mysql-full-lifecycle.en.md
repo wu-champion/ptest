@@ -300,6 +300,7 @@ ptest problem assets <problem_id>
 ptest problem recover <problem_id>
 ```
 
+`problem list` now returns `count`, the applied `filters`, and the matched `problems`.
 `problem show` and `problem assets` now expose `capabilities` directly.
 Only problems with `capabilities.can_replay=true` should use `ptest problem replay <problem_id>`.
 
