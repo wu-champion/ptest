@@ -308,6 +308,7 @@ class PTestAPI:
             status="ok",
             message=f"Retrieved {len(records)} problem records",
             data=records,
+            problems=records,
         )
 
     def get_problem_record(self, problem_id: str) -> dict[str, Any]:
@@ -317,6 +318,7 @@ class PTestAPI:
             status=result["status"],
             message=result["message"],
             data=result.get("problem"),
+            problem=result.get("problem"),
             error=result.get("error"),
             error_code=result.get("error_code"),
         )
@@ -328,6 +330,7 @@ class PTestAPI:
             status=result["status"],
             message=result["message"],
             data=result.get("assets"),
+            assets=result.get("assets"),
             error=result.get("error"),
             error_code=result.get("error_code"),
         )
@@ -339,6 +342,7 @@ class PTestAPI:
             status=result["status"],
             message=result["message"],
             data=result.get("recovery_action"),
+            recovery_action=result.get("recovery_action"),
             error=result.get("error"),
             error_code=result.get("error_code"),
         )
@@ -350,6 +354,7 @@ class PTestAPI:
             status=result["status"],
             message=result["message"],
             data=result.get("replay"),
+            replay=result.get("replay"),
             recovery_action=result.get("recovery_action"),
             error=result.get("error"),
             error_code=result.get("error_code"),
@@ -362,6 +367,7 @@ class PTestAPI:
             status=result["status"],
             message=result["message"],
             data=result.get("recovery"),
+            recovery=result.get("recovery"),
             recovery_action=result.get("recovery_action"),
             error=result.get("error"),
             error_code=result.get("error_code"),

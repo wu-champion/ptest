@@ -43,15 +43,22 @@ def test_api_exposes_problem_records(tmp_path: Path, monkeypatch) -> None:
     problems = api.list_problem_records(case_id=case_id)
     assert problems["success"] is True
     assert len(problems["data"]) == 1
+    assert len(problems["problems"]) == 1
 
     problem_id = problems["data"][0]["problem_id"]
     detail = api.get_problem_record(problem_id)
     assert detail["success"] is True
     assert detail["data"]["problem_type"] == "api_response"
+    assert detail["problem"]["problem_type"] == "api_response"
     assert detail["data"]["metadata"]["capabilities"]["can_replay"] is True
     assert detail["data"]["metadata"]["capabilities"]["can_recover"] is True
     assert detail["data"]["capabilities"]["can_replay"] is True
     assert detail["data"]["preservation"]["status"] == "partial"
+
+    assets = api.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert assets["assets"]["problem_type"] == "api_response"
+    assert assets["assets"]["capabilities"]["can_replay"] is True
 
 
 def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
@@ -79,6 +86,7 @@ def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
     recovery = api.recover_problem(problems["data"][0]["problem_id"])
     assert recovery["success"] is True
     assert recovery["data"]["problem_type"] == "data_state"
+    assert recovery["recovery"]["problem_type"] == "data_state"
     assert recovery["data"]["mode"] == "minimal_state_hints"
     assert recovery["data"]["actual_result"] == [{"value": 1}]
     assert recovery["recovery_action"]["action_type"] == "recover"
@@ -86,7 +94,9 @@ def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
     latest_recovery = api.get_problem_recovery(problems["data"][0]["problem_id"])
     assert latest_recovery["success"] is True
     assert latest_recovery["data"]["status"] == "prepared"
+    assert latest_recovery["recovery_action"]["status"] == "prepared"
 
     replay = api.replay_problem(problems["data"][0]["problem_id"])
     assert replay["success"] is False
     assert replay["error_code"] == "problem_replay_unsupported"
+    assert replay["replay"] is None
