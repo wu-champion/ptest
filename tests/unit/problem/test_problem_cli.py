@@ -101,3 +101,41 @@ def test_cli_problem_recover_outputs_data_recovery_plan(
     assert exit_code == 0
     assert problem_id in captured.out
     assert "minimal_state_hints" in captured.out
+
+
+def test_cli_problem_replay_reports_unsupported_for_data_problem(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.add_case(
+        "sqlite_failure_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(workspace / "sample.db"),
+            "query": "SELECT 1 as value",
+            "expected_result": [{"value": 2}],
+        },
+    )
+    service.run_case("sqlite_failure_case")
+    problem_id = service.list_problem_records(
+        case_id="sqlite_failure_case", problem_type="data_state"
+    )[0]["problem_id"]
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ptest", "problem", "replay", problem_id, "--path", str(workspace)],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "does not support replay" in captured.out

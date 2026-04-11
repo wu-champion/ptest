@@ -48,6 +48,8 @@ def test_api_exposes_problem_records(tmp_path: Path, monkeypatch) -> None:
     detail = api.get_problem_record(problem_id)
     assert detail["success"] is True
     assert detail["data"]["problem_type"] == "api_response"
+    assert detail["data"]["metadata"]["capabilities"]["can_replay"] is True
+    assert detail["data"]["metadata"]["capabilities"]["can_recover"] is True
 
 
 def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
@@ -82,3 +84,7 @@ def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
     latest_recovery = api.get_problem_recovery(problems["data"][0]["problem_id"])
     assert latest_recovery["success"] is True
     assert latest_recovery["data"]["status"] == "prepared"
+
+    replay = api.replay_problem(problems["data"][0]["problem_id"])
+    assert replay["success"] is False
+    assert replay["error_code"] == "problem_replay_unsupported"

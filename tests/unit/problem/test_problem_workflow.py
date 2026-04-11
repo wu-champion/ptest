@@ -8,7 +8,7 @@ import requests
 import pytest
 
 from ptest.app import WorkflowService
-from ptest.models import ManagedObjectRecord
+from ptest.models import ManagedObjectRecord, ProblemAssetRecord, ProblemRecord
 from ptest.objects.db_server import DatabaseServerComponent
 
 
@@ -66,6 +66,8 @@ def test_workflow_service_preserves_and_replays_api_problem(
     assert problem["success"] is True
     assert problem["problem"]["execution_id"]
     assert problem["problem"]["metadata"]["preservation"]["status"] == "partial"
+    assert problem["problem"]["metadata"]["capabilities"]["can_replay"] is True
+    assert problem["problem"]["metadata"]["capabilities"]["can_recover"] is True
 
     filtered = service.list_problem_records(
         case_id="api_failure_case",
@@ -88,6 +90,7 @@ def test_workflow_service_preserves_and_replays_api_problem(
         == "log index is not available"
     )
     assert assets["assets"]["metadata"]["preservation"]["status"] == "partial"
+    assert assets["assets"]["metadata"]["capabilities"]["can_replay"] is True
 
     monkeypatch.setattr(
         requests,
@@ -109,6 +112,9 @@ def test_workflow_service_preserves_and_replays_api_problem(
     assets = service.get_problem_assets(problem_id)
     assert assets["success"] is True
     assert assets["assets"]["metadata"]["latest_recovery"]["action_type"] == "replay"
+    assert (
+        assets["assets"]["metadata"]["capabilities"]["recover_mode"] == "request_replay"
+    )
 
     latest_recovery = service.get_problem_recovery(problem_id)
     assert latest_recovery["success"] is True
@@ -149,6 +155,8 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert assets["assets"]["recovery"]["mode"] == "minimal_state_hints"
     assert assets["assets"]["recovery"]["supported"] is False
     assert assets["assets"]["metadata"]["preservation"]["status"] == "partial"
+    assert assets["assets"]["metadata"]["capabilities"]["can_replay"] is False
+    assert assets["assets"]["metadata"]["capabilities"]["can_recover"] is True
 
     recovery = service.recover_problem(problem_id)
     assert recovery["success"] is True
@@ -172,6 +180,10 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert (
         assets["assets"]["metadata"]["latest_recovery"]["mode"] == "minimal_state_hints"
     )
+
+    replay = service.replay_problem(problem_id)
+    assert replay["success"] is False
+    assert replay["error_code"] == "problem_replay_unsupported"
 
 
 def test_workflow_service_preserves_environment_init_problem(
@@ -405,3 +417,31 @@ def test_workflow_service_preserves_service_runtime_problem(tmp_path: Path) -> N
     assert recovery["success"] is True
     assert recovery["recovery"]["problem_type"] == "service_runtime"
     assert recovery["recovery"]["mode"] == "basic_runtime_validation"
+
+
+def test_workflow_service_rejects_recover_for_unsupported_problem_type(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    problem_id = "problem_crash_001"
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id=problem_id,
+            problem_type="crash_dump",
+            summary="Crash dump problem",
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id=problem_id,
+            problem_type="crash_dump",
+            summary="Crash dump problem",
+            recovery={"supported": False, "mode": "preservation_only"},
+            details={"dump_refs": ["core.001"]},
+        )
+    )
+
+    recovery = service.recover_problem(problem_id)
+    assert recovery["success"] is False
+    assert recovery["error_code"] == "problem_recover_unsupported"

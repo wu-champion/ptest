@@ -1436,7 +1436,7 @@ class WorkflowService:
         assets = self.storage.get_problem_assets(problem_id)
         if assets is None:
             return self._not_found_result("problem", problem_id)
-        if assets.problem_type != "api_response":
+        if not self._supports_problem_replay(assets):
             return self._operation_result(
                 success=False,
                 status="unsupported",
@@ -1550,6 +1550,14 @@ class WorkflowService:
         assets = self.storage.get_problem_assets(problem_id)
         if assets is None:
             return self._not_found_result("problem_assets", problem_id)
+        if not self._supports_problem_recovery(assets):
+            return self._operation_result(
+                success=False,
+                status="unsupported",
+                message=f"Problem '{problem_id}' does not support recover",
+                error="problem_recover_unsupported",
+                error_code="problem_recover_unsupported",
+            )
 
         recovery = self._build_recovery_plan(record, assets)
         recovery_action = self._record_problem_recovery_action(
@@ -3664,6 +3672,10 @@ class WorkflowService:
     ) -> ProblemRecord:
         record_metadata = dict(metadata or {})
         record_metadata["preservation"] = preservation
+        record_metadata["capabilities"] = self._problem_capabilities(
+            problem_type,
+            recovery=None,
+        )
         return ProblemRecord(
             problem_id=problem_id,
             problem_type=problem_type,
@@ -3703,6 +3715,10 @@ class WorkflowService:
     ) -> ProblemAssetRecord:
         asset_metadata = dict(metadata or {})
         asset_metadata["preservation"] = preservation
+        asset_metadata["capabilities"] = self._problem_capabilities(
+            problem_type,
+            recovery=recovery,
+        )
         return ProblemAssetRecord(
             problem_id=problem_id,
             problem_type=problem_type,
@@ -3737,8 +3753,59 @@ class WorkflowService:
         problem_record: ProblemRecord,
         problem_assets: ProblemAssetRecord,
     ) -> None:
+        capabilities = self._problem_capabilities(
+            problem_record.problem_type,
+            recovery=problem_assets.recovery,
+        )
+        problem_record.metadata["capabilities"] = capabilities
+        problem_assets.metadata["capabilities"] = capabilities
         self.storage.save_problem_record(problem_record)
         self.storage.save_problem_assets(problem_assets)
+
+    def _problem_capabilities(
+        self,
+        problem_type: str,
+        *,
+        recovery: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        replay_supported = self._supports_problem_replay_type(problem_type) and bool(
+            isinstance(recovery, dict)
+            and isinstance(recovery.get("replay"), dict)
+            and recovery["replay"].get("url")
+        )
+        recover_supported = self._supports_problem_recovery_type(problem_type)
+        raw_mode = recovery.get("mode") if isinstance(recovery, dict) else None
+        mode = raw_mode if isinstance(raw_mode, str) and raw_mode else None
+        return {
+            "can_replay": replay_supported,
+            "can_recover": recover_supported,
+            "replay_mode": mode if replay_supported else None,
+            "recover_mode": mode if recover_supported else None,
+        }
+
+    def _supports_problem_replay(self, assets: ProblemAssetRecord) -> bool:
+        if not self._supports_problem_replay_type(assets.problem_type):
+            return False
+        replay = (
+            assets.recovery.get("replay") if isinstance(assets.recovery, dict) else {}
+        )
+        return isinstance(replay, dict) and bool(replay.get("url"))
+
+    def _supports_problem_recovery(self, assets: ProblemAssetRecord) -> bool:
+        return self._supports_problem_recovery_type(assets.problem_type)
+
+    def _supports_problem_replay_type(self, problem_type: str) -> bool:
+        return problem_type == "api_response"
+
+    def _supports_problem_recovery_type(self, problem_type: str) -> bool:
+        return problem_type in {
+            "api_response",
+            "data_state",
+            "environment_init",
+            "dependency_object",
+            "dependency_configuration",
+            "service_runtime",
+        }
 
     def _build_preservation_summary(
         self,
