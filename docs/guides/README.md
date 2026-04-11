@@ -7,7 +7,7 @@
 - [environment-management.md](environment-management.md)
   - 测试环境创建、生命周期与资源管理
 - [VIRTUALENV_USER_GUIDE.md](VIRTUALENV_USER_GUIDE.md)
-  - Virtualenv 隔离引擎的使用说明
+  - Virtualenv 隔离引擎的底层参考说明
 - [assertion-guide.md](assertion-guide.md)
   - 断言系统使用说明
 - [NAMING_CONVENTION.md](NAMING_CONVENTION.md)

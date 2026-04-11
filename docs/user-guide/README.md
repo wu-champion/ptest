@@ -10,6 +10,12 @@
 2. [mysql-full-lifecycle.md](mysql-full-lifecycle.md)
 3. [mysql-full-lifecycle.en.md](mysql-full-lifecycle.en.md)
 
+如果你正在直接使用 CLI，建议优先掌握这几个点：
+
+- `ptest init --path <path>` 会初始化并自动切换活动工作区
+- `ptest workspace status/use/unset` 用来查看和切换当前工作区上下文
+- 工作区内业务命令在不传 `--path` 时，会优先使用当前目录工作区，再回退活动工作区
+
 ## 适用范围
 
 这部分文档默认面向：
@@ -22,6 +28,7 @@
 
 - SQLite 等轻量对象可以直接作为最小主线示例
 - MySQL 全生命周期主案例当前基于 `host` runtime backend，需要执行环境支持真实服务运行
+- `execution` 保持正式命令名，同时支持更短的 `exec` 别名
 
 ## 与其他目录的关系
 

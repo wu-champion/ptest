@@ -10,6 +10,7 @@ from typing import Any
 
 from .app import WorkflowService
 from .config import DEFAULT_CONFIG
+from . import __version__
 from .core import get_logger
 from .isolation.manager import IsolationManager
 
@@ -500,13 +501,13 @@ class PTestAPI:
             status="ok",
             message="System info retrieved",
             data={
-                "version": "1.7.0",
-                "api_version": "1.7.0",
+                "version": __version__,
+                "api_version": __version__,
                 "work_path": str(self.work_path),
                 "environment_initialized": env_status.get("initialized", False),
                 "environment_path": env_status.get("path"),
                 "isolation_engines": list(self.isolation_manager.engines.keys()),
-                "framework_version": "PTEST-1.7.0",
+                "framework_version": f"PTEST-{__version__}",
             },
         )
 

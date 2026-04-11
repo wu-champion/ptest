@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import os
 import shlex
@@ -15,11 +16,30 @@ from .data.cli import setup_data_subparser, handle_data_command
 from .contract.cli import setup_contract_subparser, handle_contract_command
 from .suites.cli import setup_suite_subparser, handle_suite_command
 from .mock.cli import setup_mock_subparser, handle_mock_command
+from .storage import LocalCliStateError, LocalCliStateStorage, WorkspaceStorage
 from .utils import print_colored, get_colored_text
 
 if TYPE_CHECKING:
     from .cases.manager import CaseManager
     from .environment import EnvironmentManager
+
+
+@dataclass(frozen=True)
+class WorkspaceInspection:
+    path: Path
+    exists: bool
+    recognized: bool
+    available: bool
+    status: str | None
+    reason: str | None
+
+
+@dataclass(frozen=True)
+class WorkspaceResolution:
+    path: Path | None
+    source: str
+    inspection: WorkspaceInspection | None = None
+    cli_state_error: LocalCliStateError | None = None
 
 
 def setup_cli() -> argparse.ArgumentParser:
@@ -304,6 +324,7 @@ def setup_cli() -> argparse.ArgumentParser:
 
     execution_parser = subparsers.add_parser(
         "execution",
+        aliases=["exec"],
         help=get_colored_text("Execution records and artifacts", 92),
         parents=[workspace_parent],
     )
@@ -410,6 +431,28 @@ def setup_cli() -> argparse.ArgumentParser:
         parents=[workspace_parent],
     )
 
+    workspace_parser = subparsers.add_parser(
+        "workspace",
+        help=get_colored_text("Manage active workspace context", 92),
+    )
+    workspace_subparsers = workspace_parser.add_subparsers(
+        dest="workspace_action",
+        help="Workspace actions",
+    )
+    workspace_subparsers.add_parser(
+        "status",
+        help="Show active workspace context",
+    )
+    workspace_use_parser = workspace_subparsers.add_parser(
+        "use",
+        help="Set the active workspace",
+    )
+    workspace_use_parser.add_argument("workspace_path", help="Workspace path")
+    workspace_subparsers.add_parser(
+        "unset",
+        help="Clear the active workspace",
+    )
+
     # data commands
     setup_data_subparser(subparsers, parents=[workspace_parent])
 
@@ -508,47 +551,330 @@ def _handle_init_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理init命令"""
-    root_path = _resolve_workspace_path(args)
+    root_path = Path(args.path).resolve()
     service = WorkflowService(root_path)
     record = service.init_environment(root_path)
+    _local_cli_state_storage().set_active_workspace(root_path)
     print_colored(f"✓ Test environment initialized at: {record.root_path}", 92)
+    print_colored(f"✓ Active workspace set to: {record.root_path}", 92)
     return True
 
 
-def _resolve_workspace_path(args: argparse.Namespace) -> Path:
-    path = getattr(args, "path", None)
-    return Path(path).resolve() if path else Path.cwd().resolve()
+def _local_cli_state_storage() -> LocalCliStateStorage:
+    return LocalCliStateStorage()
 
 
-def _get_workflow_service(args: argparse.Namespace) -> WorkflowService:
-    return WorkflowService(_resolve_workspace_path(args))
-
-
-def _ensure_workspace_initialized(service: WorkflowService, command_label: str) -> bool:
-    record = service.storage.load_environment()
+def _inspect_workspace(path: str | Path) -> WorkspaceInspection:
+    resolved_path = Path(path).resolve()
+    storage = WorkspaceStorage(resolved_path)
+    if not resolved_path.exists():
+        return WorkspaceInspection(
+            path=resolved_path,
+            exists=False,
+            recognized=False,
+            available=False,
+            status=None,
+            reason="path_missing",
+        )
+    if not storage.environment_file.exists():
+        return WorkspaceInspection(
+            path=resolved_path,
+            exists=True,
+            recognized=False,
+            available=False,
+            status=None,
+            reason="workspace_not_initialized",
+        )
+    try:
+        record = storage.load_environment()
+    except Exception:
+        return WorkspaceInspection(
+            path=resolved_path,
+            exists=True,
+            recognized=True,
+            available=False,
+            status=None,
+            reason="workspace_state_invalid",
+        )
     if record is None:
-        print_colored(f"✗ Workspace is not initialized: {service.root_path}", 91)
-        print_colored(
-            f"  Run 'ptest init --path {service.root_path}' before using '{command_label}'",
-            93,
+        return WorkspaceInspection(
+            path=resolved_path,
+            exists=True,
+            recognized=False,
+            available=False,
+            status=None,
+            reason="workspace_not_initialized",
         )
-        return False
     if record.status == "destroyed":
-        print_colored(f"✗ Workspace has been destroyed: {service.root_path}", 91)
+        return WorkspaceInspection(
+            path=resolved_path,
+            exists=True,
+            recognized=True,
+            available=False,
+            status=record.status,
+            reason="workspace_destroyed",
+        )
+    return WorkspaceInspection(
+        path=resolved_path,
+        exists=True,
+        recognized=True,
+        available=True,
+        status=record.status,
+        reason=None,
+    )
+
+
+def _resolve_workspace_resolution(
+    args: argparse.Namespace,
+    *,
+    allow_active_workspace: bool = True,
+) -> WorkspaceResolution:
+    explicit_path = getattr(args, "path", None)
+    if explicit_path:
+        inspection = _inspect_workspace(explicit_path)
+        return WorkspaceResolution(
+            path=inspection.path if inspection.available else None,
+            source="explicit_path",
+            inspection=inspection,
+        )
+
+    cwd_inspection = _inspect_workspace(Path.cwd())
+    if cwd_inspection.recognized:
+        return WorkspaceResolution(
+            path=cwd_inspection.path if cwd_inspection.available else None,
+            source="cwd_workspace",
+            inspection=cwd_inspection,
+        )
+
+    if not allow_active_workspace:
+        return WorkspaceResolution(path=None, source="unresolved")
+
+    try:
+        active_workspace = _local_cli_state_storage().get_active_workspace()
+    except LocalCliStateError as exc:
+        return WorkspaceResolution(
+            path=None,
+            source="local_state_error",
+            cli_state_error=exc,
+        )
+
+    if active_workspace is None:
+        return WorkspaceResolution(path=None, source="unresolved")
+
+    inspection = _inspect_workspace(active_workspace)
+    return WorkspaceResolution(
+        path=inspection.path if inspection.available else None,
+        source="active_workspace",
+        inspection=inspection,
+    )
+
+
+def _format_workspace_reason(reason: str | None) -> str:
+    reason_map = {
+        "path_missing": "path does not exist",
+        "workspace_not_initialized": "workspace is not initialized",
+        "workspace_destroyed": "workspace has been destroyed",
+        "workspace_state_invalid": "workspace state is invalid",
+    }
+    if reason is None:
+        return "workspace is not available"
+    return reason_map.get(reason, "workspace is not available")
+
+
+def _format_workspace_source(source: str) -> str:
+    return {
+        "explicit_path": "explicit --path",
+        "cwd_workspace": "current directory workspace",
+        "active_workspace": "active workspace",
+        "local_state_error": "local CLI state",
+    }.get(source, "workspace resolution")
+
+
+def _print_workspace_resolution_error(
+    resolution: WorkspaceResolution, command_label: str
+) -> None:
+    if resolution.cli_state_error is not None:
         print_colored(
-            f"  Re-initialize it with 'ptest init --path {service.root_path}'",
+            f"✗ Failed to read local CLI state: {resolution.cli_state_error.state_path}",
+            91,
+        )
+        print_colored(
+            "  Run 'ptest workspace unset' or fix the state file before continuing",
             93,
         )
+        return
+
+    if resolution.inspection is not None:
+        inspection = resolution.inspection
+        print_colored(f"✗ Workspace is not available: {inspection.path}", 91)
+        print_colored(
+            f"  Selected from: {_format_workspace_source(resolution.source)}",
+            93,
+        )
+        print_colored(f"  Reason: {_format_workspace_reason(inspection.reason)}", 93)
+        if inspection.reason in {"workspace_not_initialized", "workspace_destroyed"}:
+            print_colored(
+                f"  Run 'ptest init --path {inspection.path}' before using '{command_label}'",
+                93,
+            )
+        if resolution.source == "active_workspace":
+            print_colored(
+                "  Run 'ptest workspace use <path>' or 'ptest workspace unset' to update the active workspace",
+                93,
+            )
+        return
+
+    print_colored("✗ No workspace resolved", 91)
+    print_colored(
+        f"  Provide '--path', run '{command_label}' inside an initialized workspace, or set one with 'ptest workspace use <path>'",
+        93,
+    )
+
+
+def _require_workflow_service(
+    args: argparse.Namespace,
+    command_label: str,
+    *,
+    allow_active_workspace: bool = True,
+) -> WorkflowService | None:
+    resolution = _resolve_workspace_resolution(
+        args,
+        allow_active_workspace=allow_active_workspace,
+    )
+    if resolution.path is None:
+        _print_workspace_resolution_error(resolution, command_label)
+        return None
+    if resolution.source == "active_workspace":
+        print_colored(f"Using active workspace: {resolution.path}", 94)
+    return WorkflowService(resolution.path)
+
+
+def _workspace_status_value(inspection: WorkspaceInspection) -> str:
+    if inspection.available:
+        return inspection.status or "ready"
+    if not inspection.recognized and inspection.reason == "workspace_not_initialized":
+        return "not a workspace"
+    return _format_workspace_reason(inspection.reason)
+
+
+def _append_workspace_lines(
+    lines: list[str],
+    title: str,
+    inspection: WorkspaceInspection | None,
+    *,
+    marker: str | None = None,
+    not_set: bool = False,
+    local_state_error: LocalCliStateError | None = None,
+) -> None:
+    lines.append(title)
+    if local_state_error is not None:
+        lines.append(f"  error: {local_state_error.state_path}")
+        lines.append("  status: invalid local CLI state")
+        return
+    if not_set:
+        lines.append("  (not set)")
+        return
+    if inspection is None:
+        lines.append("  (unavailable)")
+        return
+    prefix = marker or " "
+    lines.append(f"{prefix} {inspection.path}")
+    lines.append(f"  status: {_workspace_status_value(inspection)}")
+
+
+def _build_workspace_status_lines(args: argparse.Namespace) -> list[str]:
+    lines: list[str] = []
+    active_error: LocalCliStateError | None = None
+    active_inspection: WorkspaceInspection | None = None
+    active_path: Path | None = None
+    try:
+        active_path = _local_cli_state_storage().get_active_workspace()
+    except LocalCliStateError as exc:
+        active_error = exc
+    if active_path is not None:
+        active_inspection = _inspect_workspace(active_path)
+
+    _append_workspace_lines(
+        lines,
+        "Active workspace",
+        active_inspection,
+        marker="*" if active_path is not None else None,
+        not_set=active_path is None and active_error is None,
+        local_state_error=active_error,
+    )
+    lines.append("")
+
+    cwd_inspection = _inspect_workspace(Path.cwd())
+    _append_workspace_lines(lines, "Current directory workspace", cwd_inspection)
+    lines.append("")
+
+    resolution = _resolve_workspace_resolution(args)
+    lines.append("Default resolution")
+    if resolution.path is not None:
+        lines.append(f"  source: {_format_workspace_source(resolution.source)}")
+        lines.append(f"  path: {resolution.path}")
+        return lines
+
+    if resolution.cli_state_error is not None:
+        lines.append(f"  source: {_format_workspace_source(resolution.source)}")
+        lines.append(f"  reason: {resolution.cli_state_error.reason}")
+        return lines
+
+    if resolution.inspection is not None:
+        lines.append(f"  source: {_format_workspace_source(resolution.source)}")
+        lines.append(f"  path: {resolution.inspection.path}")
+        lines.append(
+            f"  reason: {_format_workspace_reason(resolution.inspection.reason)}"
+        )
+        return lines
+
+    lines.append("  source: unresolved")
+    lines.append("  reason: no current or active workspace is available")
+    return lines
+
+
+def _handle_workspace_command(
+    env_manager: EnvironmentManager, args: argparse.Namespace
+) -> bool:
+    if not hasattr(args, "workspace_action") or not args.workspace_action:
+        print_colored("请指定 workspace 操作: status/use/unset", 93)
         return False
-    return True
+
+    if args.workspace_action == "status":
+        print("\n".join(_build_workspace_status_lines(args)))
+        return True
+
+    if args.workspace_action == "use":
+        inspection = _inspect_workspace(args.workspace_path)
+        if not inspection.available:
+            _print_workspace_resolution_error(
+                WorkspaceResolution(
+                    path=None,
+                    source="explicit_path",
+                    inspection=inspection,
+                ),
+                "workspace use",
+            )
+            return False
+        active_path = _local_cli_state_storage().set_active_workspace(inspection.path)
+        print_colored(f"✓ Active workspace set to: {active_path}", 92)
+        return True
+
+    if args.workspace_action == "unset":
+        _local_cli_state_storage().clear_active_workspace()
+        print_colored("✓ Active workspace cleared", 92)
+        return True
+
+    print_colored(f"✗ Unknown workspace action: {args.workspace_action}", 91)
+    return False
 
 
 def _handle_object_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理对象命令"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "obj"):
+    service = _require_workflow_service(args, "obj")
+    if service is None:
         return False
 
     if not hasattr(args, "obj_action") or not args.obj_action:
@@ -573,7 +899,7 @@ def _handle_object_command(
             if value is not None:
                 params[key] = value
         if args.type == "mysql":
-            params["workspace_path"] = str(_resolve_workspace_path(args))
+            params["workspace_path"] = str(service.root_path)
         if args.type in {"db", "database", "sqlite", "mysql", "postgres", "postgresql"}:
             params.setdefault(
                 "driver", "sqlite" if args.type == "sqlite" else args.type
@@ -616,8 +942,8 @@ def _handle_tool_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理工具命令"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "tool"):
+    service = _require_workflow_service(args, "tool")
+    if service is None:
         return False
 
     if not hasattr(args, "tool_action") or not args.tool_action:
@@ -662,8 +988,8 @@ def _handle_suite_command_v2(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """通过统一工作流服务处理 suite 命令"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "suite"):
+    service = _require_workflow_service(args, "suite")
+    if service is None:
         return False
 
     if not hasattr(args, "suite_action") or not args.suite_action:
@@ -759,18 +1085,27 @@ def _handle_env_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理环境命令"""
-    service = _get_workflow_service(args)
     if not hasattr(args, "env_action") or not args.env_action:
         print_colored("请指定 env 操作: status/destroy", 93)
         return False
 
     if args.env_action == "status":
+        service = _require_workflow_service(args, "env status")
+        if service is None:
+            return False
         print(
             json.dumps(service.get_environment_status(), indent=2, ensure_ascii=False)
         )
         return True
 
     if args.env_action == "destroy":
+        service = _require_workflow_service(
+            args,
+            "env destroy",
+            allow_active_workspace=False,
+        )
+        if service is None:
+            return False
         result = service.destroy_environment()
         print_colored(result["message"], 92 if result["success"] else 91)
         if result.get("cleanup_messages"):
@@ -785,8 +1120,8 @@ def _handle_execution_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理 execution 命令"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "execution"):
+    service = _require_workflow_service(args, "execution")
+    if service is None:
         return False
 
     if not hasattr(args, "execution_action") or not args.execution_action:
@@ -825,8 +1160,8 @@ def _handle_problem_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理 problem 命令"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "problem"):
+    service = _require_workflow_service(args, "problem")
+    if service is None:
         return False
 
     if not hasattr(args, "problem_action") or not args.problem_action:
@@ -944,8 +1279,6 @@ def _handle_data_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理data命令"""
-    service = _get_workflow_service(args)
-
     if not hasattr(args, "data_action") or not args.data_action:
         print_colored("✗ Please specify a data action (generate/template/types)", 91)
         return False
@@ -957,7 +1290,11 @@ def _handle_data_command(
         return True
 
     if args.data_action == "generate":
-        result = service.generate_data(
+        default_root = (
+            Path(args.path).resolve() if getattr(args, "path", None) else Path.cwd()
+        )
+        default_service = WorkflowService(default_root)
+        result = default_service.generate_data(
             args.type,
             count=args.count,
             locale=args.locale,
@@ -992,7 +1329,8 @@ def _handle_data_command(
         return True
 
     if args.data_action == "template":
-        if not _ensure_workspace_initialized(service, "data template"):
+        service = _require_workflow_service(args, "data template")
+        if service is None:
             return False
         if not hasattr(args, "template_action") or not args.template_action:
             print_colored("✗ Please specify a template action (generate/save/list)", 91)
@@ -1038,8 +1376,8 @@ def _handle_contract_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理contract命令"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "contract"):
+    service = _require_workflow_service(args, "contract")
+    if service is None:
         return False
     if not hasattr(args, "contract_action") or not args.contract_action:
         print_colored("✗ Please specify a contract action", 91)
@@ -1112,8 +1450,8 @@ def _handle_mock_command_v2(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理 mock 命令"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "mock"):
+    service = _require_workflow_service(args, "mock")
+    if service is None:
         return False
     if not hasattr(args, "mock_action") or not args.mock_action:
         print_colored(
@@ -1188,6 +1526,7 @@ def main() -> int:
         "init": lambda: _handle_init_command(env_manager, args),
         "env": lambda: _handle_env_command(env_manager, args),
         "execution": lambda: _handle_execution_command(env_manager, args),
+        "exec": lambda: _handle_execution_command(env_manager, args),
         "problem": lambda: _handle_problem_command(env_manager, args),
         "config": lambda: handle_config_command(env_manager, args),
         "obj": lambda: _handle_object_command(env_manager, args),
@@ -1200,6 +1539,7 @@ def main() -> int:
         "suite": lambda: _handle_suite_command_v2(env_manager, args),
         "mock": lambda: _handle_mock_command_v2(env_manager, args),
         "status": lambda: _handle_status_command(env_manager, args),
+        "workspace": lambda: _handle_workspace_command(env_manager, args),
     }
 
     handler = command_handlers.get(args.command)
@@ -1218,8 +1558,8 @@ def _handle_case_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理case命令"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "case"):
+    service = _require_workflow_service(args, "case")
+    if service is None:
         return False
 
     if not hasattr(args, "case_action") or not args.case_action:
@@ -1297,8 +1637,8 @@ def _handle_run_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理run命令 - 运行所有或过滤后的用例"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "run"):
+    service = _require_workflow_service(args, "run")
+    if service is None:
         return False
     result = service.run_all_cases(
         filter_text=getattr(args, "filter", None),
@@ -1328,8 +1668,8 @@ def _handle_report_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理report命令"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "report"):
+    service = _require_workflow_service(args, "report")
+    if service is None:
         return False
     if not hasattr(args, "report_action") or args.report_action != "generate":
         print_colored("✗ 目前仅支持 report generate", 91)
@@ -1439,8 +1779,8 @@ def _handle_status_command(
     env_manager: EnvironmentManager, args: argparse.Namespace
 ) -> bool:
     """处理status命令 - 显示整体状态"""
-    service = _get_workflow_service(args)
-    if not _ensure_workspace_initialized(service, "status"):
+    service = _require_workflow_service(args, "status")
+    if service is None:
         return False
     print(json.dumps(service.get_workspace_status(), indent=2, ensure_ascii=False))
     return True
