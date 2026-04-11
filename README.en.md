@@ -87,7 +87,7 @@ If you already installed `ptestx`, you can use the `ptest` command directly.
 
 ```bash
 ptest init --path ~/ptest/mysql-demo
-cd ~/ptest/mysql-demo
+ptest workspace status
 
 ptest obj install mysql mysql_demo \
   --package-path ~/.ptest/assets/mysql/8.4.8/mysql-server_8.4.8-1ubuntu24.04_amd64.deb-bundle.tar \
@@ -98,6 +98,13 @@ ptest obj install mysql mysql_demo \
 ptest obj start mysql_demo
 ptest case run mysql_crud_case
 ```
+
+After `ptest init --path ...` succeeds, that workspace becomes the active workspace automatically.
+For workspace-scoped commands such as `obj`, `case`, `run`, `report`, `execution`/`exec`, and `problem`, `ptest` resolves the target in this order when `--path` is omitted:
+
+- explicit `--path`
+- current directory workspace
+- active workspace
 
 This is intentionally shown as a step-by-step flow, because that is how many test engineers actually work:
 
@@ -112,6 +119,26 @@ If you want the full walkthrough, start here:
 
 - [MySQL 全生命周期实践](./docs/user-guide/mysql-full-lifecycle.md)
 - [MySQL Full Lifecycle Walkthrough](./docs/user-guide/mysql-full-lifecycle.en.md)
+
+## Workspace context in daily use
+
+The current CLI treats the workspace as an explicit context you can inspect or switch.
+
+- `--path` always wins
+- `ptest init --path <path>` also switches the active workspace
+- when a business command resolves to the active workspace, the CLI prints:
+  - `Using active workspace: /abs/path`
+
+Useful commands:
+
+```bash
+ptest workspace status
+ptest workspace use ~/ptest/mysql-demo
+ptest workspace unset
+```
+
+For scripts, CI, or multi-workspace automation, keep using explicit `--path`.
+For cleanup-style lifecycle actions such as `ptest env destroy`, explicit `--path` is still the safer form.
 
 ## Current boundary
 

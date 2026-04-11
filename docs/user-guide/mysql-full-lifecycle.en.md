@@ -375,6 +375,9 @@ cd ..
 ptest env destroy --path ~/ptest/mysql-demo
 ```
 
+This remains intentionally explicit because `env destroy` is a workspace lifecycle cleanup action.
+It does not silently fall back to the active workspace.
+
 ## Script shortcut
 
 If you only want a quick validation, you can still use:
@@ -394,3 +397,14 @@ Usually means the current execution environment does not allow running a real se
 ### Port conflict
 
 Pass an explicit `--port` to avoid conflicts with existing host services.
+
+## About `--path` in daily use
+
+For scripts, CI, or multi-workspace automation, explicit `--path` is still the recommended form.
+
+For single-workspace interactive use, the smoother flow is usually:
+
+1. `ptest init --path ~/ptest/mysql-demo`
+2. `ptest workspace status`
+3. optionally `cd ~/ptest/mysql-demo`
+4. continue with `ptest obj ...`, `ptest case ...`, `ptest execution ...`, or `ptest exec ...`

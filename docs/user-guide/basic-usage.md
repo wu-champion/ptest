@@ -1,6 +1,6 @@
 # ptest 快速开始
 
-本文档只覆盖当前 `1.7.0` 主线已经稳定支持的最小闭环：
+本文档只覆盖当前主线已经稳定支持的最小闭环：
 
 `环境初始化 -> 对象安装与启动 -> 用例创建与执行 -> 执行记录与报告 -> 环境销毁`
 
@@ -37,8 +37,22 @@ uv run ptest --version
 
 ```bash
 ptest init --path ./demo-workspace
-cd ./demo-workspace
+ptest workspace status
 ptest env status
+```
+
+`ptest init --path ...` 成功后，会自动把这个工作区设为活动工作区。
+后续工作区内业务命令如果没显式传 `--path`，会按下面的顺序解析：
+
+1. `--path`
+2. 当前目录工作区
+3. 活动工作区
+
+你也可以随时查看或切换：
+
+```bash
+ptest workspace use ./demo-workspace
+ptest workspace status
 ```
 
 ### 2. 安装并启动对象
@@ -68,6 +82,7 @@ ptest case add sqlite_smoke --data '{
 ```bash
 ptest case run sqlite_smoke
 ptest execution list
+ptest exec list
 ```
 
 ### 5. 查看执行产物并生成报告
@@ -94,6 +109,8 @@ ptest problem recover <problem_id>
 cd ..
 ptest env destroy --path ./demo-workspace
 ```
+
+这里仍然建议显式写 `--path`，因为销毁属于工作区生命周期收尾动作，不会隐式回退到活动工作区。
 
 ## Python API 快速开始
 
@@ -154,14 +171,17 @@ api.destroy_environment()
 
 ```bash
 ptest status
+ptest workspace status
 ptest case list
 ptest obj list
 ptest tool list
 ptest suite list
 ptest data types
+ptest exec list
 ```
 
 如果你是在自动化脚本里，或者要跨多个工作区操作，再显式加上 `--path` 会更稳。
+如果你只是在单机上持续操作同一个工作区，活动工作区可以帮你减少很多 `--path` 的重复输入。
 
 ## 当前已知边界
 

@@ -111,7 +111,7 @@ MySQL 主案例的价值就在这里：
 
 ```bash
 ptest init --path ~/ptest/mysql-demo
-cd ~/ptest/mysql-demo
+ptest workspace status
 
 ptest obj install mysql mysql_demo \
   --package-path ~/.ptest/assets/mysql/8.4.8/mysql-server_8.4.8-1ubuntu24.04_amd64.deb-bundle.tar \
@@ -122,6 +122,9 @@ ptest obj install mysql mysql_demo \
 ptest obj start mysql_demo
 ptest case run mysql_crud_case
 ```
+
+`ptest init --path ...` 成功后会自动把这个工作区设为当前活动工作区。
+后续像 `obj`、`case`、`run`、`report`、`execution`/`exec`、`problem` 这类工作区内业务命令，如果你没有显式传 `--path`，会优先使用当前目录工作区；当前目录不是工作区时，再回退到活动工作区。
 
 上面这组命令为“先进入工作区，再逐步操作”的形式。  
 它代表测试工作中的一系列流程操作：
@@ -147,6 +150,30 @@ ptest case run mysql_crud_case
 - [MySQL Full Lifecycle Walkthrough](./docs/user-guide/mysql-full-lifecycle.en.md)
 
 如果你更像一个真实测试工程师那样，一步一步创建环境、安装对象、跑 CRUD、查看记录，再手动停止和卸载对象，也建议直接从这篇文档开始。里面已经按分步操作方式重写了。
+
+## 当前工作区使用方式
+
+当前主线推荐把工作区理解成一个可显式切换的上下文。
+
+- `--path` 永远是最高优先级
+- `ptest init --path <path>` 成功后，会自动切换活动工作区
+- 普通业务命令默认解析顺序是：
+  - `--path`
+  - 当前目录工作区
+  - 活动工作区
+- 如果命中的是活动工作区，CLI 会提示：
+  - `Using active workspace: /abs/path`
+
+可以直接用这些命令查看或切换当前上下文：
+
+```bash
+ptest workspace status
+ptest workspace use ~/ptest/mysql-demo
+ptest workspace unset
+```
+
+如果你在脚本、CI 或多工作区场景里操作，仍然建议显式传 `--path`。
+像 `ptest env destroy` 这类工作区生命周期收尾动作，也建议保持显式指定目标。
 
 ## 当前边界
 
@@ -174,6 +201,12 @@ ptest case run mysql_crud_case
 2. [MySQL 全生命周期实践](./docs/user-guide/mysql-full-lifecycle.md)
 3. [Python API 指南](./docs/api/python-api-guide.md)
 4. [环境管理说明](./docs/guides/environment-management.md)
+
+如果你已经在日常使用 CLI，这几个入口最值得先看：
+
+- [快速开始](./docs/user-guide/basic-usage.md)
+- [环境管理说明](./docs/guides/environment-management.md)
+- [MySQL 全生命周期实践](./docs/user-guide/mysql-full-lifecycle.md)
 
 如果你关心架构和设计：
 

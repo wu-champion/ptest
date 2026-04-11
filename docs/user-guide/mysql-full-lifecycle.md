@@ -643,6 +643,7 @@ ptest env destroy --path ~/ptest/mysql-demo
 
 这里重新显式写 `--path`，是因为这一步更像“跨工作区的收尾动作”。  
 如果你一直在同一个工作区里连续操作，通常不需要每条命令都带 `--path`。
+`ptest init --path ...` 成功后会自动切换活动工作区；后续像 `obj`、`case`、`report`、`execution`/`exec`、`problem` 这些工作区内业务命令，都可以直接沿用当前目录工作区或活动工作区。
 
 ## 如果你只想一次性做验证
 
@@ -730,7 +731,8 @@ uv run python scripts/mysql_full_lifecycle_scenario.py \
 而在单机、单工作区、人工逐步操作的场景里，更自然的方式通常是：
 
 1. `ptest init --path ~/ptest/mysql-demo`
-2. `cd ~/ptest/mysql-demo`
-3. 后续直接执行 `ptest obj ...`、`ptest case ...`、`ptest execution ...`
+2. `ptest workspace status`
+3. 如果你喜欢在工作区内操作，就 `cd ~/ptest/mysql-demo`
+4. 后续直接执行 `ptest obj ...`、`ptest case ...`、`ptest execution ...` 或 `ptest exec ...`
 
 这样命令更短，也更符合测试人员真实使用习惯。
