@@ -97,6 +97,8 @@ def test_stateful_api_direct_problem_replay_remains_reproducible(
             "candidate_case_ids": [],
             "recent_same_case": None,
             "immediate_predecessor": None,
+            "signal_strength": "none",
+            "recommended_actions": [],
         }
 
         replay = api.replay_problem(problem_id)
@@ -116,7 +118,10 @@ def test_stateful_api_direct_problem_replay_remains_reproducible(
             "candidate_case_ids": [],
             "recent_same_case": None,
             "immediate_predecessor": None,
+            "signal_strength": "none",
+            "recommended_actions": [],
         }
+        assert replay["replay"]["comparison"]["boundary"]["recommended_actions"] == []
         assert (
             replay["replay"]["comparison"]["summary"]["body"]["change_kind"] == "same"
         )
@@ -190,9 +195,27 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
         ] == [enable_case_id]
         assert (
             assets["assets"]["reproduction_summary"]["dependency_hints"][
+                "signal_strength"
+            ]
+            == "recent_sequence"
+        )
+        assert (
+            assets["assets"]["reproduction_summary"]["dependency_hints"][
                 "immediate_predecessor"
             ]["case_id"]
             == enable_case_id
+        )
+        assert (
+            assets["assets"]["reproduction_summary"]["dependency_hints"][
+                "recommended_actions"
+            ][0]["action"]
+            == "inspect_immediate_predecessor"
+        )
+        assert (
+            assets["assets"]["reproduction_summary"]["dependency_hints"][
+                "recommended_actions"
+            ][1]["action"]
+            == "rerun_candidate_predecessors_before_replay"
         )
 
         replay = api.replay_problem(problem_id)
@@ -209,6 +232,12 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
         assert (
             replay["replay"]["comparison"]["boundary"]["hidden_dependency_possible"]
             is True
+        )
+        assert (
+            replay["replay"]["comparison"]["boundary"]["dependency_hints"][
+                "signal_strength"
+            ]
+            == "recent_sequence"
         )
         assert replay["replay"]["comparison"]["boundary"]["dependency_hints"][
             "candidate_case_ids"
@@ -229,6 +258,18 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
         assert replay["replay"]["comparison"]["summary"]["boundary"][
             "dependency_hints"
         ]["candidate_case_ids"] == [enable_case_id]
+        assert (
+            replay["replay"]["comparison"]["boundary"]["recommended_actions"][0][
+                "action"
+            ]
+            == "inspect_immediate_predecessor"
+        )
+        assert (
+            replay["replay"]["comparison"]["boundary"]["recommended_actions"][1][
+                "action"
+            ]
+            == "rerun_candidate_predecessors_before_replay"
+        )
         assert replay["replay"]["comparison"]["summary"]["body"][
             "changed_top_level_fields"
         ] == ["orders", "status"]
@@ -257,8 +298,14 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
             for item in replay["replay"]["comparison"]["highlights"]
         )
         assert (
-            f"recent preceding cases: {enable_case_id}"
-            in replay["replay"]["comparison"]["highlights"][-1]
+            any(
+                f"recent preceding cases: {enable_case_id}" in item
+                for item in replay["replay"]["comparison"]["highlights"]
+            )
+        )
+        assert (
+            "next suggested step: inspect_immediate_predecessor"
+            in replay["replay"]["comparison"]["highlights"]
         )
     finally:
         process.terminate()

@@ -3792,6 +3792,14 @@ class WorkflowService:
         if isinstance(boundary_reason, str) and boundary_reason:
             highlights.append(boundary_reason)
 
+        recommended_actions = boundary.get("recommended_actions")
+        if isinstance(recommended_actions, list) and recommended_actions:
+            first_action = recommended_actions[0]
+            if isinstance(first_action, dict):
+                action_name = first_action.get("action")
+                if isinstance(action_name, str) and action_name:
+                    highlights.append(f"next suggested step: {action_name}")
+
         return highlights
 
     def _build_api_replay_summary(
@@ -3832,6 +3840,7 @@ class WorkflowService:
         reproduced = expectation.get("reproduced") is True
         has_dependency_candidates = bool(dependency_hints.get("candidate_case_ids"))
         dependency_case_ids = dependency_hints.get("candidate_case_ids", [])
+        recommended_actions = dependency_hints.get("recommended_actions", [])
         dependency_suffix = ""
         if isinstance(dependency_case_ids, list) and dependency_case_ids:
             dependency_suffix = (
@@ -3875,6 +3884,7 @@ class WorkflowService:
             "replays_prior_case_effects": False,
             "hidden_dependency_possible": hidden_dependency_possible,
             "dependency_hints": dependency_hints,
+            "recommended_actions": recommended_actions,
             "reason": reason,
         }
 
@@ -3891,6 +3901,8 @@ class WorkflowService:
                 "candidate_case_ids": [],
                 "recent_same_case": None,
                 "immediate_predecessor": None,
+                "signal_strength": "none",
+                "recommended_actions": [],
             }
 
         records = sorted(
@@ -3911,6 +3923,8 @@ class WorkflowService:
                 "candidate_case_ids": [],
                 "recent_same_case": None,
                 "immediate_predecessor": None,
+                "signal_strength": "none",
+                "recommended_actions": [],
             }
 
         predecessors = records[:current_index]
@@ -3948,12 +3962,79 @@ class WorkflowService:
             if predecessor_case_id not in candidate_case_ids:
                 candidate_case_ids.append(predecessor_case_id)
 
+        signal_strength = self._classify_problem_dependency_signal(
+            candidate_case_ids=candidate_case_ids,
+            recent_same_case=recent_same_case,
+        )
+        recommended_actions = self._build_problem_dependency_actions(
+            candidate_case_ids=candidate_case_ids,
+            immediate_predecessor=immediate_predecessor,
+            recent_same_case=recent_same_case,
+        )
+
         return {
             "recent_predecessors": predecessor_payloads,
             "candidate_case_ids": candidate_case_ids,
             "recent_same_case": recent_same_case,
             "immediate_predecessor": immediate_predecessor,
+            "signal_strength": signal_strength,
+            "recommended_actions": recommended_actions,
         }
+
+    def _classify_problem_dependency_signal(
+        self,
+        *,
+        candidate_case_ids: list[str],
+        recent_same_case: dict[str, Any] | None,
+    ) -> str:
+        has_candidates = bool(candidate_case_ids)
+        has_same_case = recent_same_case is not None
+        if has_candidates and has_same_case:
+            return "sequence_and_repeat_history"
+        if has_candidates:
+            return "recent_sequence"
+        if has_same_case:
+            return "repeat_history"
+        return "none"
+
+    def _build_problem_dependency_actions(
+        self,
+        *,
+        candidate_case_ids: list[str],
+        immediate_predecessor: dict[str, Any] | None,
+        recent_same_case: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        actions: list[dict[str, Any]] = []
+        if immediate_predecessor is not None:
+            actions.append(
+                {
+                    "priority": "high",
+                    "action": "inspect_immediate_predecessor",
+                    "case_id": immediate_predecessor.get("case_id"),
+                    "execution_id": immediate_predecessor.get("execution_id"),
+                    "reason": "review the case that ran immediately before the preserved failure",
+                }
+            )
+        if candidate_case_ids:
+            actions.append(
+                {
+                    "priority": "high",
+                    "action": "rerun_candidate_predecessors_before_replay",
+                    "case_ids": candidate_case_ids,
+                    "reason": "rerun the recent predecessor cases before replaying again to check for stateful dependencies",
+                }
+            )
+        if recent_same_case is not None:
+            actions.append(
+                {
+                    "priority": "medium",
+                    "action": "compare_recent_same_case",
+                    "case_id": recent_same_case.get("case_id"),
+                    "execution_id": recent_same_case.get("execution_id"),
+                    "reason": "compare the preserved failure with the most recent execution of the same case",
+                }
+            )
+        return actions
 
     def _build_api_replay_header_summary(
         self, replay_response: dict[str, Any]

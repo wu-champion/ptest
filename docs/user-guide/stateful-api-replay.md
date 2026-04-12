@@ -145,6 +145,7 @@ ptest problem replay <problem_id> --path /tmp/ptest-stateful-api-replay
 - `comparison.summary.boundary.scope` 为 `request_level`
 - `comparison.summary.boundary.hidden_dependency_possible` 为 `true`
 - `comparison.summary.boundary.dependency_hints.candidate_case_ids` 里会出现 `enable_hidden_failure`
+- `comparison.summary.boundary.recommended_actions` 会提示你先检查最近前置 case，再按顺序重跑候选前置 case
 
 这正是当前边界要表达的内容：
 

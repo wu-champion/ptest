@@ -113,6 +113,8 @@ def test_workflow_service_preserves_and_replays_api_problem(
         "candidate_case_ids": [],
         "recent_same_case": None,
         "immediate_predecessor": None,
+        "signal_strength": "none",
+        "recommended_actions": [],
     }
 
     monkeypatch.setattr(
@@ -140,7 +142,10 @@ def test_workflow_service_preserves_and_replays_api_problem(
         "candidate_case_ids": [],
         "recent_same_case": None,
         "immediate_predecessor": None,
+        "signal_strength": "none",
+        "recommended_actions": [],
     }
+    assert replay["replay"]["comparison"]["boundary"]["recommended_actions"] == []
     assert (
         replay["replay"]["comparison"]["boundary"]["hidden_dependency_possible"] is True
     )
@@ -177,6 +182,7 @@ def test_workflow_service_preserves_and_replays_api_problem(
         "current replay only reruns the preserved request and may miss prior state changes or hidden dependencies"
         in replay["replay"]["comparison"]["highlights"]
     )
+    assert "next suggested step:" not in replay["replay"]["comparison"]["highlights"]
     assert replay["replay"]["reproduced"] is False
     assert replay["recovery_action"]["action_type"] == "replay"
     assert replay["recovery_action"]["status"] == "completed"
