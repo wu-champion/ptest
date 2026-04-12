@@ -1,0 +1,15 @@
+{
+  "type": "api",
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:18090/state/enable-failure",
+    "headers": {
+      "Accept": "application/json"
+    }
+  },
+  "expected_status": 200,
+  "expected_response": {
+    "status": "armed",
+    "failure_armed": true
+  }
+}

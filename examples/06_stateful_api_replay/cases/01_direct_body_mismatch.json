@@ -1,0 +1,14 @@
+{
+  "type": "api",
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:18090/api/orders",
+    "headers": {
+      "Accept": "application/json"
+    }
+  },
+  "expected_status": 200,
+  "expected_response": {
+    "status": "stale"
+  }
+}
