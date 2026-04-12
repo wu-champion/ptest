@@ -193,6 +193,50 @@ def test_cli_problem_replay_outputs_comparison_summary(
     assert "replay no longer reproduces the original problem" in captured.out
 
 
+def test_cli_problem_assets_outputs_reproduction_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.add_case(
+        "api_failure_case",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(404, {"message": "missing"}),
+    )
+    service.run_case("api_failure_case")
+    problem_id = service.list_problem_records(case_id="api_failure_case")[0][
+        "problem_id"
+    ]
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ptest", "problem", "assets", problem_id, "--path", str(workspace)],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert '"reproduction_summary"' in captured.out
+    assert '"url": "https://example.test/api/demo"' in captured.out
+    assert f'"ptest problem replay {problem_id}"' in captured.out
+
+
 def test_cli_problem_list_reports_filters_and_empty_results(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

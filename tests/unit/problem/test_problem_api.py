@@ -61,6 +61,16 @@ def test_api_exposes_problem_records(tmp_path: Path, monkeypatch) -> None:
     assert assets["success"] is True
     assert assets["assets"]["problem_type"] == "api_response"
     assert assets["assets"]["capabilities"]["can_replay"] is True
+    assert (
+        assets["assets"]["reproduction_summary"]["request"]["url"]
+        == "https://example.test/api/demo"
+    )
+    assert assets["assets"]["reproduction_summary"]["expected"]["status_code"] == 200
+    assert assets["assets"]["reproduction_summary"]["recommended_commands"] == [
+        f"ptest problem show {problem_id}",
+        f"ptest problem assets {problem_id}",
+        f"ptest problem replay {problem_id}",
+    ]
 
 
 def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:

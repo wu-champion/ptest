@@ -1456,6 +1456,9 @@ class WorkflowService:
             payload["preservation"] = preservation
         if isinstance(capabilities, dict):
             payload["capabilities"] = capabilities
+        reproduction_summary = self._build_problem_reproduction_summary(payload)
+        if reproduction_summary is not None:
+            payload["reproduction_summary"] = reproduction_summary
         return payload
 
     def get_problem_record(self, problem_id: str) -> dict[str, Any]:
@@ -3760,6 +3763,68 @@ class WorkflowService:
             highlights.append(reason)
 
         return highlights
+
+    def _build_problem_reproduction_summary(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        if payload.get("problem_type") != "api_response":
+            return None
+        details = payload.get("details", {})
+        if not isinstance(details, dict):
+            return None
+
+        request = details.get("request", {})
+        response = details.get("response", {})
+        preservation = payload.get("preservation", {})
+        if not isinstance(request, dict) or not isinstance(response, dict):
+            return None
+        if not isinstance(preservation, dict):
+            preservation = {}
+
+        expected = self._build_api_expected_summary(details)
+        observed_failure = {
+            "status_code": response.get("observed_status_code"),
+            "body": response.get("observed_body"),
+            "error": response.get("error"),
+        }
+        return {
+            "problem_id": payload.get("problem_id"),
+            "problem_type": payload.get("problem_type"),
+            "case_id": payload.get("case_id"),
+            "summary": payload.get("summary"),
+            "request": {
+                "method": request.get("method", "GET"),
+                "url": request.get("url", ""),
+                "headers": request.get("headers", {}),
+                "params": request.get("params"),
+                "body": request.get("body"),
+            },
+            "expected": expected,
+            "observed_failure": observed_failure,
+            "preservation": {
+                "status": preservation.get("status"),
+                "missing_assets": preservation.get("missing_assets", []),
+            },
+            "recommended_commands": [
+                f"ptest problem show {payload.get('problem_id')}",
+                f"ptest problem assets {payload.get('problem_id')}",
+                f"ptest problem replay {payload.get('problem_id')}",
+            ],
+        }
+
+    def _build_api_expected_summary(self, details: dict[str, Any]) -> dict[str, Any]:
+        response = details.get("response", {})
+        case_payload = details.get("case", {})
+        if not isinstance(response, dict):
+            response = {}
+        if not isinstance(case_payload, dict):
+            case_payload = {}
+
+        return {
+            "status_code": response.get("expected_status"),
+            "response_body": response.get("expected_response"),
+            "assertions": case_payload.get("assertions", []),
+        }
 
     def _build_recovery_plan(
         self, record: ProblemRecord, assets: ProblemAssetRecord

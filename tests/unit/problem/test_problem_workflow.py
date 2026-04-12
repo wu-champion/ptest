@@ -95,6 +95,19 @@ def test_workflow_service_preserves_and_replays_api_problem(
     assert assets["assets"]["metadata"]["capabilities"]["can_replay"] is True
     assert assets["assets"]["capabilities"]["can_replay"] is True
     assert assets["assets"]["preservation"]["status"] == "partial"
+    assert (
+        assets["assets"]["reproduction_summary"]["request"]["url"]
+        == "https://example.test/api/demo"
+    )
+    assert assets["assets"]["reproduction_summary"]["expected"]["status_code"] == 200
+    assert (
+        assets["assets"]["reproduction_summary"]["observed_failure"]["status_code"]
+        == 404
+    )
+    assert (
+        assets["assets"]["reproduction_summary"]["recommended_commands"][2]
+        == f"ptest problem replay {problem_id}"
+    )
 
     monkeypatch.setattr(
         requests,

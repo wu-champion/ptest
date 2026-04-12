@@ -108,6 +108,7 @@ ptest problem replay <problem_id>
 
 - `problem list` 会返回 `count`、当前生效的 `filters` 以及 `problems`
 - `problem show` 和 `problem assets` 现在都会直接给出 `capabilities`
+- `api_response` 类型在 `problem assets` 里会额外给出 `reproduction_summary`，适合把一次问题的请求、预期、失败现场和建议命令直接转交给别人复看
 - `capabilities.can_replay=true` 时，才适合执行 `problem replay`
 - `api_response` 类型在 `problem replay` 后会直接给出 comparison 摘要，帮助判断这次 replay 是否仍然复现原问题
 - `comparison.highlights` 会直接给出更易读的变化摘要，适合先快速判断再深入看结构化字段

@@ -188,6 +188,7 @@ recovery = api.recover_problem(problem_id)
 print(detail["data"]["problem_type"])
 print(detail["data"]["capabilities"])
 print(assets["data"]["preservation_status"])
+print(assets["assets"]["reproduction_summary"])
 print(recovery["data"]["mode"])
 ```
 
@@ -195,6 +196,7 @@ print(recovery["data"]["mode"])
 
 - `list_problem_records()` 现在会稳定返回 `count`、`filters`、`problems`
 - `get_problem_record()` / `get_problem_assets()` 仍保留 `data`，同时也会给出更直接的 `problem` / `assets` 别名字段
+- 对 `api_response` 问题，`get_problem_assets()` 还会给出 `reproduction_summary`，方便把一次接口失败的最小复现材料直接交给别人复看
 
 如果 `detail["data"]["capabilities"]["can_replay"]` 为 `True`，则可以继续做最小重放：
 
