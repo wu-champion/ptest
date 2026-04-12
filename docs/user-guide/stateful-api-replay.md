@@ -95,6 +95,7 @@ ptest problem replay <problem_id> --path /tmp/ptest-stateful-api-replay
 你应该重点看这些字段：
 
 - `assets.reproduction_summary`
+- `assets.reproduction_summary.dependency_hints`
 - `replay.comparison.summary`
 - `replay.comparison.highlights`
 - `replay.comparison.summary.boundary`
@@ -143,6 +144,7 @@ ptest problem replay <problem_id> --path /tmp/ptest-stateful-api-replay
 - `comparison.summary.reproduced` 为 `false`
 - `comparison.summary.boundary.scope` 为 `request_level`
 - `comparison.summary.boundary.hidden_dependency_possible` 为 `true`
+- `comparison.summary.boundary.dependency_hints.candidate_case_ids` 里会出现 `enable_hidden_failure`
 
 这正是当前边界要表达的内容：
 

@@ -108,6 +108,12 @@ def test_workflow_service_preserves_and_replays_api_problem(
         assets["assets"]["reproduction_summary"]["recommended_commands"][2]
         == f"ptest problem replay {problem_id}"
     )
+    assert assets["assets"]["reproduction_summary"]["dependency_hints"] == {
+        "recent_predecessors": [],
+        "candidate_case_ids": [],
+        "recent_same_case": None,
+        "immediate_predecessor": None,
+    }
 
     monkeypatch.setattr(
         requests,
@@ -129,6 +135,12 @@ def test_workflow_service_preserves_and_replays_api_problem(
         replay["replay"]["comparison"]["boundary"]["assessment"]
         == "diverged_from_preserved_failure"
     )
+    assert replay["replay"]["comparison"]["boundary"]["dependency_hints"] == {
+        "recent_predecessors": [],
+        "candidate_case_ids": [],
+        "recent_same_case": None,
+        "immediate_predecessor": None,
+    }
     assert (
         replay["replay"]["comparison"]["boundary"]["hidden_dependency_possible"] is True
     )

@@ -92,6 +92,12 @@ def test_stateful_api_direct_problem_replay_remains_reproducible(
         assert assets["assets"]["reproduction_summary"]["request"]["url"] == (
             f"http://127.0.0.1:{port}/api/orders"
         )
+        assert assets["assets"]["reproduction_summary"]["dependency_hints"] == {
+            "recent_predecessors": [],
+            "candidate_case_ids": [],
+            "recent_same_case": None,
+            "immediate_predecessor": None,
+        }
 
         replay = api.replay_problem(problem_id)
         assert replay["success"] is True
@@ -105,6 +111,12 @@ def test_stateful_api_direct_problem_replay_remains_reproducible(
             replay["replay"]["comparison"]["summary"]["boundary"]["assessment"]
             == "reproduced_under_current_workspace_state"
         )
+        assert replay["replay"]["comparison"]["boundary"]["dependency_hints"] == {
+            "recent_predecessors": [],
+            "candidate_case_ids": [],
+            "recent_same_case": None,
+            "immediate_predecessor": None,
+        }
         assert (
             replay["replay"]["comparison"]["summary"]["body"]["change_kind"] == "same"
         )
@@ -142,6 +154,7 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
                 },
             },
         )
+        enable_case_id = enable_case["data"]["case_id"]
         affected_case = api.create_test_case(
             "api",
             "orders_after_hidden_state",
@@ -157,12 +170,13 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
                 },
             },
         )
+        affected_case_id = affected_case["data"]["case_id"]
 
-        assert api.run_test_case(enable_case["data"]["case_id"])["success"] is True
-        affected_run = api.run_test_case(affected_case["data"]["case_id"])
+        assert api.run_test_case(enable_case_id)["success"] is True
+        affected_run = api.run_test_case(affected_case_id)
         assert affected_run["success"] is False
 
-        problems = api.list_problem_records(case_id=affected_case["data"]["case_id"])
+        problems = api.list_problem_records(case_id=affected_case_id)
         assert problems["count"] == 1
         problem_id = problems["data"][0]["problem_id"]
 
@@ -170,6 +184,15 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
         assert assets["success"] is True
         assert assets["assets"]["reproduction_summary"]["request"]["url"] == (
             f"http://127.0.0.1:{port}/api/orders"
+        )
+        assert assets["assets"]["reproduction_summary"]["dependency_hints"][
+            "candidate_case_ids"
+        ] == [enable_case_id]
+        assert (
+            assets["assets"]["reproduction_summary"]["dependency_hints"][
+                "immediate_predecessor"
+            ]["case_id"]
+            == enable_case_id
         )
 
         replay = api.replay_problem(problem_id)
@@ -187,6 +210,15 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
             replay["replay"]["comparison"]["boundary"]["hidden_dependency_possible"]
             is True
         )
+        assert replay["replay"]["comparison"]["boundary"]["dependency_hints"][
+            "candidate_case_ids"
+        ] == [enable_case_id]
+        assert (
+            replay["replay"]["comparison"]["boundary"]["dependency_hints"][
+                "immediate_predecessor"
+            ]["case_id"]
+            == enable_case_id
+        )
         assert (
             replay["replay"]["comparison"]["summary"]["body"]["change_kind"]
             == "top_level_fields_changed"
@@ -194,6 +226,9 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
         assert replay["replay"]["comparison"]["summary"]["boundary"]["scope"] == (
             "request_level"
         )
+        assert replay["replay"]["comparison"]["summary"]["boundary"][
+            "dependency_hints"
+        ]["candidate_case_ids"] == [enable_case_id]
         assert replay["replay"]["comparison"]["summary"]["body"][
             "changed_top_level_fields"
         ] == ["orders", "status"]
@@ -216,9 +251,14 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
             "replay no longer reproduces the original problem"
             in replay["replay"]["comparison"]["highlights"]
         )
-        assert (
+        assert any(
             "current replay only reruns the preserved request and may miss prior state changes or hidden dependencies"
-            in replay["replay"]["comparison"]["highlights"]
+            in item
+            for item in replay["replay"]["comparison"]["highlights"]
+        )
+        assert (
+            f"recent preceding cases: {enable_case_id}"
+            in replay["replay"]["comparison"]["highlights"][-1]
         )
     finally:
         process.terminate()

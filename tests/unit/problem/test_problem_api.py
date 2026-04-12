@@ -153,6 +153,12 @@ def test_api_replay_exposes_comparison_summary(tmp_path: Path, monkeypatch) -> N
     assert replay["replay"]["comparison"]["assertion_outcome"] == "not_reproduced"
     assert replay["replay"]["comparison"]["boundary"]["scope"] == "request_level"
     assert replay["replay"]["comparison"]["boundary"]["confidence"] == "request_only"
+    assert replay["replay"]["comparison"]["boundary"]["dependency_hints"] == {
+        "recent_predecessors": [],
+        "candidate_case_ids": [],
+        "recent_same_case": None,
+        "immediate_predecessor": None,
+    }
     assert (
         replay["replay"]["comparison"]["boundary"]["hidden_dependency_possible"] is True
     )

@@ -3701,10 +3701,15 @@ class WorkflowService:
             if preserved_body is None
             else not self._compare_problem_values(preserved_body, replay_body)
         )
+        dependency_hints = self._build_problem_dependency_hints(
+            execution_id=assets.execution_id,
+            case_id=assets.case_id,
+        )
         boundary = self._build_api_replay_boundary_summary(
             expectation=expectation,
             status_code_changed=status_code_changed,
             response_body_changed=response_body_changed,
+            dependency_hints=dependency_hints,
         )
         highlights = self._build_api_replay_highlights(
             preserved_status=preserved_status,
@@ -3822,10 +3827,20 @@ class WorkflowService:
         expectation: dict[str, Any],
         status_code_changed: bool | None,
         response_body_changed: bool | None,
+        dependency_hints: dict[str, Any],
     ) -> dict[str, Any]:
         reproduced = expectation.get("reproduced") is True
+        has_dependency_candidates = bool(dependency_hints.get("candidate_case_ids"))
+        dependency_case_ids = dependency_hints.get("candidate_case_ids", [])
+        dependency_suffix = ""
+        if isinstance(dependency_case_ids, list) and dependency_case_ids:
+            dependency_suffix = (
+                f"; recent preceding cases: {', '.join(map(str, dependency_case_ids))}"
+            )
         hidden_dependency_possible = reproduced is False and (
-            status_code_changed is True or response_body_changed is True
+            status_code_changed is True
+            or response_body_changed is True
+            or has_dependency_candidates
         )
 
         if reproduced:
@@ -3841,6 +3856,7 @@ class WorkflowService:
             reason = (
                 "current replay only reruns the preserved request and may miss "
                 "prior state changes or hidden dependencies"
+                f"{dependency_suffix}"
             )
         else:
             confidence = "request_only"
@@ -3848,6 +3864,7 @@ class WorkflowService:
             reason = (
                 "current replay reruns only the preserved request and does not "
                 "recreate historical environment state"
+                f"{dependency_suffix}"
             )
 
         return {
@@ -3857,7 +3874,85 @@ class WorkflowService:
             "recreates_environment_state": False,
             "replays_prior_case_effects": False,
             "hidden_dependency_possible": hidden_dependency_possible,
+            "dependency_hints": dependency_hints,
             "reason": reason,
+        }
+
+    def _build_problem_dependency_hints(
+        self,
+        *,
+        execution_id: str,
+        case_id: str,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        if not execution_id:
+            return {
+                "recent_predecessors": [],
+                "candidate_case_ids": [],
+                "recent_same_case": None,
+                "immediate_predecessor": None,
+            }
+
+        records = sorted(
+            self.storage.list_executions(),
+            key=lambda item: (item.end_time, item.start_time, item.execution_id),
+        )
+        current_index = next(
+            (
+                index
+                for index, item in enumerate(records)
+                if item.execution_id == execution_id
+            ),
+            None,
+        )
+        if current_index is None:
+            return {
+                "recent_predecessors": [],
+                "candidate_case_ids": [],
+                "recent_same_case": None,
+                "immediate_predecessor": None,
+            }
+
+        predecessors = records[:current_index]
+        recent_predecessors = predecessors[-limit:]
+        predecessor_payloads = [
+            {
+                "execution_id": item.execution_id,
+                "case_id": item.case_id,
+                "status": item.status,
+                "end_time": item.end_time,
+            }
+            for item in reversed(recent_predecessors)
+        ]
+        immediate_predecessor = (
+            predecessor_payloads[0] if predecessor_payloads else None
+        )
+        recent_same_case = next(
+            (
+                {
+                    "execution_id": item.execution_id,
+                    "case_id": item.case_id,
+                    "status": item.status,
+                    "end_time": item.end_time,
+                }
+                for item in reversed(predecessors)
+                if item.case_id == case_id
+            ),
+            None,
+        )
+        candidate_case_ids: list[str] = []
+        for item in predecessor_payloads:
+            predecessor_case_id = item["case_id"]
+            if predecessor_case_id == case_id:
+                continue
+            if predecessor_case_id not in candidate_case_ids:
+                candidate_case_ids.append(predecessor_case_id)
+
+        return {
+            "recent_predecessors": predecessor_payloads,
+            "candidate_case_ids": candidate_case_ids,
+            "recent_same_case": recent_same_case,
+            "immediate_predecessor": immediate_predecessor,
         }
 
     def _build_api_replay_header_summary(
@@ -3973,6 +4068,10 @@ class WorkflowService:
             preservation = {}
 
         expected = self._build_api_expected_summary(details)
+        dependency_hints = self._build_problem_dependency_hints(
+            execution_id=str(payload.get("execution_id", "")),
+            case_id=str(payload.get("case_id", "")),
+        )
         observed_failure = {
             "status_code": response.get("observed_status_code"),
             "body": response.get("observed_body"),
@@ -3996,6 +4095,7 @@ class WorkflowService:
                 "status": preservation.get("status"),
                 "missing_assets": preservation.get("missing_assets", []),
             },
+            "dependency_hints": dependency_hints,
             "recommended_commands": [
                 f"ptest problem show {payload.get('problem_id')}",
                 f"ptest problem assets {payload.get('problem_id')}",

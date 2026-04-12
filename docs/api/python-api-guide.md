@@ -197,6 +197,7 @@ print(recovery["data"]["mode"])
 - `list_problem_records()` 现在会稳定返回 `count`、`filters`、`problems`
 - `get_problem_record()` / `get_problem_assets()` 仍保留 `data`，同时也会给出更直接的 `problem` / `assets` 别名字段
 - 对 `api_response` 问题，`get_problem_assets()` 还会给出 `reproduction_summary`，方便把一次接口失败的最小复现材料直接交给别人复看
+- `reproduction_summary.dependency_hints` 会补充失败前最近执行过的 case 线索，帮助你判断这次问题是否可能受前置执行影响
 
 如果 `detail["data"]["capabilities"]["can_replay"]` 为 `True`，则可以继续做最小重放：
 
@@ -215,6 +216,7 @@ print(replay["replay"]["comparison"]["highlights"])
 如果原始失败阶段没有保全到响应头或响应体，`comparison.summary` 也会明确把这些字段标记为当前不可比较。
 其中 `comparison.summary.body.*_preview` 只会给出轻量预览，帮助快速判断变化方向，不会直接展开成完整 patch。
 其中 `comparison.summary.boundary` 会固定说明当前 replay 的可信边界，例如它只重放保全下来的请求，不会自动重建历史环境状态或前置 case 影响。
+如果工作区里存在与本次失败相邻的前置执行，`comparison.summary.boundary.dependency_hints` 也会一起给出，方便把 replay 结果和可能的依赖来源对起来看。
 
 ## 报告
 
