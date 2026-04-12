@@ -3688,6 +3688,23 @@ class WorkflowService:
         replay_body = (
             replay_response.get("body") if isinstance(replay_response, dict) else None
         )
+        status_code_changed = (
+            None
+            if preserved_status is None or replay_status is None
+            else preserved_status != replay_status
+        )
+        response_body_changed = (
+            None
+            if preserved_body is None
+            else not self._compare_problem_values(preserved_body, replay_body)
+        )
+        highlights = self._build_api_replay_highlights(
+            preserved_status=preserved_status,
+            replay_status=replay_status,
+            status_code_changed=status_code_changed,
+            response_body_changed=response_body_changed,
+            expectation=expectation,
+        )
         return {
             "original_failure": {
                 "status_code": preserved_status,
@@ -3702,19 +3719,47 @@ class WorkflowService:
                 "status_code": replay_status,
                 "body": replay_body,
             },
-            "status_code_changed": (
-                None
-                if preserved_status is None or replay_status is None
-                else preserved_status != replay_status
-            ),
-            "response_body_changed": (
-                None
-                if preserved_body is None
-                else not self._compare_problem_values(preserved_body, replay_body)
-            ),
+            "status_code_changed": status_code_changed,
+            "response_body_changed": response_body_changed,
             "expectation": expectation,
             "assertion_outcome": expectation["status"],
+            "highlights": highlights,
         }
+
+    def _build_api_replay_highlights(
+        self,
+        *,
+        preserved_status: Any,
+        replay_status: Any,
+        status_code_changed: bool | None,
+        response_body_changed: bool | None,
+        expectation: dict[str, Any],
+    ) -> list[str]:
+        highlights: list[str] = []
+        if status_code_changed is True:
+            highlights.append(
+                f"status code changed from {preserved_status} to {replay_status}"
+            )
+        elif status_code_changed is False and replay_status is not None:
+            highlights.append(f"status code stayed at {replay_status}")
+
+        if response_body_changed is True:
+            highlights.append(
+                "response body changed compared with the preserved failure"
+            )
+        elif response_body_changed is False:
+            highlights.append("response body stayed the same as the preserved failure")
+
+        if expectation.get("reproduced") is True:
+            highlights.append("replay still reproduces the original problem")
+        else:
+            highlights.append("replay no longer reproduces the original problem")
+
+        reason = expectation.get("reason")
+        if isinstance(reason, str) and reason:
+            highlights.append(reason)
+
+        return highlights
 
     def _build_recovery_plan(
         self, record: ProblemRecord, assets: ProblemAssetRecord

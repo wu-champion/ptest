@@ -190,6 +190,7 @@ def test_cli_problem_replay_outputs_comparison_summary(
     assert '"comparison"' in captured.out
     assert '"status_code_changed": true' in captured.out
     assert '"assertion_outcome": "not_reproduced"' in captured.out
+    assert "replay no longer reproduces the original problem" in captured.out
 
 
 def test_cli_problem_list_reports_filters_and_empty_results(

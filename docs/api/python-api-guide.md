@@ -203,6 +203,7 @@ replay = api.replay_problem(problem_id)
 print(replay["data"])
 print(replay["recovery_action"])
 print(replay["replay"]["comparison"])
+print(replay["replay"]["comparison"]["highlights"])
 ```
 
 对于 `api_response` 问题，`replay["replay"]["comparison"]` 会直接给出原始失败现场与当前 replay 结果的对比摘要，

@@ -141,6 +141,10 @@ def test_api_replay_exposes_comparison_summary(tmp_path: Path, monkeypatch) -> N
     assert replay["replay"]["comparison"]["status_code_changed"] is True
     assert replay["replay"]["comparison"]["expectation"]["reproduced"] is False
     assert replay["replay"]["comparison"]["assertion_outcome"] == "not_reproduced"
+    assert (
+        "replay no longer reproduces the original problem"
+        in replay["replay"]["comparison"]["highlights"]
+    )
     assert replay["replay"]["reproduced"] is False
 
 

@@ -110,6 +110,14 @@ def test_workflow_service_preserves_and_replays_api_problem(
     assert replay["replay"]["comparison"]["status_code_changed"] is True
     assert replay["replay"]["comparison"]["expectation"]["reproduced"] is False
     assert replay["replay"]["comparison"]["assertion_outcome"] == "not_reproduced"
+    assert (
+        "status code changed from 404 to 200"
+        in replay["replay"]["comparison"]["highlights"]
+    )
+    assert (
+        "replay no longer reproduces the original problem"
+        in replay["replay"]["comparison"]["highlights"]
+    )
     assert replay["replay"]["reproduced"] is False
     assert replay["recovery_action"]["action_type"] == "replay"
     assert replay["recovery_action"]["status"] == "completed"
