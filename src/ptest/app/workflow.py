@@ -3708,6 +3708,17 @@ class WorkflowService:
             response_body_changed=response_body_changed,
             expectation=expectation,
         )
+        summary = self._build_api_replay_summary(
+            preserved_response=(
+                preserved_response if isinstance(preserved_response, dict) else {}
+            ),
+            replay_response=replay_response
+            if isinstance(replay_response, dict)
+            else {},
+            expectation=expectation,
+            status_code_changed=status_code_changed,
+            response_body_changed=response_body_changed,
+        )
         return {
             "original_failure": {
                 "status_code": preserved_status,
@@ -3727,6 +3738,7 @@ class WorkflowService:
             "expectation": expectation,
             "assertion_outcome": expectation["status"],
             "highlights": highlights,
+            "summary": summary,
         }
 
     def _build_api_replay_highlights(
@@ -3763,6 +3775,105 @@ class WorkflowService:
             highlights.append(reason)
 
         return highlights
+
+    def _build_api_replay_summary(
+        self,
+        *,
+        preserved_response: dict[str, Any],
+        replay_response: dict[str, Any],
+        expectation: dict[str, Any],
+        status_code_changed: bool | None,
+        response_body_changed: bool | None,
+    ) -> dict[str, Any]:
+        return {
+            "reproduced": expectation.get("reproduced"),
+            "assertion_outcome": expectation.get("status"),
+            "status": {
+                "changed": status_code_changed,
+                "from": preserved_response.get("observed_status_code"),
+                "to": replay_response.get("status_code"),
+            },
+            "headers": self._build_api_replay_header_summary(replay_response),
+            "body": self._build_api_replay_body_summary(
+                preserved_body=preserved_response.get("observed_body"),
+                replay_body=replay_response.get("body"),
+                response_body_changed=response_body_changed,
+            ),
+        }
+
+    def _build_api_replay_header_summary(
+        self, replay_response: dict[str, Any]
+    ) -> dict[str, Any]:
+        replay_headers = replay_response.get("headers", {})
+        if not isinstance(replay_headers, dict):
+            replay_headers = {}
+        header_names = sorted(str(key) for key in replay_headers.keys())
+        return {
+            "comparable": False,
+            "reason": "preserved response headers are not available in the current problem record",
+            "replay_header_count": len(header_names),
+            "replay_header_names": header_names,
+        }
+
+    def _build_api_replay_body_summary(
+        self,
+        *,
+        preserved_body: Any,
+        replay_body: Any,
+        response_body_changed: bool | None,
+    ) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            "comparable": preserved_body is not None,
+            "changed": response_body_changed,
+            "preserved_type": self._problem_value_type_name(preserved_body),
+            "replay_type": self._problem_value_type_name(replay_body),
+            "change_kind": "preserved_body_unavailable",
+        }
+        if preserved_body is None:
+            return summary
+        if response_body_changed is False:
+            summary["change_kind"] = "same"
+            return summary
+        if type(preserved_body) is not type(replay_body):
+            summary["change_kind"] = "type_changed"
+            return summary
+        if isinstance(preserved_body, dict) and isinstance(replay_body, dict):
+            preserved_keys = set(preserved_body.keys())
+            replay_keys = set(replay_body.keys())
+            changed_keys = sorted(
+                key
+                for key in preserved_keys & replay_keys
+                if not self._compare_problem_values(
+                    preserved_body[key], replay_body[key]
+                )
+            )
+            summary["change_kind"] = "top_level_fields_changed"
+            summary["added_top_level_fields"] = sorted(replay_keys - preserved_keys)
+            summary["removed_top_level_fields"] = sorted(preserved_keys - replay_keys)
+            summary["changed_top_level_fields"] = changed_keys
+            return summary
+        if isinstance(preserved_body, list) and isinstance(replay_body, list):
+            summary["change_kind"] = "sequence_changed"
+            summary["preserved_length"] = len(preserved_body)
+            summary["replay_length"] = len(replay_body)
+            return summary
+        summary["change_kind"] = "value_changed"
+        return summary
+
+    def _problem_value_type_name(self, value: Any) -> str:
+        if value is None:
+            return "none"
+        if isinstance(value, dict):
+            return "object"
+        if isinstance(value, list):
+            return "array"
+        if isinstance(value, str):
+            return "string"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, int | float):
+            return "number"
+        return type(value).__name__
 
     def _build_problem_reproduction_summary(
         self, payload: dict[str, Any]

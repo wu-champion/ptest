@@ -205,11 +205,14 @@ replay = api.replay_problem(problem_id)
 print(replay["data"])
 print(replay["recovery_action"])
 print(replay["replay"]["comparison"])
+print(replay["replay"]["comparison"]["summary"])
 print(replay["replay"]["comparison"]["highlights"])
 ```
 
 对于 `api_response` 问题，`replay["replay"]["comparison"]` 会直接给出原始失败现场与当前 replay 结果的对比摘要，
-并通过 `assertion_outcome` / `reproduced` 告诉你这次 replay 是否仍然复现原问题。
+并通过 `assertion_outcome` / `reproduced` 告诉你这次 replay 是否仍然复现原问题。当前 `comparison.summary`
+会优先给出更适合机器消费的 `status / headers / body` 变化概要，而 `comparison.highlights` 更适合人直接阅读。
+如果原始失败阶段没有保全到响应头或响应体，`comparison.summary` 也会明确把这些字段标记为当前不可比较。
 
 ## 报告
 

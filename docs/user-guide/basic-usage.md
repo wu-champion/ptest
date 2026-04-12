@@ -111,6 +111,7 @@ ptest problem replay <problem_id>
 - `api_response` 类型在 `problem assets` 里会额外给出 `reproduction_summary`，适合把一次问题的请求、预期、失败现场和建议命令直接转交给别人复看
 - `capabilities.can_replay=true` 时，才适合执行 `problem replay`
 - `api_response` 类型在 `problem replay` 后会直接给出 comparison 摘要，帮助判断这次 replay 是否仍然复现原问题
+- `comparison.summary` 是更适合机器消费的变化概要，目前先覆盖 `status / headers / body` 三类信息
 - `comparison.highlights` 会直接给出更易读的变化摘要，适合先快速判断再深入看结构化字段
 - `problem recover` 用于查看该问题类型当前支持的最小恢复/验证入口
 
