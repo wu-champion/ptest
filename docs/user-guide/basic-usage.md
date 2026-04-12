@@ -112,6 +112,7 @@ ptest problem replay <problem_id>
 - `capabilities.can_replay=true` 时，才适合执行 `problem replay`
 - `api_response` 类型在 `problem replay` 后会直接给出 comparison 摘要，帮助判断这次 replay 是否仍然复现原问题
 - `comparison.summary` 是更适合机器消费的变化概要，目前先覆盖 `status / headers / body` 三类信息
+- `comparison.summary.boundary` 会明确说明当前 replay 只是 `request_level`，不会自动重建历史环境状态或前置 case 副作用
 - `comparison.summary.body` 会额外给出轻量 preview，方便快速看 replay 结果的大致内容，而不是直接展开完整响应体 patch
 - `comparison.highlights` 会直接给出更易读的变化摘要，适合先快速判断再深入看结构化字段
 - `problem recover` 用于查看该问题类型当前支持的最小恢复/验证入口

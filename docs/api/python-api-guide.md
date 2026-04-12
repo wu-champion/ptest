@@ -211,9 +211,10 @@ print(replay["replay"]["comparison"]["highlights"])
 
 对于 `api_response` 问题，`replay["replay"]["comparison"]` 会直接给出原始失败现场与当前 replay 结果的对比摘要，
 并通过 `assertion_outcome` / `reproduced` 告诉你这次 replay 是否仍然复现原问题。当前 `comparison.summary`
-会优先给出更适合机器消费的 `status / headers / body` 变化概要，而 `comparison.highlights` 更适合人直接阅读。
+会优先给出更适合机器消费的 `status / boundary / headers / body` 变化概要，而 `comparison.highlights` 更适合人直接阅读。
 如果原始失败阶段没有保全到响应头或响应体，`comparison.summary` 也会明确把这些字段标记为当前不可比较。
 其中 `comparison.summary.body.*_preview` 只会给出轻量预览，帮助快速判断变化方向，不会直接展开成完整 patch。
+其中 `comparison.summary.boundary` 会固定说明当前 replay 的可信边界，例如它只重放保全下来的请求，不会自动重建历史环境状态或前置 case 影响。
 
 ## 报告
 

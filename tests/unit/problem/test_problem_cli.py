@@ -191,9 +191,16 @@ def test_cli_problem_replay_outputs_comparison_summary(
     assert '"status_code_changed": true' in captured.out
     assert '"assertion_outcome": "not_reproduced"' in captured.out
     assert '"summary"' in captured.out
+    assert '"boundary"' in captured.out
+    assert '"scope": "request_level"' in captured.out
+    assert '"hidden_dependency_possible": true' in captured.out
     assert '"change_kind": "preserved_body_unavailable"' in captured.out
     assert '"replay_preview": {' in captured.out
     assert "replay no longer reproduces the original problem" in captured.out
+    assert (
+        "current replay only reruns the preserved request and may miss prior state changes or hidden dependencies"
+        in captured.out
+    )
 
 
 def test_cli_problem_assets_outputs_reproduction_summary(

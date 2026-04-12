@@ -96,6 +96,15 @@ def test_stateful_api_direct_problem_replay_remains_reproducible(
         replay = api.replay_problem(problem_id)
         assert replay["success"] is True
         assert replay["replay"]["reproduced"] is True
+        assert replay["replay"]["comparison"]["boundary"]["scope"] == "request_level"
+        assert (
+            replay["replay"]["comparison"]["boundary"]["confidence"]
+            == "request_reproduced"
+        )
+        assert (
+            replay["replay"]["comparison"]["summary"]["boundary"]["assessment"]
+            == "reproduced_under_current_workspace_state"
+        )
         assert (
             replay["replay"]["comparison"]["summary"]["body"]["change_kind"] == "same"
         )
@@ -166,9 +175,24 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
         replay = api.replay_problem(problem_id)
         assert replay["success"] is True
         assert replay["replay"]["reproduced"] is False
+        assert replay["replay"]["comparison"]["boundary"]["scope"] == "request_level"
+        assert (
+            replay["replay"]["comparison"]["boundary"]["confidence"] == "request_only"
+        )
+        assert (
+            replay["replay"]["comparison"]["boundary"]["assessment"]
+            == "diverged_from_preserved_failure"
+        )
+        assert (
+            replay["replay"]["comparison"]["boundary"]["hidden_dependency_possible"]
+            is True
+        )
         assert (
             replay["replay"]["comparison"]["summary"]["body"]["change_kind"]
             == "top_level_fields_changed"
+        )
+        assert replay["replay"]["comparison"]["summary"]["boundary"]["scope"] == (
+            "request_level"
         )
         assert replay["replay"]["comparison"]["summary"]["body"][
             "changed_top_level_fields"
@@ -190,6 +214,10 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
         }
         assert (
             "replay no longer reproduces the original problem"
+            in replay["replay"]["comparison"]["highlights"]
+        )
+        assert (
+            "current replay only reruns the preserved request and may miss prior state changes or hidden dependencies"
             in replay["replay"]["comparison"]["highlights"]
         )
     finally:

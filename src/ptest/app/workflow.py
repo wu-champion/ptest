@@ -3701,12 +3701,18 @@ class WorkflowService:
             if preserved_body is None
             else not self._compare_problem_values(preserved_body, replay_body)
         )
+        boundary = self._build_api_replay_boundary_summary(
+            expectation=expectation,
+            status_code_changed=status_code_changed,
+            response_body_changed=response_body_changed,
+        )
         highlights = self._build_api_replay_highlights(
             preserved_status=preserved_status,
             replay_status=replay_status,
             status_code_changed=status_code_changed,
             response_body_changed=response_body_changed,
             expectation=expectation,
+            boundary=boundary,
         )
         summary = self._build_api_replay_summary(
             preserved_response=(
@@ -3718,6 +3724,7 @@ class WorkflowService:
             expectation=expectation,
             status_code_changed=status_code_changed,
             response_body_changed=response_body_changed,
+            boundary=boundary,
         )
         return {
             "original_failure": {
@@ -3737,6 +3744,7 @@ class WorkflowService:
             "response_body_changed": response_body_changed,
             "expectation": expectation,
             "assertion_outcome": expectation["status"],
+            "boundary": boundary,
             "highlights": highlights,
             "summary": summary,
         }
@@ -3749,6 +3757,7 @@ class WorkflowService:
         status_code_changed: bool | None,
         response_body_changed: bool | None,
         expectation: dict[str, Any],
+        boundary: dict[str, Any],
     ) -> list[str]:
         highlights: list[str] = []
         if status_code_changed is True:
@@ -3774,6 +3783,10 @@ class WorkflowService:
         if isinstance(reason, str) and reason:
             highlights.append(reason)
 
+        boundary_reason = boundary.get("reason")
+        if isinstance(boundary_reason, str) and boundary_reason:
+            highlights.append(boundary_reason)
+
         return highlights
 
     def _build_api_replay_summary(
@@ -3784,6 +3797,7 @@ class WorkflowService:
         expectation: dict[str, Any],
         status_code_changed: bool | None,
         response_body_changed: bool | None,
+        boundary: dict[str, Any],
     ) -> dict[str, Any]:
         return {
             "reproduced": expectation.get("reproduced"),
@@ -3793,12 +3807,57 @@ class WorkflowService:
                 "from": preserved_response.get("observed_status_code"),
                 "to": replay_response.get("status_code"),
             },
+            "boundary": boundary,
             "headers": self._build_api_replay_header_summary(replay_response),
             "body": self._build_api_replay_body_summary(
                 preserved_body=preserved_response.get("observed_body"),
                 replay_body=replay_response.get("body"),
                 response_body_changed=response_body_changed,
             ),
+        }
+
+    def _build_api_replay_boundary_summary(
+        self,
+        *,
+        expectation: dict[str, Any],
+        status_code_changed: bool | None,
+        response_body_changed: bool | None,
+    ) -> dict[str, Any]:
+        reproduced = expectation.get("reproduced") is True
+        hidden_dependency_possible = reproduced is False and (
+            status_code_changed is True or response_body_changed is True
+        )
+
+        if reproduced:
+            confidence = "request_reproduced"
+            assessment = "reproduced_under_current_workspace_state"
+            reason = (
+                "current replay reproduces the preserved request-level failure "
+                "under the current workspace state"
+            )
+        elif hidden_dependency_possible:
+            confidence = "request_only"
+            assessment = "diverged_from_preserved_failure"
+            reason = (
+                "current replay only reruns the preserved request and may miss "
+                "prior state changes or hidden dependencies"
+            )
+        else:
+            confidence = "request_only"
+            assessment = "not_reproduced_under_current_workspace_state"
+            reason = (
+                "current replay reruns only the preserved request and does not "
+                "recreate historical environment state"
+            )
+
+        return {
+            "scope": "request_level",
+            "confidence": confidence,
+            "assessment": assessment,
+            "recreates_environment_state": False,
+            "replays_prior_case_effects": False,
+            "hidden_dependency_possible": hidden_dependency_possible,
+            "reason": reason,
         }
 
     def _build_api_replay_header_summary(

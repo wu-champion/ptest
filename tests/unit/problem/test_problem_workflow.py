@@ -123,12 +123,24 @@ def test_workflow_service_preserves_and_replays_api_problem(
     assert replay["replay"]["comparison"]["status_code_changed"] is True
     assert replay["replay"]["comparison"]["expectation"]["reproduced"] is False
     assert replay["replay"]["comparison"]["assertion_outcome"] == "not_reproduced"
+    assert replay["replay"]["comparison"]["boundary"]["scope"] == "request_level"
+    assert replay["replay"]["comparison"]["boundary"]["confidence"] == "request_only"
+    assert (
+        replay["replay"]["comparison"]["boundary"]["assessment"]
+        == "diverged_from_preserved_failure"
+    )
+    assert (
+        replay["replay"]["comparison"]["boundary"]["hidden_dependency_possible"] is True
+    )
     assert replay["replay"]["comparison"]["summary"]["reproduced"] is False
     assert replay["replay"]["comparison"]["summary"]["status"] == {
         "changed": True,
         "from": 404,
         "to": 200,
     }
+    assert replay["replay"]["comparison"]["summary"]["boundary"]["scope"] == (
+        "request_level"
+    )
     assert replay["replay"]["comparison"]["summary"]["headers"]["comparable"] is False
     assert (
         replay["replay"]["comparison"]["summary"]["body"]["change_kind"]
@@ -147,6 +159,10 @@ def test_workflow_service_preserves_and_replays_api_problem(
     )
     assert (
         "replay no longer reproduces the original problem"
+        in replay["replay"]["comparison"]["highlights"]
+    )
+    assert (
+        "current replay only reruns the preserved request and may miss prior state changes or hidden dependencies"
         in replay["replay"]["comparison"]["highlights"]
     )
     assert replay["replay"]["reproduced"] is False

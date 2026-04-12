@@ -16,6 +16,7 @@
 - `problem replay`
 - `comparison.summary`
 - `comparison.highlights`
+- `comparison.summary.boundary`
 
 ## 前置要求
 
@@ -96,6 +97,7 @@ ptest problem replay <problem_id> --path /tmp/ptest-stateful-api-replay
 - `assets.reproduction_summary`
 - `replay.comparison.summary`
 - `replay.comparison.highlights`
+- `replay.comparison.summary.boundary`
 
 这个场景里，问题通常会继续复现，因为它不是由历史状态污染触发的，而是一个可稳定重现的请求/期望不匹配。
 
@@ -139,6 +141,8 @@ ptest problem replay <problem_id> --path /tmp/ptest-stateful-api-replay
 
 - `comparison.highlights` 提示“这次 replay 已不再复现原问题”
 - `comparison.summary.reproduced` 为 `false`
+- `comparison.summary.boundary.scope` 为 `request_level`
+- `comparison.summary.boundary.hidden_dependency_possible` 为 `true`
 
 这正是当前边界要表达的内容：
 
@@ -156,6 +160,8 @@ ptest problem replay <problem_id> --path /tmp/ptest-stateful-api-replay
    看 `comparison.summary`
 3. `ptest problem replay <problem_id>`
    再看 `comparison.highlights`
+4. `ptest problem replay <problem_id>`
+   补看 `comparison.summary.boundary`
 
 ## 一键演示
 
