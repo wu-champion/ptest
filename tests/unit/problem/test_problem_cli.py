@@ -192,6 +192,7 @@ def test_cli_problem_replay_outputs_comparison_summary(
     assert '"assertion_outcome": "not_reproduced"' in captured.out
     assert '"summary"' in captured.out
     assert '"change_kind": "preserved_body_unavailable"' in captured.out
+    assert '"replay_preview": {' in captured.out
     assert "replay no longer reproduces the original problem" in captured.out
 
 

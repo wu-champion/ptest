@@ -136,6 +136,12 @@ def test_workflow_service_preserves_and_replays_api_problem(
     )
     assert replay["replay"]["comparison"]["summary"]["body"]["comparable"] is False
     assert (
+        replay["replay"]["comparison"]["summary"]["body"]["preserved_preview"] is None
+    )
+    assert replay["replay"]["comparison"]["summary"]["body"]["replay_preview"] == {
+        "message": "ok"
+    }
+    assert (
         "status code changed from 404 to 200"
         in replay["replay"]["comparison"]["highlights"]
     )

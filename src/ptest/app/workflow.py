@@ -3828,6 +3828,8 @@ class WorkflowService:
             "preserved_type": self._problem_value_type_name(preserved_body),
             "replay_type": self._problem_value_type_name(replay_body),
             "change_kind": "preserved_body_unavailable",
+            "preserved_preview": self._problem_value_preview(preserved_body),
+            "replay_preview": self._problem_value_preview(replay_body),
         }
         if preserved_body is None:
             return summary
@@ -3874,6 +3876,25 @@ class WorkflowService:
         if isinstance(value, int | float):
             return "number"
         return type(value).__name__
+
+    def _problem_value_preview(self, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            preview: dict[str, Any] = {}
+            for key in sorted(value.keys())[:3]:
+                preview[str(key)] = self._problem_preview_leaf(value[key])
+            return preview
+        if isinstance(value, list):
+            return [self._problem_preview_leaf(item) for item in value[:3]]
+        return self._problem_preview_leaf(value)
+
+    def _problem_preview_leaf(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return "{...}"
+        if isinstance(value, list):
+            return f"[... x{len(value)}]"
+        return value
 
     def _build_problem_reproduction_summary(
         self, payload: dict[str, Any]
