@@ -1488,8 +1488,19 @@ class WorkflowService:
         assets = self.storage.get_problem_assets(problem_id)
         if assets is not None:
             assets_payload = self._problem_assets_payload(assets)
+            payload_for_investigation = {
+                **payload,
+                "details": assets_payload.get("details", {}),
+                "recovery": assets_payload.get("recovery", {}),
+                "preservation": assets_payload.get(
+                    "preservation", payload.get("preservation", {})
+                ),
+                "capabilities": assets_payload.get(
+                    "capabilities", payload.get("capabilities", {})
+                ),
+            }
             payload["investigation"] = self._build_problem_investigation_summary(
-                payload,
+                payload_for_investigation,
                 view="problem",
                 reproduction_summary=assets_payload.get("reproduction_summary")
                 if isinstance(assets_payload.get("reproduction_summary"), dict)
@@ -3281,6 +3292,12 @@ class WorkflowService:
         problem_id = f"problem_{record.execution_id}"
         now = datetime.now().isoformat()
         database_path = case_payload.get("database", "")
+        actual_result = self._extract_data_actual_result(record)
+        data_state_analysis = self._analyze_data_state_problem(
+            expected_result=case_payload.get("expected_result"),
+            actual_result=actual_result,
+            query=str(case_payload.get("query", "")),
+        )
         recovery_hints = {
             "supported": False,
             "mode": "minimal_state_hints",
@@ -3288,8 +3305,13 @@ class WorkflowService:
             "database": database_path,
             "query": case_payload.get("query", ""),
             "expected_result": case_payload.get("expected_result"),
+            "failure_kind": data_state_analysis["failure_kind"],
+            "state_hints": data_state_analysis["state_hints"],
+            "recommended_queries": data_state_analysis["recommended_queries"],
+            "suggested_repairs": data_state_analysis["suggested_repairs"],
+            "next_actions": data_state_analysis["next_actions"],
+            "limitations": data_state_analysis["limitations"],
         }
-        actual_result = self._extract_data_actual_result(record)
         details = {
             "data_source": {
                 "db_type": case_payload.get("db_type", "unknown"),
@@ -3305,6 +3327,8 @@ class WorkflowService:
             ],
             "expected_result": case_payload.get("expected_result"),
             "actual_result": actual_result,
+            "failure_kind": data_state_analysis["failure_kind"],
+            "state_hints": data_state_analysis["state_hints"],
             "error": record.error_message,
             "case": case_payload,
         }
@@ -4136,6 +4160,9 @@ class WorkflowService:
                 problem_id
             ),
         }
+        if payload.get("problem_type") == "data_state":
+            data_investigation = self._build_data_state_investigation_summary(payload)
+            investigation.update(data_investigation)
         if isinstance(reproduction_summary, dict):
             request = reproduction_summary.get("request", {})
             if isinstance(request, dict):
@@ -4178,6 +4205,35 @@ class WorkflowService:
                     investigation["next_actions"] = recommended_actions
         investigation.setdefault("next_actions", [])
         return investigation
+
+    def _build_data_state_investigation_summary(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        details = payload.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        recovery = payload.get("recovery", {})
+        if not isinstance(recovery, dict):
+            recovery = {}
+        data_source = details.get("data_source", {})
+        if not isinstance(data_source, dict):
+            data_source = {}
+        failure_kind = recovery.get("failure_kind", details.get("failure_kind"))
+        state_hints = recovery.get("state_hints", details.get("state_hints", {}))
+        next_actions = recovery.get("next_actions", [])
+        summary: dict[str, Any] = {
+            "data_source": {
+                "db_type": data_source.get("db_type"),
+                "database": data_source.get("database"),
+                "host": data_source.get("host"),
+                "port": data_source.get("port"),
+            },
+            "failure_kind": failure_kind,
+            "state_hints": state_hints if isinstance(state_hints, dict) else {},
+        }
+        if isinstance(next_actions, list):
+            summary["next_actions"] = next_actions
+        return summary
 
     def _build_problem_dependency_digest(
         self, dependency_hints: dict[str, Any]
@@ -4414,12 +4470,19 @@ class WorkflowService:
         details = assets.details if isinstance(assets.details, dict) else {}
         data_source = details.get("data_source", {})
         operations = details.get("operations", [])
+        recommended_queries = recovery.get("recommended_queries", [])
+        suggested_repairs = recovery.get("suggested_repairs", [])
+        next_actions = recovery.get("next_actions", [])
+        limitations = recovery.get("limitations", [])
+        failure_kind = recovery.get("failure_kind", details.get("failure_kind"))
         return {
             "problem_id": record.problem_id,
             "problem_type": record.problem_type,
             "summary": record.summary,
             "supported": bool(recovery.get("supported", False)),
             "mode": recovery.get("mode", "minimal_state_hints"),
+            "goal": "identify the minimal data/state correction needed before rerunning the preserved query",
+            "failure_kind": failure_kind,
             "steps": [
                 "Verify the target database or data source is reachable.",
                 "Recreate or inspect the minimal precondition data before rerunning the query.",
@@ -4429,8 +4492,193 @@ class WorkflowService:
             "operations": operations if isinstance(operations, list) else [],
             "expected_result": details.get("expected_result"),
             "actual_result": details.get("actual_result"),
+            "state_hints": recovery.get("state_hints", details.get("state_hints", {})),
+            "recommended_queries": (
+                recommended_queries if isinstance(recommended_queries, list) else []
+            ),
+            "suggested_repairs": (
+                suggested_repairs if isinstance(suggested_repairs, list) else []
+            ),
+            "next_actions": next_actions if isinstance(next_actions, list) else [],
+            "limitations": limitations if isinstance(limitations, list) else [],
             "hints": recovery,
         }
+
+    def _analyze_data_state_problem(
+        self,
+        *,
+        expected_result: Any,
+        actual_result: Any,
+        query: str,
+    ) -> dict[str, Any]:
+        expected_rows = expected_result if isinstance(expected_result, list) else None
+        actual_rows = actual_result if isinstance(actual_result, list) else None
+        failure_kind = "shape_mismatch"
+        state_hints: dict[str, Any] = {
+            "expected_type": self._problem_value_type_name(expected_result),
+            "actual_type": self._problem_value_type_name(actual_result),
+        }
+
+        if expected_rows is not None and actual_rows is not None:
+            state_hints["expected_row_count"] = len(expected_rows)
+            state_hints["actual_row_count"] = len(actual_rows)
+            if expected_rows and not actual_rows:
+                failure_kind = "missing_rows"
+                state_hints["missing_row_count"] = len(expected_rows)
+            elif not expected_rows and actual_rows:
+                failure_kind = "unexpected_rows"
+                state_hints["unexpected_row_count"] = len(actual_rows)
+            elif len(expected_rows) != len(actual_rows):
+                if len(actual_rows) < len(expected_rows):
+                    failure_kind = "missing_rows"
+                    state_hints["missing_row_count"] = len(expected_rows) - len(
+                        actual_rows
+                    )
+                else:
+                    failure_kind = "unexpected_rows"
+                    state_hints["unexpected_row_count"] = len(actual_rows) - len(
+                        expected_rows
+                    )
+            elif not self._compare_problem_values(expected_rows, actual_rows):
+                failure_kind = "value_mismatch"
+                state_hints["mismatched_fields"] = (
+                    self._collect_data_state_mismatch_fields(expected_rows, actual_rows)
+                )
+            else:
+                failure_kind = "unknown"
+        elif self._problem_value_type_name(
+            expected_result
+        ) != self._problem_value_type_name(actual_result):
+            failure_kind = "shape_mismatch"
+        elif not self._compare_problem_values(expected_result, actual_result):
+            failure_kind = "value_mismatch"
+
+        recommended_queries = self._build_data_state_recommended_queries(query)
+        suggested_repairs = self._build_data_state_suggested_repairs(
+            failure_kind=failure_kind,
+            state_hints=state_hints,
+        )
+        next_actions = self._build_data_state_next_actions(
+            failure_kind=failure_kind,
+            query=query,
+        )
+        limitations = [
+            "current recovery output is a plan only and does not execute data changes automatically",
+            "current data_state recovery does not reconstruct full historical database state",
+        ]
+        return {
+            "failure_kind": failure_kind,
+            "state_hints": state_hints,
+            "recommended_queries": recommended_queries,
+            "suggested_repairs": suggested_repairs,
+            "next_actions": next_actions,
+            "limitations": limitations,
+        }
+
+    def _collect_data_state_mismatch_fields(
+        self, expected_rows: list[Any], actual_rows: list[Any]
+    ) -> list[str]:
+        if not expected_rows or not actual_rows:
+            return []
+        expected_first = expected_rows[0]
+        actual_first = actual_rows[0]
+        if isinstance(expected_first, dict) and isinstance(actual_first, dict):
+            keys = sorted(set(expected_first.keys()) | set(actual_first.keys()))
+            return [
+                str(key)
+                for key in keys
+                if not self._compare_problem_values(
+                    expected_first.get(key), actual_first.get(key)
+                )
+            ]
+        return []
+
+    def _build_data_state_recommended_queries(self, query: str) -> list[dict[str, Any]]:
+        queries: list[dict[str, Any]] = []
+        if query:
+            queries.append(
+                {
+                    "purpose": "rerun_preserved_query",
+                    "query": query,
+                }
+            )
+        queries.append(
+            {
+                "purpose": "inspect_row_count",
+                "query": "Run a lightweight count query against the same target table or view to confirm whether rows are missing or unexpectedly added.",
+            }
+        )
+        return queries
+
+    def _build_data_state_suggested_repairs(
+        self,
+        *,
+        failure_kind: str,
+        state_hints: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if failure_kind == "missing_rows":
+            return [
+                {
+                    "action": "insert_minimal_required_rows",
+                    "reason": "expected rows were not present when the preserved query ran",
+                    "missing_row_count": state_hints.get("missing_row_count"),
+                }
+            ]
+        if failure_kind == "unexpected_rows":
+            return [
+                {
+                    "action": "remove_or_filter_unexpected_rows",
+                    "reason": "the query returned more rows than expected",
+                    "unexpected_row_count": state_hints.get("unexpected_row_count"),
+                }
+            ]
+        if failure_kind == "value_mismatch":
+            return [
+                {
+                    "action": "align_key_field_values",
+                    "reason": "the returned rows exist but key values differ from the expected result",
+                    "fields": state_hints.get("mismatched_fields", []),
+                }
+            ]
+        return [
+            {
+                "action": "inspect_result_shape",
+                "reason": "the actual result shape differs from the expected result and needs manual inspection",
+            }
+        ]
+
+    def _build_data_state_next_actions(
+        self, *, failure_kind: str, query: str
+    ) -> list[dict[str, Any]]:
+        actions = [
+            {
+                "priority": "high",
+                "action": "inspect_data_source_connectivity",
+                "reason": "confirm the target database or bound data source is reachable before investigating result differences",
+            }
+        ]
+        if query:
+            actions.append(
+                {
+                    "priority": "high",
+                    "action": "rerun_preserved_query_manually",
+                    "query": query,
+                    "reason": "recheck the preserved query output before applying any data repair",
+                }
+            )
+        repair_action = {
+            "missing_rows": "restore_missing_rows",
+            "unexpected_rows": "clean_unexpected_rows",
+            "value_mismatch": "correct_mismatched_values",
+        }.get(failure_kind, "inspect_result_shape")
+        actions.append(
+            {
+                "priority": "medium",
+                "action": repair_action,
+                "reason": "apply the minimal state correction suggested by the preserved failure analysis",
+            }
+        )
+        return actions
 
     def _build_environment_dependency_recovery_plan(
         self, record: ProblemRecord, assets: ProblemAssetRecord

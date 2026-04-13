@@ -103,12 +103,22 @@ def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
     assert problems["success"] is True
     assert len(problems["data"]) == 1
 
+    detail = api.get_problem_record(problems["data"][0]["problem_id"])
+    assert detail["success"] is True
+    assert detail["problem"]["investigation"]["data_source"]["db_type"] == "sqlite"
+    assert detail["problem"]["investigation"]["failure_kind"] == "value_mismatch"
+
     recovery = api.recover_problem(problems["data"][0]["problem_id"])
     assert recovery["success"] is True
     assert recovery["data"]["problem_type"] == "data_state"
     assert recovery["recovery"]["problem_type"] == "data_state"
     assert recovery["data"]["mode"] == "minimal_state_hints"
     assert recovery["data"]["actual_result"] == [{"value": 1}]
+    assert recovery["data"]["failure_kind"] == "value_mismatch"
+    assert recovery["data"]["state_hints"]["mismatched_fields"] == ["value"]
+    assert recovery["data"]["suggested_repairs"][0]["action"] == (
+        "align_key_field_values"
+    )
     assert recovery["recovery_action"]["action_type"] == "recover"
 
     latest_recovery = api.get_problem_recovery(problems["data"][0]["problem_id"])

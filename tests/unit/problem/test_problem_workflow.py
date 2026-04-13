@@ -257,14 +257,45 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert len(problems) == 1
     problem_id = problems[0]["problem_id"]
 
+    problem = service.get_problem_record(problem_id)
+    assert problem["success"] is True
+    assert problem["problem"]["investigation"]["data_source"]["db_type"] == "sqlite"
+    assert problem["problem"]["investigation"]["failure_kind"] == "value_mismatch"
+    assert problem["problem"]["investigation"]["state_hints"]["mismatched_fields"] == [
+        "value"
+    ]
+    assert problem["problem"]["investigation"]["next_actions"][0]["action"] == (
+        "inspect_data_source_connectivity"
+    )
+
     assets = service.get_problem_assets(problem_id)
     assert assets["success"] is True
     assert assets["assets"]["problem_type"] == "data_state"
     assert assets["assets"]["details"]["data_source"]["db_type"] == "sqlite"
     assert assets["assets"]["details"]["operations"][0]["query"] == "SELECT 1 as value"
     assert assets["assets"]["details"]["actual_result"] == [{"value": 1}]
+    assert assets["assets"]["details"]["failure_kind"] == "value_mismatch"
+    assert assets["assets"]["details"]["state_hints"]["expected_row_count"] == 1
+    assert assets["assets"]["details"]["state_hints"]["actual_row_count"] == 1
+    assert assets["assets"]["details"]["state_hints"]["mismatched_fields"] == ["value"]
     assert assets["assets"]["recovery"]["mode"] == "minimal_state_hints"
     assert assets["assets"]["recovery"]["supported"] is False
+    assert assets["assets"]["recovery"]["failure_kind"] == "value_mismatch"
+    assert assets["assets"]["recovery"]["recommended_queries"][0] == {
+        "purpose": "rerun_preserved_query",
+        "query": "SELECT 1 as value",
+    }
+    assert assets["assets"]["recovery"]["suggested_repairs"][0]["action"] == (
+        "align_key_field_values"
+    )
+    assert assets["assets"]["investigation"]["data_source"]["db_type"] == "sqlite"
+    assert assets["assets"]["investigation"]["failure_kind"] == "value_mismatch"
+    assert assets["assets"]["investigation"]["state_hints"]["mismatched_fields"] == [
+        "value"
+    ]
+    assert assets["assets"]["investigation"]["next_actions"][0]["action"] == (
+        "inspect_data_source_connectivity"
+    )
     assert assets["assets"]["metadata"]["preservation"]["status"] == "partial"
     assert assets["assets"]["metadata"]["capabilities"]["can_replay"] is False
     assert assets["assets"]["metadata"]["capabilities"]["can_recover"] is True
@@ -276,6 +307,25 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert recovery["recovery"]["problem_type"] == "data_state"
     assert recovery["recovery"]["mode"] == "minimal_state_hints"
     assert recovery["recovery"]["actual_result"] == [{"value": 1}]
+    assert recovery["recovery"]["goal"] == (
+        "identify the minimal data/state correction needed before rerunning the preserved query"
+    )
+    assert recovery["recovery"]["failure_kind"] == "value_mismatch"
+    assert recovery["recovery"]["state_hints"]["mismatched_fields"] == ["value"]
+    assert recovery["recovery"]["recommended_queries"][0] == {
+        "purpose": "rerun_preserved_query",
+        "query": "SELECT 1 as value",
+    }
+    assert recovery["recovery"]["suggested_repairs"][0]["action"] == (
+        "align_key_field_values"
+    )
+    assert recovery["recovery"]["next_actions"][1]["action"] == (
+        "rerun_preserved_query_manually"
+    )
+    assert recovery["recovery"]["limitations"] == [
+        "current recovery output is a plan only and does not execute data changes automatically",
+        "current data_state recovery does not reconstruct full historical database state",
+    ]
     assert recovery["recovery"]["steps"]
     assert recovery["recovery_action"]["action_type"] == "recover"
     assert recovery["recovery_action"]["status"] == "prepared"

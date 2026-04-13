@@ -103,6 +103,9 @@ def test_cli_problem_recover_outputs_data_recovery_plan(
     assert exit_code == 0
     assert problem_id in captured.out
     assert "minimal_state_hints" in captured.out
+    assert '"failure_kind": "value_mismatch"' in captured.out
+    assert '"suggested_repairs"' in captured.out
+    assert '"align_key_field_values"' in captured.out
 
 
 def test_cli_problem_replay_reports_unsupported_for_data_problem(
