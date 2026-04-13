@@ -297,11 +297,9 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
             in item
             for item in replay["replay"]["comparison"]["highlights"]
         )
-        assert (
-            any(
-                f"recent preceding cases: {enable_case_id}" in item
-                for item in replay["replay"]["comparison"]["highlights"]
-            )
+        assert any(
+            f"recent preceding cases: {enable_case_id}" in item
+            for item in replay["replay"]["comparison"]["highlights"]
         )
         assert (
             "next suggested step: inspect_immediate_predecessor"
