@@ -92,6 +92,10 @@ def test_stateful_api_direct_problem_replay_remains_reproducible(
         assert assets["assets"]["reproduction_summary"]["request"]["url"] == (
             f"http://127.0.0.1:{port}/api/orders"
         )
+        assert assets["assets"]["investigation"]["view"] == "assets"
+        assert assets["assets"]["investigation"]["request"]["url"] == (
+            f"http://127.0.0.1:{port}/api/orders"
+        )
         assert assets["assets"]["reproduction_summary"]["dependency_hints"] == {
             "recent_predecessors": [],
             "candidate_case_ids": [],
@@ -122,6 +126,10 @@ def test_stateful_api_direct_problem_replay_remains_reproducible(
             "recommended_actions": [],
         }
         assert replay["replay"]["comparison"]["boundary"]["recommended_actions"] == []
+        assert replay["replay"]["investigation"]["view"] == "replay"
+        assert replay["replay"]["investigation"]["replay"]["assessment"] == (
+            "reproduced_under_current_workspace_state"
+        )
         assert (
             replay["replay"]["comparison"]["summary"]["body"]["change_kind"] == "same"
         )
@@ -190,6 +198,7 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
         assert assets["assets"]["reproduction_summary"]["request"]["url"] == (
             f"http://127.0.0.1:{port}/api/orders"
         )
+        assert assets["assets"]["investigation"]["view"] == "assets"
         assert assets["assets"]["reproduction_summary"]["dependency_hints"][
             "candidate_case_ids"
         ] == [enable_case_id]
@@ -258,6 +267,10 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
         assert replay["replay"]["comparison"]["summary"]["boundary"][
             "dependency_hints"
         ]["candidate_case_ids"] == [enable_case_id]
+        assert replay["replay"]["investigation"]["view"] == "replay"
+        assert replay["replay"]["investigation"]["dependency"][
+            "candidate_case_ids"
+        ] == [enable_case_id]
         assert (
             replay["replay"]["comparison"]["boundary"]["recommended_actions"][0][
                 "action"

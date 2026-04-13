@@ -56,6 +56,10 @@ def test_api_exposes_problem_records(tmp_path: Path, monkeypatch) -> None:
     assert detail["data"]["metadata"]["capabilities"]["can_recover"] is True
     assert detail["data"]["capabilities"]["can_replay"] is True
     assert detail["data"]["preservation"]["status"] == "partial"
+    assert detail["problem"]["investigation"]["view"] == "problem"
+    assert detail["problem"]["investigation"]["request"]["url"] == (
+        "https://example.test/api/demo"
+    )
 
     assets = api.get_problem_assets(problem_id)
     assert assets["success"] is True
@@ -71,6 +75,10 @@ def test_api_exposes_problem_records(tmp_path: Path, monkeypatch) -> None:
         f"ptest problem assets {problem_id}",
         f"ptest problem replay {problem_id}",
     ]
+    assert assets["assets"]["investigation"]["view"] == "assets"
+    assert assets["assets"]["investigation"]["request"]["url"] == (
+        "https://example.test/api/demo"
+    )
 
 
 def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
@@ -187,6 +195,10 @@ def test_api_replay_exposes_comparison_summary(tmp_path: Path, monkeypatch) -> N
     assert (
         "current replay only reruns the preserved request and may miss prior state changes or hidden dependencies"
         in replay["replay"]["comparison"]["highlights"]
+    )
+    assert replay["replay"]["investigation"]["view"] == "replay"
+    assert replay["replay"]["investigation"]["replay"]["assessment"] == (
+        "diverged_from_preserved_failure"
     )
     assert replay["replay"]["reproduced"] is False
 

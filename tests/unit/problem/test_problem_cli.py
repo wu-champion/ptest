@@ -195,6 +195,7 @@ def test_cli_problem_replay_outputs_comparison_summary(
     assert '"scope": "request_level"' in captured.out
     assert '"hidden_dependency_possible": true' in captured.out
     assert '"change_kind": "preserved_body_unavailable"' in captured.out
+    assert '"investigation"' in captured.out
     assert '"replay_preview": {' in captured.out
     assert "replay no longer reproduces the original problem" in captured.out
     assert (
@@ -243,6 +244,7 @@ def test_cli_problem_assets_outputs_reproduction_summary(
 
     assert exit_code == 0
     assert '"reproduction_summary"' in captured.out
+    assert '"investigation"' in captured.out
     assert '"url": "https://example.test/api/demo"' in captured.out
     assert f'"ptest problem replay {problem_id}"' in captured.out
 

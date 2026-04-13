@@ -1436,6 +1436,14 @@ class WorkflowService:
             payload["preservation"] = preservation
         if isinstance(capabilities, dict):
             payload["capabilities"] = capabilities
+        latest_comparison = self._extract_problem_latest_comparison(payload)
+        payload["investigation"] = self._build_problem_investigation_summary(
+            payload,
+            view="problem",
+            comparison=latest_comparison
+            if isinstance(latest_comparison, dict)
+            else None,
+        )
         return payload
 
     def _problem_assets_payload(self, assets: ProblemAssetRecord) -> dict[str, Any]:
@@ -1459,6 +1467,17 @@ class WorkflowService:
         reproduction_summary = self._build_problem_reproduction_summary(payload)
         if reproduction_summary is not None:
             payload["reproduction_summary"] = reproduction_summary
+        latest_comparison = self._extract_problem_latest_comparison(payload)
+        payload["investigation"] = self._build_problem_investigation_summary(
+            payload,
+            view="assets",
+            reproduction_summary=(
+                reproduction_summary if isinstance(reproduction_summary, dict) else None
+            ),
+            comparison=latest_comparison
+            if isinstance(latest_comparison, dict)
+            else None,
+        )
         return payload
 
     def get_problem_record(self, problem_id: str) -> dict[str, Any]:
@@ -1466,6 +1485,17 @@ class WorkflowService:
         if record is None:
             return self._not_found_result("problem", problem_id)
         payload = self._problem_record_payload(record)
+        assets = self.storage.get_problem_assets(problem_id)
+        if assets is not None:
+            assets_payload = self._problem_assets_payload(assets)
+            payload["investigation"] = self._build_problem_investigation_summary(
+                payload,
+                view="problem",
+                reproduction_summary=assets_payload.get("reproduction_summary")
+                if isinstance(assets_payload.get("reproduction_summary"), dict)
+                else None,
+                comparison=self._extract_problem_latest_comparison(payload),
+            )
         return self._operation_result(
             success=True,
             status="ok",
@@ -1586,6 +1616,25 @@ class WorkflowService:
         comparison = self._build_api_replay_comparison(assets, replay_result)
         replay_result["comparison"] = comparison
         replay_result["reproduced"] = comparison["expectation"]["reproduced"]
+        replay_result["investigation"] = self._build_problem_investigation_summary(
+            {
+                "problem_id": problem_id,
+                "problem_type": assets.problem_type,
+                "summary": assets.summary,
+                "preservation": assets.details.get("preservation", {})
+                if isinstance(assets.details, dict)
+                else {},
+                "capabilities": assets.metadata.get("capabilities", {})
+                if isinstance(assets.metadata, dict)
+                else {},
+                "latest_action": f"replay:{'completed'}",
+            },
+            view="replay",
+            reproduction_summary=self._build_problem_reproduction_summary(
+                self._problem_assets_payload(assets)
+            ),
+            comparison=comparison,
+        )
         recovery_action = self._record_problem_recovery_action(
             record,
             assets,
@@ -4036,6 +4085,120 @@ class WorkflowService:
             )
         return actions
 
+    def _extract_problem_latest_comparison(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        metadata = payload.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return None
+        latest_recovery = metadata.get("latest_recovery", {})
+        if not isinstance(latest_recovery, dict):
+            return None
+        if latest_recovery.get("action_type") != "replay":
+            return None
+        result = latest_recovery.get("result_summary", {})
+        if not isinstance(result, dict) or not result:
+            result = latest_recovery.get("result", {})
+        if not isinstance(result, dict):
+            return None
+        comparison = result.get("comparison")
+        return comparison if isinstance(comparison, dict) else None
+
+    def _build_problem_investigation_summary(
+        self,
+        payload: dict[str, Any],
+        *,
+        view: str,
+        reproduction_summary: dict[str, Any] | None = None,
+        comparison: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        problem_id = str(payload.get("problem_id", ""))
+        capabilities = payload.get("capabilities", {})
+        if not isinstance(capabilities, dict):
+            capabilities = {}
+        preservation = payload.get("preservation", {})
+        if not isinstance(preservation, dict):
+            preservation = {}
+        investigation: dict[str, Any] = {
+            "view": view,
+            "problem_id": problem_id,
+            "problem_type": payload.get("problem_type"),
+            "summary": payload.get("summary"),
+            "preservation_status": preservation.get("status"),
+            "latest_action": payload.get("latest_action"),
+            "capabilities": {
+                "can_replay": capabilities.get("can_replay"),
+                "can_recover": capabilities.get("can_recover"),
+                "replay_mode": capabilities.get("replay_mode"),
+                "recover_mode": capabilities.get("recover_mode"),
+            },
+            "recommended_commands": self._build_problem_recommended_commands(
+                problem_id
+            ),
+        }
+        if isinstance(reproduction_summary, dict):
+            request = reproduction_summary.get("request", {})
+            if isinstance(request, dict):
+                investigation["request"] = {
+                    "method": request.get("method"),
+                    "url": request.get("url"),
+                }
+            expected = reproduction_summary.get("expected", {})
+            if isinstance(expected, dict):
+                investigation["expected"] = expected
+            dependency_hints = reproduction_summary.get("dependency_hints")
+            if isinstance(dependency_hints, dict):
+                investigation["dependency"] = self._build_problem_dependency_digest(
+                    dependency_hints
+                )
+                investigation["next_actions"] = dependency_hints.get(
+                    "recommended_actions", []
+                )
+        if isinstance(comparison, dict):
+            boundary = comparison.get("boundary", {})
+            if isinstance(boundary, dict):
+                investigation["replay"] = {
+                    "reproduced": comparison.get("expectation", {}).get("reproduced")
+                    if isinstance(comparison.get("expectation"), dict)
+                    else comparison.get("reproduced"),
+                    "assessment": boundary.get("assessment"),
+                    "scope": boundary.get("scope"),
+                    "confidence": boundary.get("confidence"),
+                    "hidden_dependency_possible": boundary.get(
+                        "hidden_dependency_possible"
+                    ),
+                }
+                dependency_hints = boundary.get("dependency_hints")
+                if isinstance(dependency_hints, dict):
+                    investigation["dependency"] = self._build_problem_dependency_digest(
+                        dependency_hints
+                    )
+                recommended_actions = boundary.get("recommended_actions")
+                if isinstance(recommended_actions, list):
+                    investigation["next_actions"] = recommended_actions
+        investigation.setdefault("next_actions", [])
+        return investigation
+
+    def _build_problem_dependency_digest(
+        self, dependency_hints: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "signal_strength": dependency_hints.get("signal_strength", "none"),
+            "candidate_case_ids": dependency_hints.get("candidate_case_ids", []),
+            "immediate_predecessor": dependency_hints.get("immediate_predecessor"),
+            "recent_same_case": dependency_hints.get("recent_same_case"),
+            "recommended_actions": dependency_hints.get("recommended_actions", []),
+        }
+
+    def _build_problem_recommended_commands(self, problem_id: str) -> list[str]:
+        if not problem_id:
+            return []
+        return [
+            f"ptest problem show {problem_id}",
+            f"ptest problem assets {problem_id}",
+            f"ptest problem replay {problem_id}",
+        ]
+
     def _build_api_replay_header_summary(
         self, replay_response: dict[str, Any]
     ) -> dict[str, Any]:
@@ -4177,11 +4340,9 @@ class WorkflowService:
                 "missing_assets": preservation.get("missing_assets", []),
             },
             "dependency_hints": dependency_hints,
-            "recommended_commands": [
-                f"ptest problem show {payload.get('problem_id')}",
-                f"ptest problem assets {payload.get('problem_id')}",
-                f"ptest problem replay {payload.get('problem_id')}",
-            ],
+            "recommended_commands": self._build_problem_recommended_commands(
+                str(payload.get("problem_id", ""))
+            ),
         }
 
     def _build_api_expected_summary(self, details: dict[str, Any]) -> dict[str, Any]:
@@ -4435,6 +4596,10 @@ class WorkflowService:
             "mode": mode,
             "success": success,
             "created_at": now,
+            "result_summary": self._build_problem_latest_recovery_summary(
+                action_type=action_type,
+                result=result,
+            ),
         }
         record.latest_action = f"{action_type}:{status}"
         record.updated_at = now
@@ -4444,6 +4609,22 @@ class WorkflowService:
 
         self._save_problem_bundle(record, assets)
         return recovery_record
+
+    def _build_problem_latest_recovery_summary(
+        self, *, action_type: str, result: dict[str, Any]
+    ) -> dict[str, Any]:
+        if action_type == "replay":
+            comparison = result.get("comparison")
+            return {
+                "reproduced": result.get("reproduced"),
+                "comparison": comparison if isinstance(comparison, dict) else None,
+            }
+        if action_type == "recover":
+            return {
+                "mode": result.get("mode"),
+                "problem_type": result.get("problem_type"),
+            }
+        return {}
 
     def _new_problem_record(
         self,

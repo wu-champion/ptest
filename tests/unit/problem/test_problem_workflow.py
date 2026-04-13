@@ -70,6 +70,14 @@ def test_workflow_service_preserves_and_replays_api_problem(
     assert problem["problem"]["metadata"]["capabilities"]["can_recover"] is True
     assert problem["problem"]["capabilities"]["can_replay"] is True
     assert problem["problem"]["preservation"]["status"] == "partial"
+    assert problem["problem"]["investigation"]["view"] == "problem"
+    assert problem["problem"]["investigation"]["problem_type"] == "api_response"
+    assert problem["problem"]["investigation"]["request"]["url"] == (
+        "https://example.test/api/demo"
+    )
+    assert problem["problem"]["investigation"]["dependency"]["signal_strength"] == (
+        "none"
+    )
 
     filtered = service.list_problem_records(
         case_id="api_failure_case",
@@ -116,6 +124,11 @@ def test_workflow_service_preserves_and_replays_api_problem(
         "signal_strength": "none",
         "recommended_actions": [],
     }
+    assert assets["assets"]["investigation"]["view"] == "assets"
+    assert assets["assets"]["investigation"]["request"]["url"] == (
+        "https://example.test/api/demo"
+    )
+    assert assets["assets"]["investigation"]["next_actions"] == []
 
     monkeypatch.setattr(
         requests,
@@ -183,6 +196,15 @@ def test_workflow_service_preserves_and_replays_api_problem(
         in replay["replay"]["comparison"]["highlights"]
     )
     assert "next suggested step:" not in replay["replay"]["comparison"]["highlights"]
+    assert replay["replay"]["investigation"]["view"] == "replay"
+    assert replay["replay"]["investigation"]["replay"] == {
+        "reproduced": False,
+        "assessment": "diverged_from_preserved_failure",
+        "scope": "request_level",
+        "confidence": "request_only",
+        "hidden_dependency_possible": True,
+    }
+    assert replay["replay"]["investigation"]["next_actions"] == []
     assert replay["replay"]["reproduced"] is False
     assert replay["recovery_action"]["action_type"] == "replay"
     assert replay["recovery_action"]["status"] == "completed"
@@ -191,12 +213,18 @@ def test_workflow_service_preserves_and_replays_api_problem(
     assert problem["success"] is True
     assert problem["problem"]["latest_action"] == "replay:completed"
     assert problem["problem"]["metadata"]["latest_recovery"]["action_type"] == "replay"
+    assert problem["problem"]["investigation"]["replay"]["assessment"] == (
+        "diverged_from_preserved_failure"
+    )
 
     assets = service.get_problem_assets(problem_id)
     assert assets["success"] is True
     assert assets["assets"]["metadata"]["latest_recovery"]["action_type"] == "replay"
     assert (
         assets["assets"]["metadata"]["capabilities"]["recover_mode"] == "request_replay"
+    )
+    assert assets["assets"]["investigation"]["replay"]["assessment"] == (
+        "diverged_from_preserved_failure"
     )
 
     latest_recovery = service.get_problem_recovery(problem_id)
