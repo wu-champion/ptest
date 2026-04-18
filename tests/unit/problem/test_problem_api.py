@@ -107,6 +107,12 @@ def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
     assert detail["success"] is True
     assert detail["problem"]["investigation"]["data_source"]["db_type"] == "sqlite"
     assert detail["problem"]["investigation"]["failure_kind"] == "value_mismatch"
+    assert detail["problem"]["investigation"]["origin_hints"]["classification"] == (
+        "stale_field_values"
+    )
+    assert detail["problem"]["investigation"]["boundary"]["scope"] == (
+        "query_level_plan"
+    )
 
     recovery = api.recover_problem(problems["data"][0]["problem_id"])
     assert recovery["success"] is True
@@ -116,6 +122,9 @@ def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
     assert recovery["data"]["actual_result"] == [{"value": 1}]
     assert recovery["data"]["failure_kind"] == "value_mismatch"
     assert recovery["data"]["state_hints"]["mismatched_fields"] == ["value"]
+    assert recovery["data"]["origin_hints"]["classification"] == "stale_field_values"
+    assert recovery["data"]["boundary"]["scope"] == "query_level_plan"
+    assert recovery["data"]["boundary"]["needs_historical_state"] is False
     assert recovery["data"]["suggested_repairs"][0]["action"] == (
         "align_key_field_values"
     )

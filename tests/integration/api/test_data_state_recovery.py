@@ -66,12 +66,26 @@ def test_data_state_value_mismatch_exposes_recovery_plan(tmp_path: Path) -> None
     assert assets["assets"]["investigation"]["state_hints"]["mismatched_fields"] == [
         "state"
     ]
+    assert assets["assets"]["investigation"]["origin_hints"]["classification"] == (
+        "stale_field_values"
+    )
+    assert assets["assets"]["investigation"]["boundary"]["scope"] == (
+        "query_level_plan"
+    )
 
     recovery = api.recover_problem(problem_id)
     assert recovery["success"] is True
     assert recovery["recovery"]["failure_kind"] == "value_mismatch"
     assert recovery["recovery"]["data_source"]["db_type"] == "sqlite"
     assert recovery["recovery"]["state_hints"]["mismatched_fields"] == ["state"]
+    assert recovery["recovery"]["origin_hints"]["classification"] == (
+        "stale_field_values"
+    )
+    assert recovery["recovery"]["boundary"]["scope"] == "query_level_plan"
+    assert (
+        recovery["recovery"]["boundary"]["confidence"]
+        == "high_for_direct_result_mismatch"
+    )
     assert recovery["recovery"]["suggested_repairs"][0]["action"] == (
         "align_key_field_values"
     )
@@ -117,11 +131,19 @@ def test_data_state_missing_rows_exposes_minimal_repair_hints(
     assert assets["assets"]["details"]["failure_kind"] == "missing_rows"
     assert assets["assets"]["details"]["state_hints"]["missing_row_count"] == 1
     assert assets["assets"]["investigation"]["failure_kind"] == "missing_rows"
+    assert assets["assets"]["investigation"]["origin_hints"]["classification"] == (
+        "missing_seed_data"
+    )
 
     recovery = api.recover_problem(problem_id)
     assert recovery["success"] is True
     assert recovery["recovery"]["failure_kind"] == "missing_rows"
     assert recovery["recovery"]["state_hints"]["missing_row_count"] == 1
+    assert recovery["recovery"]["origin_hints"]["classification"] == (
+        "missing_seed_data"
+    )
+    assert recovery["recovery"]["boundary"]["scope"] == "query_level_plan"
+    assert recovery["recovery"]["boundary"]["needs_historical_state"] is False
     assert recovery["recovery"]["suggested_repairs"][0]["action"] == (
         "insert_minimal_required_rows"
     )

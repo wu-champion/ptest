@@ -120,6 +120,7 @@ ptest problem replay <problem_id>
 - `comparison.summary.body` 会额外给出轻量 preview，方便快速看 replay 结果的大致内容，而不是直接展开完整响应体 patch
 - `comparison.highlights` 会直接给出更易读的变化摘要，适合先快速判断再深入看结构化字段
 - `problem recover` 用于查看该问题类型当前支持的最小恢复/验证入口
+- 对 `data_state` 问题，`problem show` / `problem assets` / `problem recover` 现在还会给出 `origin_hints` 和 `boundary`，帮助先判断这类状态问题更像是缺数据、残留数据、字段值漂移，还是查询范围偏差，以及当前恢复建议是不是只到查询级计划
 
 ### 6. 销毁工作区资源
 

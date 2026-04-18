@@ -200,6 +200,7 @@ print(recovery["data"]["mode"])
 - `reproduction_summary.dependency_hints` 会补充失败前最近执行过的 case 线索，帮助你判断这次问题是否可能受前置执行影响
 - `dependency_hints.recommended_actions` 会直接给出下一步排查建议，例如先检查最近前置 case，或先按顺序重跑候选前置 case 再 replay
 - `get_problem_record()` / `get_problem_assets()` / `replay_problem()` 现在都会额外带一个统一的 `investigation` 视图，适合先消费问题摘要、依赖线索和下一步动作，再决定是否读取更细的原始字段
+- 对 `data_state` 问题，`get_problem_record()` / `get_problem_assets()` / `recover_problem()` 也会稳定带出 `origin_hints` 和 `boundary`，方便在恢复前先判断问题更像缺数据、脏数据还是字段值偏差，以及当前计划是不是只到查询级恢复建议
 
 如果 `detail["data"]["capabilities"]["can_replay"]` 为 `True`，则可以继续做最小重放：
 

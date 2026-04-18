@@ -104,6 +104,9 @@ def test_cli_problem_recover_outputs_data_recovery_plan(
     assert problem_id in captured.out
     assert "minimal_state_hints" in captured.out
     assert '"failure_kind": "value_mismatch"' in captured.out
+    assert '"origin_hints"' in captured.out
+    assert '"boundary"' in captured.out
+    assert '"scope": "query_level_plan"' in captured.out
     assert '"suggested_repairs"' in captured.out
     assert '"align_key_field_values"' in captured.out
 

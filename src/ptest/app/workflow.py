@@ -3298,6 +3298,19 @@ class WorkflowService:
             actual_result=actual_result,
             query=str(case_payload.get("query", "")),
         )
+        origin_hints = self._build_data_state_origin_hints(
+            execution_id=record.execution_id,
+            case_id=record.case_id,
+            failure_kind=data_state_analysis["failure_kind"],
+            query=str(case_payload.get("query", "")),
+        )
+        boundary = self._build_data_state_recovery_boundary(
+            failure_kind=data_state_analysis["failure_kind"],
+            origin_hints=origin_hints,
+        )
+        boundary_actions = boundary.get("recommended_actions")
+        if not isinstance(boundary_actions, list) or not boundary_actions:
+            boundary_actions = data_state_analysis["next_actions"]
         recovery_hints = {
             "supported": False,
             "mode": "minimal_state_hints",
@@ -3307,9 +3320,11 @@ class WorkflowService:
             "expected_result": case_payload.get("expected_result"),
             "failure_kind": data_state_analysis["failure_kind"],
             "state_hints": data_state_analysis["state_hints"],
+            "origin_hints": origin_hints,
+            "boundary": boundary,
             "recommended_queries": data_state_analysis["recommended_queries"],
             "suggested_repairs": data_state_analysis["suggested_repairs"],
-            "next_actions": data_state_analysis["next_actions"],
+            "next_actions": boundary_actions,
             "limitations": data_state_analysis["limitations"],
         }
         details = {
@@ -3329,6 +3344,7 @@ class WorkflowService:
             "actual_result": actual_result,
             "failure_kind": data_state_analysis["failure_kind"],
             "state_hints": data_state_analysis["state_hints"],
+            "origin_hints": origin_hints,
             "error": record.error_message,
             "case": case_payload,
         }
@@ -4220,6 +4236,8 @@ class WorkflowService:
             data_source = {}
         failure_kind = recovery.get("failure_kind", details.get("failure_kind"))
         state_hints = recovery.get("state_hints", details.get("state_hints", {}))
+        origin_hints = recovery.get("origin_hints", details.get("origin_hints", {}))
+        boundary = recovery.get("boundary", {})
         next_actions = recovery.get("next_actions", [])
         summary: dict[str, Any] = {
             "data_source": {
@@ -4231,6 +4249,23 @@ class WorkflowService:
             "failure_kind": failure_kind,
             "state_hints": state_hints if isinstance(state_hints, dict) else {},
         }
+        if isinstance(origin_hints, dict):
+            summary["origin_hints"] = {
+                "classification": origin_hints.get("classification"),
+                "query_context": origin_hints.get("query_context"),
+                "signal_strength": origin_hints.get("signal_strength"),
+                "candidate_case_ids": origin_hints.get("candidate_case_ids", []),
+                "immediate_predecessor": origin_hints.get("immediate_predecessor"),
+                "recent_same_case": origin_hints.get("recent_same_case"),
+            }
+        if isinstance(boundary, dict):
+            summary["boundary"] = {
+                "scope": boundary.get("scope"),
+                "confidence": boundary.get("confidence"),
+                "assessment": boundary.get("assessment"),
+                "reason": boundary.get("reason"),
+                "needs_historical_state": boundary.get("needs_historical_state"),
+            }
         if isinstance(next_actions, list):
             summary["next_actions"] = next_actions
         return summary
@@ -4475,6 +4510,8 @@ class WorkflowService:
         next_actions = recovery.get("next_actions", [])
         limitations = recovery.get("limitations", [])
         failure_kind = recovery.get("failure_kind", details.get("failure_kind"))
+        origin_hints = recovery.get("origin_hints", details.get("origin_hints", {}))
+        boundary = recovery.get("boundary", {})
         return {
             "problem_id": record.problem_id,
             "problem_type": record.problem_type,
@@ -4493,6 +4530,8 @@ class WorkflowService:
             "expected_result": details.get("expected_result"),
             "actual_result": details.get("actual_result"),
             "state_hints": recovery.get("state_hints", details.get("state_hints", {})),
+            "origin_hints": origin_hints if isinstance(origin_hints, dict) else {},
+            "boundary": boundary if isinstance(boundary, dict) else {},
             "recommended_queries": (
                 recommended_queries if isinstance(recommended_queries, list) else []
             ),
@@ -4573,6 +4612,99 @@ class WorkflowService:
             "suggested_repairs": suggested_repairs,
             "next_actions": next_actions,
             "limitations": limitations,
+        }
+
+    def _build_data_state_origin_hints(
+        self,
+        *,
+        execution_id: str,
+        case_id: str,
+        failure_kind: str,
+        query: str,
+    ) -> dict[str, Any]:
+        dependency_hints = self._build_problem_dependency_hints(
+            execution_id=execution_id,
+            case_id=case_id,
+        )
+        classification = {
+            "missing_rows": "missing_seed_data",
+            "unexpected_rows": "unexpected_residual_data",
+            "value_mismatch": "stale_field_values",
+            "shape_mismatch": "query_scope_mismatch",
+        }.get(failure_kind, "unknown_state_origin")
+        query_context = self._classify_data_state_query_context(query)
+        signal_strength = dependency_hints.get("signal_strength", "none")
+        if failure_kind in {"missing_rows", "unexpected_rows", "value_mismatch"}:
+            signal_strength = (
+                signal_strength if signal_strength != "none" else "direct_result_only"
+            )
+        return {
+            **dependency_hints,
+            "classification": classification,
+            "query_context": query_context,
+            "signal_strength": signal_strength,
+        }
+
+    def _classify_data_state_query_context(self, query: str) -> str:
+        normalized = query.strip().lower()
+        if not normalized:
+            return "unknown"
+        if "count(" in normalized:
+            return "count_query"
+        if " where " in normalized and "status" in normalized:
+            return "status_filtered_query"
+        if " where " in normalized:
+            return "single_or_filtered_query"
+        if " limit " in normalized:
+            return "bounded_list_query"
+        if normalized.startswith("select"):
+            return "list_query"
+        return "unknown"
+
+    def _build_data_state_recovery_boundary(
+        self,
+        *,
+        failure_kind: str,
+        origin_hints: dict[str, Any],
+    ) -> dict[str, Any]:
+        signal_strength = str(origin_hints.get("signal_strength", "none"))
+        candidate_case_ids = origin_hints.get("candidate_case_ids", [])
+        has_predecessors = isinstance(candidate_case_ids, list) and bool(
+            candidate_case_ids
+        )
+        confidence = {
+            "value_mismatch": "high_for_direct_result_mismatch",
+            "missing_rows": "medium_for_missing_rows",
+            "unexpected_rows": "medium_for_unexpected_rows",
+            "shape_mismatch": "low_when_context_is_sparse",
+        }.get(failure_kind, "low_when_context_is_sparse")
+        if has_predecessors:
+            confidence = "reduced_by_recent_execution_context"
+        assessment = "query_level_plan"
+        reason = (
+            "current recovery plan summarizes query-level evidence only and does not reconstruct historical database state"
+        )
+        if has_predecessors:
+            assessment = "possible_precondition_or_sequence_dependency"
+            reason = (
+                "recent executions may have changed the data state before this preserved failure, so the current recovery plan should be treated as a query-level hint"
+            )
+        recommended_actions = origin_hints.get("recommended_actions", [])
+        if not isinstance(recommended_actions, list):
+            recommended_actions = []
+        return {
+            "scope": "query_level_plan",
+            "confidence": confidence,
+            "assessment": assessment,
+            "signal_strength": signal_strength,
+            "reason": reason,
+            "needs_historical_state": has_predecessors,
+            "does_not_cover": [
+                "historical_database_state_reconstruction",
+                "cross_table_dependency_inference",
+                "automatic_data_repair_execution",
+            ],
+            "recommended_actions": recommended_actions,
         }
 
     def _collect_data_state_mismatch_fields(

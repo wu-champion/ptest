@@ -22,6 +22,8 @@
 - `investigation`
 - `recovery.failure_kind`
 - `recovery.state_hints`
+- `recovery.origin_hints`
+- `recovery.boundary`
 - `recovery.recommended_queries`
 - `recovery.suggested_repairs`
 - `recovery.next_actions`
@@ -96,6 +98,8 @@ ptest problem recover <problem_id> --path /tmp/ptest-sqlite-data-state
 
 - `problem.investigation.failure_kind`
 - `problem.investigation.state_hints`
+- `problem.investigation.origin_hints`
+- `problem.investigation.boundary`
 - `assets.details.actual_result`
 - `assets.recovery.recommended_queries`
 - `assets.recovery.suggested_repairs`
@@ -105,12 +109,15 @@ ptest problem recover <problem_id> --path /tmp/ptest-sqlite-data-state
 
 - `failure_kind` 是 `value_mismatch`
 - `state_hints.mismatched_fields` 里包含 `state`
+- `origin_hints.classification` 是 `stale_field_values`
+- `boundary.scope` 是 `query_level_plan`
 - `suggested_repairs[0].action` 是 `align_key_field_values`
 
 这说明当前最小恢复计划认为：
 
 - 目标记录是存在的
 - 主要问题不是缺记录，而是关键字段值不一致
+- 当前建议是基于保全查询结果给出的查询级恢复计划，不等于历史数据库状态重建
 - 下一步应先重跑保全查询，再修正关键字段值
 
 ## 第 5 步：触发 missing_rows
@@ -140,6 +147,7 @@ ptest problem recover <problem_id> --path /tmp/ptest-sqlite-data-state
 
 - `failure_kind` 是 `missing_rows`
 - `state_hints.missing_row_count` 会指出缺少的记录数
+- `origin_hints.classification` 是 `missing_seed_data`
 - `suggested_repairs[0].action` 是 `insert_minimal_required_rows`
 
 这说明当前最小恢复计划认为：
@@ -154,6 +162,8 @@ ptest problem recover <problem_id> --path /tmp/ptest-sqlite-data-state
 - 失败时的状态线索保全
 - 结构化最小恢复计划
 - 统一调查摘要入口
+- 问题来源线索摘要
+- 恢复建议可信边界表达
 
 它当前**不会**做这些事：
 
@@ -167,6 +177,7 @@ ptest problem recover <problem_id> --path /tmp/ptest-sqlite-data-state
 - 一份恢复调查计划
 - 一份最小修正建议
 - 一份帮助你快速确认下一步的结构化摘要
+- 一份带有来源线索和可信边界的查询级恢复说明
 
 而不是“已经自动修复数据”。
 
@@ -175,11 +186,11 @@ ptest problem recover <problem_id> --path /tmp/ptest-sqlite-data-state
 如果你只想快速判断这条能力链是不是够用，建议重点看：
 
 1. `ptest problem show <problem_id>`
-   先看 `investigation`
+   先看 `investigation`，尤其是 `failure_kind / origin_hints / boundary`
 2. `ptest problem assets <problem_id>`
    再看 `details.actual_result` 和 `recovery`
 3. `ptest problem recover <problem_id>`
-   最后看 `suggested_repairs` 和 `next_actions`
+   最后看 `suggested_repairs`、`boundary` 和 `next_actions`
 
 ## 一键演示
 

@@ -278,9 +278,27 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert assets["assets"]["details"]["state_hints"]["expected_row_count"] == 1
     assert assets["assets"]["details"]["state_hints"]["actual_row_count"] == 1
     assert assets["assets"]["details"]["state_hints"]["mismatched_fields"] == ["value"]
+    assert assets["assets"]["details"]["origin_hints"]["classification"] == (
+        "stale_field_values"
+    )
+    assert assets["assets"]["details"]["origin_hints"]["query_context"] == (
+        "list_query"
+    )
+    assert assets["assets"]["details"]["origin_hints"]["signal_strength"] == (
+        "direct_result_only"
+    )
     assert assets["assets"]["recovery"]["mode"] == "minimal_state_hints"
     assert assets["assets"]["recovery"]["supported"] is False
     assert assets["assets"]["recovery"]["failure_kind"] == "value_mismatch"
+    assert assets["assets"]["recovery"]["origin_hints"]["classification"] == (
+        "stale_field_values"
+    )
+    assert assets["assets"]["recovery"]["boundary"]["scope"] == "query_level_plan"
+    assert (
+        assets["assets"]["recovery"]["boundary"]["confidence"]
+        == "high_for_direct_result_mismatch"
+    )
+    assert assets["assets"]["recovery"]["boundary"]["needs_historical_state"] is False
     assert assets["assets"]["recovery"]["recommended_queries"][0] == {
         "purpose": "rerun_preserved_query",
         "query": "SELECT 1 as value",
@@ -293,6 +311,12 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert assets["assets"]["investigation"]["state_hints"]["mismatched_fields"] == [
         "value"
     ]
+    assert assets["assets"]["investigation"]["origin_hints"]["classification"] == (
+        "stale_field_values"
+    )
+    assert assets["assets"]["investigation"]["boundary"]["scope"] == (
+        "query_level_plan"
+    )
     assert assets["assets"]["investigation"]["next_actions"][0]["action"] == (
         "inspect_data_source_connectivity"
     )
@@ -312,6 +336,17 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     )
     assert recovery["recovery"]["failure_kind"] == "value_mismatch"
     assert recovery["recovery"]["state_hints"]["mismatched_fields"] == ["value"]
+    assert recovery["recovery"]["origin_hints"]["classification"] == (
+        "stale_field_values"
+    )
+    assert recovery["recovery"]["origin_hints"]["query_context"] == "list_query"
+    assert recovery["recovery"]["boundary"]["scope"] == "query_level_plan"
+    assert (
+        recovery["recovery"]["boundary"]["confidence"]
+        == "high_for_direct_result_mismatch"
+    )
+    assert recovery["recovery"]["boundary"]["assessment"] == "query_level_plan"
+    assert recovery["recovery"]["boundary"]["needs_historical_state"] is False
     assert recovery["recovery"]["recommended_queries"][0] == {
         "purpose": "rerun_preserved_query",
         "query": "SELECT 1 as value",
@@ -347,6 +382,61 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     replay = service.replay_problem(problem_id)
     assert replay["success"] is False
     assert replay["error_code"] == "problem_replay_unsupported"
+
+
+def test_workflow_service_data_state_origin_hints_reflect_recent_predecessors(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    db_path = tmp_path / "sample.db"
+    service.add_case(
+        "setup_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "query": "SELECT 1 as value",
+            "expected_result": [{"value": 1}],
+        },
+    )
+    service.add_case(
+        "target_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "query": "SELECT value FROM demo where status = 'ready'",
+            "expected_result": [{"value": 2}],
+        },
+    )
+
+    service.run_case("setup_case")
+    result = service.run_case("target_case")
+    assert result["success"] is False
+
+    problem_id = service.list_problem_records(
+        case_id="target_case", problem_type="data_state"
+    )[0]["problem_id"]
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert assets["assets"]["recovery"]["origin_hints"]["candidate_case_ids"] == [
+        "setup_case"
+    ]
+    assert assets["assets"]["recovery"]["origin_hints"]["immediate_predecessor"][
+        "case_id"
+    ] == "setup_case"
+    assert assets["assets"]["recovery"]["origin_hints"]["query_context"] == (
+        "status_filtered_query"
+    )
+    assert (
+        assets["assets"]["recovery"]["boundary"]["assessment"]
+        == "possible_precondition_or_sequence_dependency"
+    )
+    assert assets["assets"]["recovery"]["boundary"]["needs_historical_state"] is True
+    assert assets["assets"]["investigation"]["origin_hints"]["candidate_case_ids"] == [
+        "setup_case"
+    ]
 
 
 def test_workflow_service_preserves_environment_init_problem(
