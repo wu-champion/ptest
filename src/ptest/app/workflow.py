@@ -27,6 +27,7 @@ from ..models import (
     InstallationSourceAsset,
     ManagedObjectRecord,
     MySQLLifecycleScenarioConfig,
+    OBJECT_STATUS_CREATED,
     OBJECT_STATUS_ERROR,
     OBJECT_STATUS_INSTALL_FAILED_PRESERVED,
     OBJECT_STATUS_INSTALLED,
@@ -35,6 +36,7 @@ from ..models import (
     PROBLEM_PRESERVATION_PARTIAL,
     PROBLEM_PRESERVATION_SUCCESS,
     PROBLEM_STATUS_OPEN,
+    OBJECT_STATUS_REMOVED,
     OBJECT_STATUS_RUNNING,
     OBJECT_STATUS_START_FAILED_PRESERVED,
     OBJECT_STATUS_STOPPED,
@@ -3483,14 +3485,48 @@ class WorkflowService:
             },
             "case": case_payload,
         }
+        runtime_hints = self._build_service_runtime_hints(
+            case_payload=case_payload,
+            record=record,
+            service_name=service_name,
+        )
+        boundary = self._build_service_runtime_recovery_boundary(runtime_hints)
         recovery = {
             "supported": False,
-            "mode": "basic_runtime_validation",
+            "mode": "runtime_level_plan",
             "service_name": service_name,
             "host": case_payload.get("host", "localhost"),
             "port": case_payload.get("port", 8080),
             "check_type": case_payload.get("check_type", "port"),
+            "runtime_target": {
+                "service_name": service_name,
+                "object_name": service_name,
+                "runtime_backend": "object_or_external_service",
+                "host": case_payload.get("host", "localhost"),
+                "port": case_payload.get("port", 8080),
+            },
+            "failure_kind": runtime_hints["failure_kind"],
+            "runtime_hints": runtime_hints,
+            "recommended_checks": self._build_service_runtime_recommended_checks(
+                case_payload=case_payload,
+                runtime_hints=runtime_hints,
+            ),
+            "suggested_repairs": self._build_service_runtime_suggested_repairs(
+                case_payload=case_payload,
+                runtime_hints=runtime_hints,
+            ),
+            "next_actions": self._build_service_runtime_next_actions(
+                case_payload=case_payload,
+                runtime_hints=runtime_hints,
+            ),
+            "limitations": [
+                "current recovery output is a plan only and does not execute service recovery automatically",
+                "current service_runtime recovery does not reconstruct full historical runtime context",
+            ],
+            "boundary": boundary,
         }
+        details["failure_kind"] = runtime_hints["failure_kind"]
+        details["runtime_hints"] = runtime_hints
         preservation = self._build_preservation_summary(
             {
                 "service_context": (
@@ -3560,6 +3596,220 @@ class WorkflowService:
     def _build_service_runtime_problem_summary(self, record: ExecutionRecord) -> str:
         error = record.error_message.strip() or "Execution failed"
         return f"Service runtime problem for case '{record.case_id}': {error}"
+
+    def _build_service_runtime_hints(
+        self,
+        *,
+        case_payload: dict[str, Any],
+        record: ExecutionRecord,
+        service_name: str,
+    ) -> dict[str, Any]:
+        host = case_payload.get("host", "localhost")
+        port = case_payload.get("port", 8080)
+        check_type = str(case_payload.get("check_type", "port"))
+        object_record = (
+            self.storage.get_object(service_name)
+            if isinstance(service_name, str) and service_name
+            else None
+        )
+        object_status = object_record.status if object_record is not None else None
+        expected_runtime_state = str(
+            case_payload.get("expected_runtime_state", "")
+        ).lower()
+        error_text = str(record.error_message or "")
+        error_lower = error_text.lower()
+
+        failure_kind = "healthcheck_failed"
+        if object_status == OBJECT_STATUS_START_FAILED_PRESERVED:
+            failure_kind = "startup_failed"
+        elif object_status in {
+            OBJECT_STATUS_CREATED,
+            OBJECT_STATUS_INSTALLED,
+            OBJECT_STATUS_STOPPED,
+            OBJECT_STATUS_REMOVED,
+        }:
+            failure_kind = "not_started"
+        elif object_status == OBJECT_STATUS_ERROR:
+            failure_kind = "abnormal_exit"
+        elif "not reachable" in error_lower:
+            if (
+                object_status == OBJECT_STATUS_RUNNING
+                or expected_runtime_state == "running"
+            ):
+                failure_kind = "abnormal_exit"
+            else:
+                failure_kind = "port_unreachable"
+        elif "unsupported check type" in error_lower:
+            failure_kind = "healthcheck_failed"
+        elif "timeout" in error_lower or "timed out" in error_lower:
+            failure_kind = "healthcheck_failed"
+        elif "connection refused" in error_lower or "connection reset" in error_lower:
+            failure_kind = "port_unreachable"
+
+        return {
+            "object_status": object_status,
+            "check_type": check_type,
+            "connectable": False,
+            "host": host,
+            "port": port,
+            "expected_runtime_state": expected_runtime_state or None,
+            "error_keywords": self._extract_service_runtime_error_keywords(error_text),
+            "failure_kind": failure_kind,
+        }
+
+    def _extract_service_runtime_error_keywords(self, error_text: str) -> list[str]:
+        keywords: list[str] = []
+        lowered = error_text.lower()
+        if "not reachable" in lowered:
+            keywords.append("not_reachable")
+        if "timeout" in lowered or "timed out" in lowered:
+            keywords.append("timeout")
+        if "connection refused" in lowered:
+            keywords.append("connection_refused")
+        if "unsupported check type" in lowered:
+            keywords.append("unsupported_check_type")
+        if "error" in lowered and "service test error" in lowered:
+            keywords.append("service_test_error")
+        return keywords
+
+    def _build_service_runtime_recovery_boundary(
+        self, runtime_hints: dict[str, Any]
+    ) -> dict[str, Any]:
+        failure_kind = str(runtime_hints.get("failure_kind", "healthcheck_failed"))
+        object_status = runtime_hints.get("object_status")
+        expected_runtime_state = str(
+            runtime_hints.get("expected_runtime_state") or ""
+        ).lower()
+        confidence = "runtime_observation_only"
+        assessment = "endpoint_or_healthcheck_failure"
+        reason = (
+            "current recovery plan is based on preserved runtime observations and does not reconstruct full service history"
+        )
+        if failure_kind == "startup_failed":
+            confidence = "high_for_preserved_start_failure"
+            assessment = "startup_failure_detected"
+            reason = "the related managed object is preserved in a start-failed state"
+        elif failure_kind == "not_started":
+            confidence = "high_for_non_running_object"
+            assessment = "service_not_started"
+            reason = "the related managed object is not currently in a running state"
+        elif failure_kind == "abnormal_exit":
+            if (
+                object_status == OBJECT_STATUS_RUNNING
+                or expected_runtime_state == "running"
+            ):
+                confidence = "high_for_expected_running_service"
+            else:
+                confidence = "reduced_by_runtime_state_gap"
+            assessment = "runtime_diverged_from_expected_service_state"
+            reason = (
+                "the service was expected to be running but current runtime observations suggest it exited or became unreachable"
+            )
+        return {
+            "scope": "runtime_level_plan",
+            "confidence": confidence,
+            "assessment": assessment,
+            "reason": reason,
+            "needs_runtime_history": failure_kind in {"abnormal_exit"},
+            "does_not_cover": [
+                "automatic_service_restart",
+                "core_dump_analysis",
+                "deep_resource_diagnostics",
+            ],
+        }
+
+    def _build_service_runtime_recommended_checks(
+        self, *, case_payload: dict[str, Any], runtime_hints: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "purpose": "inspect_runtime_status",
+                "check_type": runtime_hints.get("check_type"),
+                "host": case_payload.get("host", "localhost"),
+                "port": case_payload.get("port", 8080),
+            },
+            {
+                "purpose": "inspect_recent_runtime_logs",
+                "service_name": case_payload.get("service_name", ""),
+            },
+        ]
+
+    def _build_service_runtime_suggested_repairs(
+        self, *, case_payload: dict[str, Any], runtime_hints: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        failure_kind = str(runtime_hints.get("failure_kind", "healthcheck_failed"))
+        service_name = case_payload.get("service_name", "")
+        if failure_kind == "startup_failed":
+            return [
+                {
+                    "action": "inspect_start_failure_and_fix_prerequisites",
+                    "service_name": service_name,
+                    "reason": "the service failed during startup and should be checked before any retry",
+                }
+            ]
+        if failure_kind == "not_started":
+            return [
+                {
+                    "action": "start_service_or_verify_runtime_preconditions",
+                    "service_name": service_name,
+                    "reason": "the service is not currently running",
+                }
+            ]
+        if failure_kind == "abnormal_exit":
+            return [
+                {
+                    "action": "inspect_exit_logs_before_restart",
+                    "service_name": service_name,
+                    "reason": "the service appears to have exited after being expected to run",
+                }
+            ]
+        if failure_kind == "port_unreachable":
+            return [
+                {
+                    "action": "verify_endpoint_reachability_and_port_binding",
+                    "service_name": service_name,
+                    "reason": "the preserved runtime check could not reach the configured endpoint",
+                }
+            ]
+        return [
+            {
+                "action": "inspect_healthcheck_configuration",
+                "service_name": service_name,
+                "reason": "the runtime validation failed and needs a focused healthcheck review",
+            }
+        ]
+
+    def _build_service_runtime_next_actions(
+        self, *, case_payload: dict[str, Any], runtime_hints: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        actions = [
+            {
+                "priority": "high",
+                "action": "inspect_recent_runtime_logs",
+                "service_name": case_payload.get("service_name", ""),
+                "reason": "check the latest runtime failure context before retrying the preserved validation",
+            }
+        ]
+        failure_kind = str(runtime_hints.get("failure_kind", "healthcheck_failed"))
+        if failure_kind in {"not_started", "startup_failed"}:
+            actions.append(
+                {
+                    "priority": "high",
+                    "action": "retry_service_start_after_prerequisite_check",
+                    "service_name": case_payload.get("service_name", ""),
+                    "reason": "confirm the service can enter a healthy running state before rerunning the check",
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "priority": "high",
+                    "action": "rerun_runtime_validation",
+                    "service_name": case_payload.get("service_name", ""),
+                    "reason": "rerun the preserved runtime check after validating endpoint availability",
+                }
+            )
+        return actions
 
     def _extract_data_actual_result(self, record: ExecutionRecord) -> Any:
         if record.output not in (None, ""):
@@ -4179,6 +4429,11 @@ class WorkflowService:
         if payload.get("problem_type") == "data_state":
             data_investigation = self._build_data_state_investigation_summary(payload)
             investigation.update(data_investigation)
+        if payload.get("problem_type") == "service_runtime":
+            runtime_investigation = self._build_service_runtime_investigation_summary(
+                payload
+            )
+            investigation.update(runtime_investigation)
         if isinstance(reproduction_summary, dict):
             request = reproduction_summary.get("request", {})
             if isinstance(request, dict):
@@ -4265,6 +4520,56 @@ class WorkflowService:
                 "assessment": boundary.get("assessment"),
                 "reason": boundary.get("reason"),
                 "needs_historical_state": boundary.get("needs_historical_state"),
+            }
+        if isinstance(next_actions, list):
+            summary["next_actions"] = next_actions
+        return summary
+
+    def _build_service_runtime_investigation_summary(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        details = payload.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        recovery = payload.get("recovery", {})
+        if not isinstance(recovery, dict):
+            recovery = {}
+        service = details.get("service", {})
+        if not isinstance(service, dict):
+            service = {}
+        runtime_result = details.get("runtime_result", {})
+        if not isinstance(runtime_result, dict):
+            runtime_result = {}
+        failure_kind = recovery.get("failure_kind", details.get("failure_kind"))
+        runtime_hints = recovery.get("runtime_hints", details.get("runtime_hints", {}))
+        boundary = recovery.get("boundary", {})
+        next_actions = recovery.get("next_actions", [])
+        summary: dict[str, Any] = {
+            "runtime_target": {
+                "service_name": service.get("service_name"),
+                "object_name": service.get("service_name"),
+                "runtime_backend": "object_or_external_service",
+                "host": service.get("host"),
+                "port": service.get("port"),
+            },
+            "failure_kind": failure_kind,
+            "runtime_status": runtime_result.get("status"),
+        }
+        if isinstance(runtime_hints, dict):
+            summary["runtime_hints"] = {
+                "object_status": runtime_hints.get("object_status"),
+                "check_type": runtime_hints.get("check_type"),
+                "connectable": runtime_hints.get("connectable"),
+                "expected_runtime_state": runtime_hints.get("expected_runtime_state"),
+                "error_keywords": runtime_hints.get("error_keywords", []),
+            }
+        if isinstance(boundary, dict):
+            summary["boundary"] = {
+                "scope": boundary.get("scope"),
+                "confidence": boundary.get("confidence"),
+                "assessment": boundary.get("assessment"),
+                "reason": boundary.get("reason"),
+                "needs_runtime_history": boundary.get("needs_runtime_history"),
             }
         if isinstance(next_actions, list):
             summary["next_actions"] = next_actions
@@ -4844,21 +5149,45 @@ class WorkflowService:
         details = assets.details if isinstance(assets.details, dict) else {}
         service = details.get("service", {})
         runtime_result = details.get("runtime_result", {})
+        recommended_checks = recovery.get("recommended_checks", [])
+        suggested_repairs = recovery.get("suggested_repairs", [])
+        next_actions = recovery.get("next_actions", [])
+        limitations = recovery.get("limitations", [])
+        runtime_target = recovery.get("runtime_target", {})
+        runtime_hints = recovery.get("runtime_hints", details.get("runtime_hints", {}))
+        boundary = recovery.get("boundary", {})
         return {
             "problem_id": record.problem_id,
             "problem_type": record.problem_type,
             "summary": record.summary,
             "supported": bool(recovery.get("supported", False)),
-            "mode": recovery.get("mode", "basic_runtime_validation"),
+            "mode": recovery.get("mode", "runtime_level_plan"),
+            "goal": "identify the minimal runtime correction needed before rerunning the preserved service check",
+            "failure_kind": recovery.get(
+                "failure_kind", details.get("failure_kind", "healthcheck_failed")
+            ),
             "steps": [
-                "Inspect the preserved service endpoint and runtime failure message.",
-                "Verify the target service process or port is reachable.",
-                "Retry the minimal runtime validation against the same host and port.",
+                "Inspect the preserved service endpoint and runtime failure summary.",
+                "Verify the target service status, endpoint reachability and recent runtime logs.",
+                "Apply the minimal runtime correction before rerunning the preserved service validation.",
             ],
+            "runtime_target": runtime_target
+            if isinstance(runtime_target, dict)
+            else {},
             "service": service if isinstance(service, dict) else {},
             "runtime_result": runtime_result
             if isinstance(runtime_result, dict)
             else {},
+            "runtime_hints": runtime_hints if isinstance(runtime_hints, dict) else {},
+            "boundary": boundary if isinstance(boundary, dict) else {},
+            "recommended_checks": (
+                recommended_checks if isinstance(recommended_checks, list) else []
+            ),
+            "suggested_repairs": (
+                suggested_repairs if isinstance(suggested_repairs, list) else []
+            ),
+            "next_actions": next_actions if isinstance(next_actions, list) else [],
+            "limitations": limitations if isinstance(limitations, list) else [],
             "hints": recovery,
         }
 

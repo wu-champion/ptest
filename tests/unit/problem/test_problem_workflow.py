@@ -8,7 +8,12 @@ import requests
 import pytest
 
 from ptest.app import WorkflowService
-from ptest.models import ManagedObjectRecord, ProblemAssetRecord, ProblemRecord
+from ptest.models import (
+    ManagedObjectRecord,
+    OBJECT_STATUS_START_FAILED_PRESERVED,
+    ProblemAssetRecord,
+    ProblemRecord,
+)
 from ptest.objects.db_server import DatabaseServerComponent
 
 
@@ -664,12 +669,148 @@ def test_workflow_service_preserves_service_runtime_problem(tmp_path: Path) -> N
     assets = service.get_problem_assets(problem_id)
     assert assets["success"] is True
     assert assets["assets"]["details"]["service"]["service_name"] == "demo_service"
-    assert assets["assets"]["recovery"]["mode"] == "basic_runtime_validation"
+    assert assets["assets"]["details"]["failure_kind"] == "port_unreachable"
+    assert assets["assets"]["details"]["runtime_hints"]["failure_kind"] == (
+        "port_unreachable"
+    )
+    assert assets["assets"]["recovery"]["mode"] == "runtime_level_plan"
+    assert assets["assets"]["recovery"]["failure_kind"] == "port_unreachable"
+    assert assets["assets"]["recovery"]["runtime_target"]["service_name"] == (
+        "demo_service"
+    )
+    assert assets["assets"]["recovery"]["recommended_checks"][0]["purpose"] == (
+        "inspect_runtime_status"
+    )
+    assert assets["assets"]["recovery"]["suggested_repairs"][0]["action"] == (
+        "verify_endpoint_reachability_and_port_binding"
+    )
+    assert assets["assets"]["investigation"]["runtime_target"]["service_name"] == (
+        "demo_service"
+    )
+    assert assets["assets"]["investigation"]["failure_kind"] == "port_unreachable"
+    assert assets["assets"]["investigation"]["runtime_hints"]["check_type"] == "port"
+    assert assets["assets"]["investigation"]["boundary"]["scope"] == (
+        "runtime_level_plan"
+    )
 
     recovery = service.recover_problem(problem_id)
     assert recovery["success"] is True
     assert recovery["recovery"]["problem_type"] == "service_runtime"
-    assert recovery["recovery"]["mode"] == "basic_runtime_validation"
+    assert recovery["recovery"]["mode"] == "runtime_level_plan"
+    assert recovery["recovery"]["goal"] == (
+        "identify the minimal runtime correction needed before rerunning the preserved service check"
+    )
+    assert recovery["recovery"]["failure_kind"] == "port_unreachable"
+    assert recovery["recovery"]["runtime_target"]["port"] == 65500
+    assert recovery["recovery"]["boundary"]["scope"] == "runtime_level_plan"
+    assert recovery["recovery"]["next_actions"][0]["action"] == (
+        "inspect_recent_runtime_logs"
+    )
+
+
+def test_workflow_service_classifies_start_failed_service_runtime_problem(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.upsert_object(
+        ManagedObjectRecord(
+            name="demo_service",
+            type_name="service",
+            status=OBJECT_STATUS_START_FAILED_PRESERVED,
+            installed=True,
+            config={"runtime_backend": "managed"},
+            metadata={"failure_state": {"phase": "start"}},
+        )
+    )
+    service.add_case(
+        "service_start_failed_case",
+        {
+            "type": "service",
+            "service_name": "demo_service",
+            "host": "127.0.0.1",
+            "port": 65501,
+            "check_type": "port",
+            "timeout": 1,
+        },
+    )
+
+    result = service.run_case("service_start_failed_case")
+    assert result["success"] is False
+
+    problems = service.list_problem_records(
+        case_id="service_start_failed_case",
+        problem_type="service_runtime",
+    )
+    assert len(problems) == 1
+    problem_id = problems[0]["problem_id"]
+
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert assets["assets"]["details"]["failure_kind"] == "startup_failed"
+    assert assets["assets"]["recovery"]["failure_kind"] == "startup_failed"
+    assert assets["assets"]["recovery"]["runtime_hints"]["object_status"] == (
+        OBJECT_STATUS_START_FAILED_PRESERVED
+    )
+    assert assets["assets"]["recovery"]["boundary"]["assessment"] == (
+        "startup_failure_detected"
+    )
+    assert assets["assets"]["investigation"]["failure_kind"] == "startup_failed"
+    assert assets["assets"]["investigation"]["boundary"]["confidence"] == (
+        "high_for_preserved_start_failure"
+    )
+
+
+def test_workflow_service_classifies_abnormal_exit_from_expected_running_service(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "service_abnormal_exit_case",
+        {
+            "type": "service",
+            "service_name": "demo_service",
+            "host": "127.0.0.1",
+            "port": 65502,
+            "check_type": "port",
+            "timeout": 1,
+            "expected_runtime_state": "running",
+        },
+    )
+
+    result = service.run_case("service_abnormal_exit_case")
+    assert result["success"] is False
+
+    problems = service.list_problem_records(
+        case_id="service_abnormal_exit_case",
+        problem_type="service_runtime",
+    )
+    assert len(problems) == 1
+    problem_id = problems[0]["problem_id"]
+
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert assets["assets"]["details"]["failure_kind"] == "abnormal_exit"
+    assert assets["assets"]["details"]["runtime_hints"]["failure_kind"] == (
+        "abnormal_exit"
+    )
+    assert assets["assets"]["details"]["runtime_hints"]["expected_runtime_state"] == (
+        "running"
+    )
+    assert assets["assets"]["recovery"]["boundary"]["confidence"] == (
+        "high_for_expected_running_service"
+    )
+    assert assets["assets"]["recovery"]["boundary"]["assessment"] == (
+        "runtime_diverged_from_expected_service_state"
+    )
+    assert assets["assets"]["recovery"]["suggested_repairs"][0]["action"] == (
+        "inspect_exit_logs_before_restart"
+    )
+    assert assets["assets"]["investigation"]["failure_kind"] == "abnormal_exit"
+    assert assets["assets"]["investigation"]["runtime_hints"][
+        "expected_runtime_state"
+    ] == "running"
 
 
 def test_workflow_service_rejects_recover_for_unsupported_problem_type(
