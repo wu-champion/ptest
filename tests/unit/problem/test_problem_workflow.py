@@ -813,7 +813,73 @@ def test_workflow_service_classifies_abnormal_exit_from_expected_running_service
     ] == "running"
 
 
-def test_workflow_service_rejects_recover_for_unsupported_problem_type(
+def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    dump_file = tmp_path / "crash.core"
+    dump_file.write_text("fake core content", encoding="utf-8")
+    service.add_case(
+        "service_crash_dump_case",
+        {
+            "type": "service",
+            "service_name": "demo_service",
+            "host": "127.0.0.1",
+            "port": 65503,
+            "check_type": "port",
+            "timeout": 1,
+            "expected_runtime_state": "running",
+            "dump_paths": [str(dump_file)],
+        },
+    )
+
+    result = service.run_case("service_crash_dump_case")
+    assert result["success"] is False
+
+    problems = service.list_problem_records(
+        case_id="service_crash_dump_case",
+        problem_type="crash_dump",
+    )
+    assert len(problems) == 1
+    problem_id = problems[0]["problem_id"]
+
+    detail = service.get_problem_record(problem_id)
+    assert detail["success"] is True
+    assert detail["problem"]["problem_type"] == "crash_dump"
+    assert detail["problem"]["investigation"]["crash_target"]["service_name"] == (
+        "demo_service"
+    )
+    assert detail["problem"]["investigation"]["boundary"]["scope"] == (
+        "crash_asset_preservation"
+    )
+
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert assets["assets"]["details"]["crash_target"]["service_name"] == "demo_service"
+    assert assets["assets"]["details"]["dump_refs"][0]["path"] == str(dump_file)
+    assert assets["assets"]["details"]["dump_refs"][0]["exists"] is True
+    assert assets["assets"]["recovery"]["mode"] == "crash_dump_investigation"
+    assert assets["assets"]["recovery"]["boundary"]["confidence"] == (
+        "high_for_existing_dump_refs"
+    )
+    assert assets["assets"]["investigation"]["crash_summary"]["execution_status"] == (
+        "failed"
+    )
+    assert assets["assets"]["investigation"]["dump_refs"][0]["exists"] is True
+
+    recovery = service.recover_problem(problem_id)
+    assert recovery["success"] is True
+    assert recovery["recovery"]["problem_type"] == "crash_dump"
+    assert recovery["recovery"]["mode"] == "crash_dump_investigation"
+    assert recovery["recovery"]["goal"] == (
+        "preserve and inspect the minimal crash assets before deeper dump analysis"
+    )
+    assert recovery["recovery"]["dump_refs"][0]["exists"] is True
+    assert recovery["recovery"]["recommended_checks"][0]["purpose"] == (
+        "inspect_dump_refs"
+    )
+
+
+def test_workflow_service_returns_minimal_recovery_for_crash_dump_problem(
     tmp_path: Path,
 ) -> None:
     service = WorkflowService(tmp_path)
@@ -837,5 +903,7 @@ def test_workflow_service_rejects_recover_for_unsupported_problem_type(
     )
 
     recovery = service.recover_problem(problem_id)
-    assert recovery["success"] is False
-    assert recovery["error_code"] == "problem_recover_unsupported"
+    assert recovery["success"] is True
+    assert recovery["recovery"]["problem_type"] == "crash_dump"
+    assert recovery["recovery"]["mode"] == "preservation_only"
+    assert recovery["recovery"]["dump_refs"] == ["core.001"]

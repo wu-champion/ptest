@@ -11,7 +11,8 @@
 3. [stateful-api-replay.md](stateful-api-replay.md)
 4. [sqlite-data-state-recovery.md](sqlite-data-state-recovery.md)
 5. [service-runtime-recovery.md](service-runtime-recovery.md)
-6. [mysql-full-lifecycle.en.md](mysql-full-lifecycle.en.md)
+6. [crash-dump-preservation.md](crash-dump-preservation.md)
+7. [mysql-full-lifecycle.en.md](mysql-full-lifecycle.en.md)
 
 如果你正在直接使用 CLI，建议优先掌握这几个点：
 

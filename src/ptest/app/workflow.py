@@ -3140,6 +3140,15 @@ class WorkflowService:
         artifact_refs: dict[str, Any],
         log_refs: dict[str, Any],
     ) -> tuple[ProblemRecord, ProblemAssetRecord] | None:
+        if self._is_crash_dump_problem_candidate(case_payload):
+            return self._build_crash_dump_problem_records(
+                record,
+                case_payload=case_payload,
+                environment_id=environment_id,
+                object_refs=object_refs,
+                artifact_refs=artifact_refs,
+                log_refs=log_refs,
+            )
         if self._is_api_problem_candidate(case_payload):
             return self._build_api_problem_records(
                 record,
@@ -3438,6 +3447,255 @@ class WorkflowService:
     def _is_data_problem_candidate(self, case_definition: dict[str, Any]) -> bool:
         case_type = case_definition.get("type")
         return case_type == "database"
+
+    def _is_crash_dump_problem_candidate(
+        self, case_definition: dict[str, Any]
+    ) -> bool:
+        dump_paths = case_definition.get("dump_paths")
+        core_paths = case_definition.get("core_paths")
+        return (
+            case_definition.get("type") == "service"
+            and (
+                isinstance(dump_paths, list)
+                and any(isinstance(item, str) and item for item in dump_paths)
+                or isinstance(core_paths, list)
+                and any(isinstance(item, str) and item for item in core_paths)
+            )
+        )
+
+    def _build_crash_dump_problem_records(
+        self,
+        record: ExecutionRecord,
+        *,
+        case_payload: dict[str, Any],
+        environment_id: str,
+        object_refs: list[str],
+        artifact_refs: dict[str, Any],
+        log_refs: dict[str, Any],
+    ) -> tuple[ProblemRecord, ProblemAssetRecord]:
+        summary = self._build_crash_dump_problem_summary(record)
+        problem_id = f"problem_{record.execution_id}"
+        now = datetime.now().isoformat()
+        service_name = case_payload.get("service_name", "")
+        runtime_object_refs = object_refs.copy()
+        if (
+            isinstance(service_name, str)
+            and service_name
+            and service_name not in runtime_object_refs
+        ):
+            runtime_object_refs.append(service_name)
+
+        dump_refs = self._build_crash_dump_refs(case_payload)
+        crash_target = {
+            "service_name": service_name,
+            "object_name": service_name,
+            "runtime_backend": "object_or_external_service",
+            "host": case_payload.get("host", "localhost"),
+            "port": case_payload.get("port", 8080),
+        }
+        boundary = self._build_crash_dump_boundary(dump_refs)
+        recovery = {
+            "supported": False,
+            "mode": "crash_dump_investigation",
+            "crash_target": crash_target,
+            "dump_refs": dump_refs,
+            "boundary": boundary,
+            "recommended_checks": self._build_crash_dump_recommended_checks(
+                dump_refs=dump_refs,
+                crash_target=crash_target,
+            ),
+            "next_actions": self._build_crash_dump_next_actions(dump_refs),
+            "limitations": [
+                "current crash_dump recovery preserves dump/core references but does not parse dump contents",
+                "current crash_dump recovery does not reconstruct historical runtime state automatically",
+            ],
+        }
+        details = {
+            "crash_target": crash_target,
+            "crash_event": {
+                "detected_at": record.end_time or now,
+                "execution_status": record.status,
+                "error": record.error_message,
+                "output": record.output,
+            },
+            "runtime_context": {
+                "expected_runtime_state": case_payload.get("expected_runtime_state"),
+                "check_type": case_payload.get("check_type", "port"),
+            },
+            "dump_refs": dump_refs,
+            "case": case_payload,
+        }
+        preservation = self._build_preservation_summary(
+            {
+                "crash_target": (
+                    bool(service_name),
+                    "crash target identity was not preserved",
+                ),
+                "dump_refs": (
+                    bool(dump_refs),
+                    "no dump/core references were preserved",
+                ),
+                "runtime_result": (
+                    bool(record.error_message or record.output),
+                    "runtime failure context was not preserved",
+                ),
+                "environment_ref": (
+                    bool(environment_id),
+                    "environment reference is not available",
+                ),
+                "execution_artifacts": (
+                    bool(
+                        artifact_refs.get("directory")
+                        or self._problem_artifact_refs(artifact_refs).get(
+                            "artifact_index"
+                        )
+                    ),
+                    "execution artifacts were not preserved",
+                ),
+                "log_index": (
+                    bool(log_refs.get("workspace_logs_dir")),
+                    "log index is not available",
+                ),
+            }
+        )
+        problem_record = self._new_problem_record(
+            problem_id=problem_id,
+            problem_type="crash_dump",
+            summary=summary,
+            preservation=preservation,
+            execution_id=record.execution_id,
+            case_id=record.case_id,
+            environment_id=environment_id,
+            object_refs=runtime_object_refs,
+            artifact_refs=self._problem_artifact_refs(artifact_refs),
+            log_refs=log_refs,
+            created_at=now,
+            updated_at=now,
+            metadata={"source": "execution_failure"},
+        )
+        problem_assets = self._new_problem_assets(
+            problem_id=problem_id,
+            problem_type="crash_dump",
+            summary=summary,
+            preservation=preservation,
+            execution_id=record.execution_id,
+            case_id=record.case_id,
+            environment_id=environment_id,
+            object_refs=runtime_object_refs,
+            artifact_refs=problem_record.artifact_refs.copy(),
+            log_refs=log_refs,
+            recovery=recovery,
+            details={**details, "preservation": preservation},
+            created_at=now,
+            updated_at=now,
+            metadata={
+                "source": "execution_failure",
+                "source_execution": record.execution_id,
+            },
+        )
+        return problem_record, problem_assets
+
+    def _build_crash_dump_problem_summary(self, record: ExecutionRecord) -> str:
+        error = record.error_message.strip() or "Crash or dump-producing failure"
+        return f"Crash/dump problem for case '{record.case_id}': {error}"
+
+    def _build_crash_dump_refs(
+        self, case_payload: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        raw_paths = case_payload.get("dump_paths", case_payload.get("core_paths", []))
+        if not isinstance(raw_paths, list):
+            return []
+        refs: list[dict[str, Any]] = []
+        for item in raw_paths:
+            if not isinstance(item, str) or not item:
+                continue
+            path = Path(item).expanduser()
+            exists = path.exists()
+            stat = path.stat() if exists else None
+            refs.append(
+                {
+                    "path": str(path),
+                    "exists": exists,
+                    "kind": "core_or_dump",
+                    "name": path.name,
+                    "size": stat.st_size if stat is not None else None,
+                    "modified_at": (
+                        datetime.fromtimestamp(stat.st_mtime).isoformat()
+                        if stat is not None
+                        else None
+                    ),
+                }
+            )
+        return refs
+
+    def _build_crash_dump_boundary(
+        self, dump_refs: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        existing_refs = [ref for ref in dump_refs if ref.get("exists") is True]
+        return {
+            "scope": "crash_asset_preservation",
+            "confidence": (
+                "high_for_existing_dump_refs"
+                if existing_refs
+                else "reference_only_without_dump_file"
+            ),
+            "assessment": (
+                "dump_refs_preserved_for_followup_analysis"
+                if existing_refs
+                else "dump_refs_declared_but_dump_not_found"
+            ),
+            "reason": (
+                "the current crash_dump flow preserves dump/core references for follow-up investigation but does not parse dump contents"
+            ),
+            "needs_dump_analysis": True,
+        }
+
+    def _build_crash_dump_recommended_checks(
+        self,
+        *,
+        dump_refs: list[dict[str, Any]],
+        crash_target: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "purpose": "inspect_dump_refs",
+                "dump_count": len(dump_refs),
+            },
+            {
+                "purpose": "inspect_recent_runtime_logs",
+                "service_name": crash_target.get("service_name"),
+            },
+            {
+                "purpose": "inspect_runtime_target",
+                "host": crash_target.get("host"),
+                "port": crash_target.get("port"),
+            },
+        ]
+
+    def _build_crash_dump_next_actions(
+        self, dump_refs: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        actions = [
+            {
+                "priority": "high",
+                "action": "inspect_dump_refs",
+                "reason": "verify whether the preserved dump/core files are present and complete",
+            },
+            {
+                "priority": "high",
+                "action": "inspect_recent_runtime_logs",
+                "reason": "use the crash window logs to confirm pre-crash runtime context",
+            },
+        ]
+        if any(ref.get("exists") is True for ref in dump_refs):
+            actions.append(
+                {
+                    "priority": "medium",
+                    "action": "prepare_followup_dump_analysis",
+                    "reason": "the dump/core asset exists and can be used in a deeper crash investigation phase",
+                }
+            )
+        return actions
 
     def _build_data_problem_summary(self, record: ExecutionRecord) -> str:
         error = record.error_message.strip() or "Execution failed"
@@ -4434,6 +4692,9 @@ class WorkflowService:
                 payload
             )
             investigation.update(runtime_investigation)
+        if payload.get("problem_type") == "crash_dump":
+            crash_investigation = self._build_crash_dump_investigation_summary(payload)
+            investigation.update(crash_investigation)
         if isinstance(reproduction_summary, dict):
             request = reproduction_summary.get("request", {})
             if isinstance(request, dict):
@@ -4570,6 +4831,45 @@ class WorkflowService:
                 "assessment": boundary.get("assessment"),
                 "reason": boundary.get("reason"),
                 "needs_runtime_history": boundary.get("needs_runtime_history"),
+            }
+        if isinstance(next_actions, list):
+            summary["next_actions"] = next_actions
+        return summary
+
+    def _build_crash_dump_investigation_summary(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        details = payload.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        recovery = payload.get("recovery", {})
+        if not isinstance(recovery, dict):
+            recovery = {}
+        crash_target = details.get("crash_target", {})
+        if not isinstance(crash_target, dict):
+            crash_target = {}
+        crash_event = details.get("crash_event", {})
+        if not isinstance(crash_event, dict):
+            crash_event = {}
+        dump_refs = recovery.get("dump_refs", details.get("dump_refs", []))
+        boundary = recovery.get("boundary", {})
+        next_actions = recovery.get("next_actions", [])
+        summary: dict[str, Any] = {
+            "crash_target": crash_target,
+            "crash_summary": {
+                "execution_status": crash_event.get("execution_status"),
+                "detected_at": crash_event.get("detected_at"),
+                "error": crash_event.get("error"),
+            },
+            "dump_refs": dump_refs if isinstance(dump_refs, list) else [],
+        }
+        if isinstance(boundary, dict):
+            summary["boundary"] = {
+                "scope": boundary.get("scope"),
+                "confidence": boundary.get("confidence"),
+                "assessment": boundary.get("assessment"),
+                "reason": boundary.get("reason"),
+                "needs_dump_analysis": boundary.get("needs_dump_analysis"),
             }
         if isinstance(next_actions, list):
             summary["next_actions"] = next_actions
@@ -4770,6 +5070,8 @@ class WorkflowService:
             return self._build_environment_dependency_recovery_plan(record, assets)
         if assets.problem_type == "service_runtime":
             return self._build_service_runtime_recovery_plan(record, assets)
+        if assets.problem_type == "crash_dump":
+            return self._build_crash_dump_recovery_plan(record, assets)
 
         recovery = assets.recovery if isinstance(assets.recovery, dict) else {}
         return {
@@ -5191,6 +5493,35 @@ class WorkflowService:
             "hints": recovery,
         }
 
+    def _build_crash_dump_recovery_plan(
+        self, record: ProblemRecord, assets: ProblemAssetRecord
+    ) -> dict[str, Any]:
+        recovery = assets.recovery if isinstance(assets.recovery, dict) else {}
+        details = assets.details if isinstance(assets.details, dict) else {}
+        crash_target = recovery.get("crash_target", details.get("crash_target", {}))
+        dump_refs = recovery.get("dump_refs", details.get("dump_refs", []))
+        boundary = recovery.get("boundary", {})
+        recommended_checks = recovery.get("recommended_checks", [])
+        next_actions = recovery.get("next_actions", [])
+        limitations = recovery.get("limitations", [])
+        return {
+            "problem_id": record.problem_id,
+            "problem_type": record.problem_type,
+            "summary": record.summary,
+            "supported": bool(recovery.get("supported", False)),
+            "mode": recovery.get("mode", "crash_dump_investigation"),
+            "goal": "preserve and inspect the minimal crash assets before deeper dump analysis",
+            "crash_target": crash_target if isinstance(crash_target, dict) else {},
+            "dump_refs": dump_refs if isinstance(dump_refs, list) else [],
+            "boundary": boundary if isinstance(boundary, dict) else {},
+            "recommended_checks": (
+                recommended_checks if isinstance(recommended_checks, list) else []
+            ),
+            "next_actions": next_actions if isinstance(next_actions, list) else [],
+            "limitations": limitations if isinstance(limitations, list) else [],
+            "hints": recovery,
+        }
+
     def _record_environment_dependency_problem(
         self,
         *,
@@ -5487,6 +5818,7 @@ class WorkflowService:
             "dependency_object",
             "dependency_configuration",
             "service_runtime",
+            "crash_dump",
         }
 
     def _build_preservation_summary(
