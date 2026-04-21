@@ -4,6 +4,7 @@ import ast
 import json
 import os
 import re
+import resource
 import socket
 import time
 import uuid
@@ -116,7 +117,11 @@ class WorkflowService:
                 metadata={
                     "reports_dir": str(env_manager.report_dir),
                     "logs_dir": str(env_manager.log_dir),
+                    "dumps_dir": str(env_manager.dump_dir),
                     "isolation": isolation_metadata,
+                    "crash_capture": self._build_environment_crash_capture_capability(
+                        env_manager.dump_dir
+                    ),
                 },
             )
             return self.storage.save_environment(record)
@@ -208,6 +213,10 @@ class WorkflowService:
             if materialized
             else {},
         )
+        record.metadata["crash_capture"] = self._merge_object_crash_capture_capability(
+            record,
+            record.metadata.get("crash_capture"),
+        )
         if record.status == OBJECT_STATUS_INSTALL_FAILED_PRESERVED:
             record.metadata["failure_state"] = self._build_failure_state_metadata(
                 phase="install",
@@ -276,6 +285,7 @@ class WorkflowService:
             "files_dir": str(instance_root / "mysql-files"),
             "log_dir": str(instance_root / "logs"),
             "run_dir": str(instance_root / "run"),
+            "dump_dir": str(instance_root / "dumps"),
         }
         port = self._coerce_mysql_port(
             params.get("port", params.get("server_port")),
@@ -336,6 +346,9 @@ class WorkflowService:
                 "pid_file": str(Path(directories["run_dir"]) / "mysql.pid"),
                 "socket_file": str(Path(directories["run_dir"]) / "mysql.sock"),
                 "managed_instance": directories,
+                "crash_capture": self._build_object_crash_capture_capability(
+                    dump_dir=directories["dump_dir"]
+                ),
                 "dependency_assets": dependency_assets,
                 "scenario": scenario.to_dict(),
             }
@@ -1899,6 +1912,14 @@ class WorkflowService:
             )
         metadata = record.metadata.copy()
         metadata.update(self._collect_object_metadata(obj))
+        metadata["crash_capture"] = self._merge_object_crash_capture_capability(
+            record,
+            metadata.get("crash_capture"),
+        )
+        if action in {"start", "restart"}:
+            metadata["crash_capture"] = self._attempt_object_crash_capture_enable(
+                metadata["crash_capture"]
+            )
         if not success and is_failure_preserved_object_status(record.status):
             metadata["failure_state"] = self._build_failure_state_metadata(
                 phase=action,
@@ -2637,6 +2658,148 @@ class WorkflowService:
         return {
             "runtime": self._collect_object_runtime_snapshot(obj),
         }
+
+    def _workspace_dump_dir(self) -> Path:
+        return self.root_path / "dumps"
+
+    def _build_environment_crash_capture_capability(
+        self,
+        dump_dir: str | Path | None = None,
+    ) -> dict[str, Any]:
+        resolved_dump_dir = Path(dump_dir or self._workspace_dump_dir()).resolve()
+        core_supported = hasattr(resource, "RLIMIT_CORE")
+        current_limit = None
+        limitations: list[str] = []
+        core_enabled = False
+        if core_supported:
+            try:
+                soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+                current_limit = {
+                    "soft": self._serialize_core_limit_value(soft),
+                    "hard": self._serialize_core_limit_value(hard),
+                }
+                core_enabled = soft != 0
+                if hard == 0:
+                    limitations.append("process_core_hard_limit_disabled")
+            except (OSError, ValueError) as exc:
+                limitations.append(f"core_limit_probe_failed:{exc}")
+        else:
+            limitations.append("core_rlimit_unsupported")
+        return {
+            "core_supported": core_supported,
+            "core_enabled": core_enabled,
+            "dump_dir": str(resolved_dump_dir),
+            "limitations": limitations,
+            "enable_attempt": {
+                "attempted": False,
+                "status": "pending",
+                "strategy": "process_rlimit_core",
+                "failure_reason": "",
+            },
+            "current_limit": current_limit,
+        }
+
+    def _build_object_crash_capture_capability(
+        self,
+        dump_dir: str | Path | None = None,
+    ) -> dict[str, Any]:
+        capability = self._build_environment_crash_capture_capability(
+            dump_dir=dump_dir or self._workspace_dump_dir()
+        )
+        capability["source"] = "object_runtime_wrapper"
+        return capability
+
+    def _merge_object_crash_capture_capability(
+        self,
+        record: ManagedObjectRecord,
+        existing: Any,
+    ) -> dict[str, Any]:
+        if isinstance(existing, dict) and existing.get("dump_dir"):
+            capability = existing.copy()
+        else:
+            managed_instance = (
+                record.config.get("managed_instance", {})
+                if isinstance(record.config, dict)
+                else {}
+            )
+            dump_dir = None
+            if isinstance(managed_instance, dict):
+                dump_dir = managed_instance.get("dump_dir")
+            capability = self._build_object_crash_capture_capability(dump_dir=dump_dir)
+        enable_attempt = capability.get("enable_attempt")
+        if not isinstance(enable_attempt, dict):
+            capability["enable_attempt"] = {
+                "attempted": False,
+                "status": "pending",
+                "strategy": "process_rlimit_core",
+                "failure_reason": "",
+            }
+        return capability
+
+    def _attempt_object_crash_capture_enable(
+        self,
+        capability: dict[str, Any],
+    ) -> dict[str, Any]:
+        updated = capability.copy()
+        dump_dir = Path(str(updated.get("dump_dir") or self._workspace_dump_dir()))
+        enable_attempt = dict(updated.get("enable_attempt", {}))
+        enable_attempt.update(
+            {
+                "attempted": True,
+                "strategy": "process_rlimit_core",
+                "failure_reason": "",
+                "attempted_at": datetime.now().isoformat(),
+            }
+        )
+
+        try:
+            dump_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            updated["core_enabled"] = False
+            limitations = list(updated.get("limitations", []))
+            limitations.append("dump_dir_unavailable")
+            updated["limitations"] = limitations
+            enable_attempt["status"] = "failed"
+            enable_attempt["failure_reason"] = str(exc)
+            updated["enable_attempt"] = enable_attempt
+            return updated
+
+        if not updated.get("core_supported", False):
+            enable_attempt["status"] = "failed"
+            enable_attempt["failure_reason"] = "core_rlimit_unsupported"
+            updated["enable_attempt"] = enable_attempt
+            return updated
+
+        try:
+            soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+            if soft == 0:
+                if hard == 0:
+                    raise RuntimeError("process_core_hard_limit_disabled")
+                resource.setrlimit(resource.RLIMIT_CORE, (hard, hard))
+                soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+            updated["current_limit"] = {
+                "soft": self._serialize_core_limit_value(soft),
+                "hard": self._serialize_core_limit_value(hard),
+            }
+            updated["core_enabled"] = soft != 0
+            enable_attempt["status"] = "success" if soft != 0 else "failed"
+            if soft == 0:
+                enable_attempt["failure_reason"] = "process_core_soft_limit_disabled"
+        except (OSError, ValueError, RuntimeError) as exc:
+            updated["core_enabled"] = False
+            limitations = list(updated.get("limitations", []))
+            limitations.append("core_enable_attempt_failed")
+            updated["limitations"] = limitations
+            enable_attempt["status"] = "failed"
+            enable_attempt["failure_reason"] = str(exc)
+
+        updated["enable_attempt"] = enable_attempt
+        return updated
+
+    def _serialize_core_limit_value(self, value: int) -> str | int:
+        if value == resource.RLIM_INFINITY:
+            return "unlimited"
+        return value
 
     def _collect_object_runtime_snapshot(
         self,

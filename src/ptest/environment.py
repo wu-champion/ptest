@@ -13,6 +13,7 @@ class EnvironmentManager:
         self.test_path: Optional[Path] = None
         self.log_dir: Optional[Path] = None
         self.report_dir: Optional[Path] = None
+        self.dump_dir: Optional[Path] = None
         self.config = DEFAULT_CONFIG
         self.logger: Optional[logging.Logger] = None
 
@@ -23,12 +24,22 @@ class EnvironmentManager:
             self.test_path.mkdir(parents=True, exist_ok=True)
 
         # 创建必要的目录结构
-        dirs = ["objects", "tools", "cases", "logs", "reports", "data", "scripts"]
+        dirs = [
+            "objects",
+            "tools",
+            "cases",
+            "logs",
+            "reports",
+            "data",
+            "scripts",
+            "dumps",
+        ]
         for dir_name in dirs:
             (self.test_path / dir_name).mkdir(exist_ok=True)
 
         self.log_dir = self.test_path / "logs"
         self.report_dir = self.test_path / "reports"
+        self.dump_dir = self.test_path / "dumps"
 
         # 设置日志
         self.logger = get_logger("environment", self.log_dir)
