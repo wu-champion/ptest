@@ -5080,6 +5080,19 @@ class WorkflowService:
                 recommended_actions = boundary.get("recommended_actions")
                 if isinstance(recommended_actions, list):
                     investigation["next_actions"] = recommended_actions
+        investigation["workspace_recovery"] = self._build_workspace_recovery_plan(
+            problem_id=problem_id,
+            problem_type=str(payload.get("problem_type", "")),
+            object_refs=payload.get("object_refs", [])
+            if isinstance(payload.get("object_refs"), list)
+            else [],
+            details=payload.get("details", {})
+            if isinstance(payload.get("details"), dict)
+            else {},
+            recovery=payload.get("recovery", {})
+            if isinstance(payload.get("recovery"), dict)
+            else {},
+        )
         investigation.setdefault("next_actions", [])
         return investigation
 
@@ -5483,31 +5496,240 @@ class WorkflowService:
     def _build_recovery_plan(
         self, record: ProblemRecord, assets: ProblemAssetRecord
     ) -> dict[str, Any]:
+        recovery_plan: dict[str, Any]
         if assets.problem_type == "api_response":
-            return self._build_api_recovery_plan(record, assets)
-        if assets.problem_type == "data_state":
-            return self._build_data_recovery_plan(record, assets)
-        if assets.problem_type in {
+            recovery_plan = self._build_api_recovery_plan(record, assets)
+        elif assets.problem_type == "data_state":
+            recovery_plan = self._build_data_recovery_plan(record, assets)
+        elif assets.problem_type in {
             "environment_init",
             "dependency_object",
             "dependency_configuration",
         }:
-            return self._build_environment_dependency_recovery_plan(record, assets)
-        if assets.problem_type == "service_runtime":
-            return self._build_service_runtime_recovery_plan(record, assets)
-        if assets.problem_type == "crash_dump":
-            return self._build_crash_dump_recovery_plan(record, assets)
+            recovery_plan = self._build_environment_dependency_recovery_plan(
+                record, assets
+            )
+        elif assets.problem_type == "service_runtime":
+            recovery_plan = self._build_service_runtime_recovery_plan(record, assets)
+        elif assets.problem_type == "crash_dump":
+            recovery_plan = self._build_crash_dump_recovery_plan(record, assets)
+        else:
+            recovery = assets.recovery if isinstance(assets.recovery, dict) else {}
+            recovery_plan = {
+                "problem_id": record.problem_id,
+                "problem_type": record.problem_type,
+                "summary": record.summary,
+                "supported": bool(recovery.get("supported", False)),
+                "mode": recovery.get("mode", "unsupported"),
+                "steps": [],
+                "hints": recovery,
+            }
 
-        recovery = assets.recovery if isinstance(assets.recovery, dict) else {}
+        recovery_plan["workspace_recovery"] = self._build_workspace_recovery_plan(
+            problem_id=record.problem_id,
+            problem_type=record.problem_type,
+            object_refs=record.object_refs,
+            details=assets.details if isinstance(assets.details, dict) else {},
+            recovery=assets.recovery if isinstance(assets.recovery, dict) else {},
+        )
+        return recovery_plan
+
+    def _build_workspace_recovery_plan(
+        self,
+        *,
+        problem_id: str,
+        problem_type: str,
+        object_refs: list[str],
+        details: dict[str, Any],
+        recovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        affected_objects = self._build_workspace_recovery_affected_objects(
+            problem_type=problem_type,
+            object_refs=object_refs,
+            details=details,
+            recovery=recovery,
+        )
         return {
-            "problem_id": record.problem_id,
-            "problem_type": record.problem_type,
-            "summary": record.summary,
-            "supported": bool(recovery.get("supported", False)),
-            "mode": recovery.get("mode", "unsupported"),
-            "steps": [],
-            "hints": recovery,
+            "scope": "workspace_minimum_recovery",
+            "problem_id": problem_id,
+            "affected_objects": affected_objects,
+            "recommended_sequence": [
+                item["object_name"]
+                for item in affected_objects
+                if isinstance(item.get("object_name"), str) and item.get("object_name")
+            ],
+            "recovery_boundary": {
+                "scope": "workspace_minimum_recovery",
+                "confidence": "minimal_object_level_plan",
+                "assessment": "object_level_recovery_plan_only",
+                "reason": "current workspace recovery summarizes minimal object actions only and does not execute them automatically",
+                "does_not_cover": [
+                    "automatic_recovery_execution",
+                    "historical_state_snapshot_restore",
+                    "container_level_recovery",
+                    "cross_workspace_recovery",
+                ],
+            },
+            "post_recovery_checks": self._build_workspace_recovery_post_checks(
+                problem_type=problem_type,
+                problem_id=problem_id,
+                affected_objects=affected_objects,
+            ),
         }
+
+    def _build_workspace_recovery_affected_objects(
+        self,
+        *,
+        problem_type: str,
+        object_refs: list[str],
+        details: dict[str, Any],
+        recovery: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        candidate_names: list[str] = []
+        for raw_name in object_refs:
+            if isinstance(raw_name, str) and raw_name and raw_name not in candidate_names:
+                candidate_names.append(raw_name)
+
+        inferred_names = [
+            details.get("service", {}).get("service_name")
+            if isinstance(details.get("service"), dict)
+            else None,
+            details.get("crash_target", {}).get("service_name")
+            if isinstance(details.get("crash_target"), dict)
+            else None,
+            recovery.get("runtime_target", {}).get("object_name")
+            if isinstance(recovery.get("runtime_target"), dict)
+            else None,
+            recovery.get("crash_target", {}).get("object_name")
+            if isinstance(recovery.get("crash_target"), dict)
+            else None,
+        ]
+        for raw_name in inferred_names:
+            if isinstance(raw_name, str) and raw_name and raw_name not in candidate_names:
+                candidate_names.append(raw_name)
+
+        affected_objects: list[dict[str, Any]] = []
+        for object_name in candidate_names:
+            record = self.storage.get_object(object_name)
+            if record is None:
+                affected_objects.append(
+                    {
+                        "object_name": object_name,
+                        "object_found": False,
+                        "recommended_action": "reinstall",
+                        "reason": "the referenced object is not present in workspace state and should be recreated before deeper recovery",
+                    }
+                )
+                continue
+            recommended_action, reason = self._derive_workspace_recovery_action(
+                problem_type=problem_type,
+                status=record.status,
+            )
+            affected_objects.append(
+                {
+                    "object_name": object_name,
+                    "object_found": True,
+                    "type_name": record.type_name,
+                    "current_status": record.status,
+                    "installed": record.installed,
+                    "recommended_action": recommended_action,
+                    "reason": reason,
+                }
+            )
+        return affected_objects
+
+    def _derive_workspace_recovery_action(
+        self, *, problem_type: str, status: str
+    ) -> tuple[str, str]:
+        if is_failure_preserved_object_status(status):
+            return (
+                "reinstall",
+                "the object is already in a preserved failure state, so reinstall is the safest minimal recovery action",
+            )
+        if problem_type == "data_state":
+            if status in {
+                OBJECT_STATUS_RUNNING,
+                OBJECT_STATUS_STOPPED,
+                OBJECT_STATUS_INSTALLED,
+            }:
+                return (
+                    "reset",
+                    "data/state problems should first return the bound object to a clean minimal baseline before rerunning the preserved query",
+                )
+            if is_clearable_object_status(status):
+                return (
+                    "clear",
+                    "the object can be cleared to remove residual state before rerunning validation",
+                )
+            return (
+                "reinstall",
+                "the object is not in a clean resettable state, so reinstall is the safer minimal fallback",
+            )
+        if problem_type in {"service_runtime", "crash_dump", "api_response"}:
+            if status in {
+                OBJECT_STATUS_RUNNING,
+                OBJECT_STATUS_STOPPED,
+                OBJECT_STATUS_INSTALLED,
+            }:
+                return (
+                    "restart",
+                    "the object should first be restarted to restore a known-good runtime baseline for follow-up checks",
+                )
+            if is_resettable_object_status(status):
+                return (
+                    "reset",
+                    "the object can be reset to rebuild its minimal runnable state before further validation",
+                )
+            return (
+                "reinstall",
+                "the object is not in a stable runtime state, so reinstall is the safer minimal fallback",
+            )
+        if is_resettable_object_status(status):
+            return (
+                "reset",
+                "the object supports reset and should be returned to a minimal baseline first",
+            )
+        return (
+            "reinstall",
+            "a minimal reinstall is the safest generic recovery action for the current object state",
+        )
+
+    def _build_workspace_recovery_post_checks(
+        self,
+        *,
+        problem_type: str,
+        problem_id: str,
+        affected_objects: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        checks: list[dict[str, Any]] = []
+        if affected_objects:
+            checks.append(
+                {
+                    "priority": "high",
+                    "action": "verify_recovered_object_state",
+                    "objects": [
+                        item["object_name"]
+                        for item in affected_objects
+                        if isinstance(item.get("object_name"), str)
+                    ],
+                    "reason": "confirm the affected objects reached the expected baseline state before deeper validation",
+                }
+            )
+        follow_up_action = {
+            "api_response": "replay_problem",
+            "data_state": "rerun_problem_recover",
+            "service_runtime": "rerun_service_validation",
+            "crash_dump": "inspect_preserved_dump_and_rerun_runtime_validation",
+        }.get(problem_type, "inspect_problem_state")
+        checks.append(
+            {
+                "priority": "medium",
+                "action": follow_up_action,
+                "problem_id": problem_id,
+                "reason": "revalidate the original problem path after the minimal recovery actions are applied",
+            }
+        )
+        return checks
 
     def _build_api_recovery_plan(
         self, record: ProblemRecord, assets: ProblemAssetRecord
@@ -6088,6 +6310,7 @@ class WorkflowService:
             return {
                 "mode": result.get("mode"),
                 "problem_type": result.get("problem_type"),
+                "workspace_recovery": result.get("workspace_recovery"),
             }
         return {}
 

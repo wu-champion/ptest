@@ -109,6 +109,8 @@ def test_cli_problem_recover_outputs_data_recovery_plan(
     assert '"scope": "query_level_plan"' in captured.out
     assert '"suggested_repairs"' in captured.out
     assert '"align_key_field_values"' in captured.out
+    assert '"workspace_recovery"' in captured.out
+    assert '"scope": "workspace_minimum_recovery"' in captured.out
 
 
 def test_cli_problem_replay_reports_unsupported_for_data_problem(

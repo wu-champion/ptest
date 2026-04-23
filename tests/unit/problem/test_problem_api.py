@@ -55,10 +55,13 @@ def test_api_exposes_problem_records(tmp_path: Path, monkeypatch) -> None:
     assert detail["data"]["metadata"]["capabilities"]["can_replay"] is True
     assert detail["data"]["metadata"]["capabilities"]["can_recover"] is True
     assert detail["data"]["capabilities"]["can_replay"] is True
-    assert detail["data"]["preservation"]["status"] == "partial"
+    assert detail["data"]["preservation"]["status"] == "success"
     assert detail["problem"]["investigation"]["view"] == "problem"
     assert detail["problem"]["investigation"]["request"]["url"] == (
         "https://example.test/api/demo"
+    )
+    assert detail["problem"]["investigation"]["workspace_recovery"]["scope"] == (
+        "workspace_minimum_recovery"
     )
 
     assets = api.get_problem_assets(problem_id)
@@ -113,6 +116,9 @@ def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
     assert detail["problem"]["investigation"]["boundary"]["scope"] == (
         "query_level_plan"
     )
+    assert detail["problem"]["investigation"]["workspace_recovery"]["scope"] == (
+        "workspace_minimum_recovery"
+    )
 
     recovery = api.recover_problem(problems["data"][0]["problem_id"])
     assert recovery["success"] is True
@@ -127,6 +133,12 @@ def test_api_exposes_data_problem_recovery_plan(tmp_path: Path) -> None:
     assert recovery["data"]["boundary"]["needs_historical_state"] is False
     assert recovery["data"]["suggested_repairs"][0]["action"] == (
         "align_key_field_values"
+    )
+    assert recovery["data"]["workspace_recovery"]["scope"] == (
+        "workspace_minimum_recovery"
+    )
+    assert recovery["data"]["workspace_recovery"]["recovery_boundary"]["scope"] == (
+        "workspace_minimum_recovery"
     )
     assert recovery["recovery_action"]["action_type"] == "recover"
 

@@ -11,6 +11,8 @@ from ptest.app import WorkflowService
 from ptest.cases.result import TestCaseResult
 from ptest.models import (
     ManagedObjectRecord,
+    OBJECT_STATUS_INSTALLED,
+    OBJECT_STATUS_RUNNING,
     OBJECT_STATUS_START_FAILED_PRESERVED,
     ProblemAssetRecord,
     ProblemRecord,
@@ -353,6 +355,13 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     }
     assert recovery["recovery"]["suggested_repairs"][0]["action"] == (
         "align_key_field_values"
+    )
+    assert recovery["recovery"]["workspace_recovery"]["scope"] == (
+        "workspace_minimum_recovery"
+    )
+    assert recovery["recovery"]["workspace_recovery"]["affected_objects"] == []
+    assert recovery["recovery"]["workspace_recovery"]["recovery_boundary"]["scope"] == (
+        "workspace_minimum_recovery"
     )
     assert recovery["recovery"]["next_actions"][1]["action"] == (
         "rerun_preserved_query_manually"
@@ -701,6 +710,12 @@ def test_workflow_service_preserves_service_runtime_problem(tmp_path: Path) -> N
     assert recovery["recovery"]["next_actions"][0]["action"] == (
         "inspect_recent_runtime_logs"
     )
+    assert recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+        "object_name"
+    ] == "demo_service"
+    assert recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+        "recommended_action"
+    ] == "reinstall"
 
 
 def test_workflow_service_classifies_start_failed_service_runtime_problem(
@@ -895,6 +910,12 @@ def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
     assert recovery["recovery"]["recommended_checks"][0]["purpose"] == (
         "inspect_dump_refs"
     )
+    assert recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+        "object_name"
+    ] == "demo_service"
+    assert recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+        "recommended_action"
+    ] == "reinstall"
 
 
 def test_workflow_service_auto_discovers_new_crash_dump_refs(
@@ -1016,3 +1037,87 @@ def test_workflow_service_returns_minimal_recovery_for_crash_dump_problem(
     assert recovery["recovery"]["problem_type"] == "crash_dump"
     assert recovery["recovery"]["mode"] == "preservation_only"
     assert recovery["recovery"]["dump_refs"] == ["core.001"]
+
+
+def test_workflow_service_workspace_recovery_maps_actions_for_problem_types(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.upsert_object(
+        ManagedObjectRecord(
+            name="api_service",
+            type_name="service",
+            status=OBJECT_STATUS_RUNNING,
+            installed=True,
+        )
+    )
+    service.storage.upsert_object(
+        ManagedObjectRecord(
+            name="mysql_service",
+            type_name="database",
+            status=OBJECT_STATUS_INSTALLED,
+            installed=True,
+        )
+    )
+    service.storage.upsert_object(
+        ManagedObjectRecord(
+            name="runtime_service",
+            type_name="service",
+            status=OBJECT_STATUS_RUNNING,
+            installed=True,
+        )
+    )
+    service.storage.upsert_object(
+        ManagedObjectRecord(
+            name="crash_service",
+            type_name="service",
+            status=OBJECT_STATUS_RUNNING,
+            installed=True,
+        )
+    )
+
+    for problem_id, problem_type, object_name in [
+        ("problem_api_001", "api_response", "api_service"),
+        ("problem_data_001", "data_state", "mysql_service"),
+        ("problem_runtime_001", "service_runtime", "runtime_service"),
+        ("problem_crash_002", "crash_dump", "crash_service"),
+    ]:
+        service.storage.save_problem_record(
+            ProblemRecord(
+                problem_id=problem_id,
+                problem_type=problem_type,
+                summary=f"{problem_type} problem",
+                object_refs=[object_name],
+            )
+        )
+        service.storage.save_problem_assets(
+            ProblemAssetRecord(
+                problem_id=problem_id,
+                problem_type=problem_type,
+                summary=f"{problem_type} problem",
+                object_refs=[object_name],
+                recovery={"supported": False, "mode": "plan_only"},
+                details={},
+            )
+        )
+
+    api_recovery = service.recover_problem("problem_api_001")
+    assert api_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+        "recommended_action"
+    ] == "restart"
+
+    data_recovery = service.recover_problem("problem_data_001")
+    assert data_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+        "recommended_action"
+    ] == "reset"
+
+    runtime_recovery = service.recover_problem("problem_runtime_001")
+    assert runtime_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+        "recommended_action"
+    ] == "restart"
+
+    crash_recovery = service.recover_problem("problem_crash_002")
+    assert crash_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+        "recommended_action"
+    ] == "restart"
