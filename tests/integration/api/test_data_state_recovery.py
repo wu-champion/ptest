@@ -148,3 +148,72 @@ def test_data_state_missing_rows_exposes_minimal_repair_hints(
         "insert_minimal_required_rows"
     )
     assert recovery["recovery"]["next_actions"][2]["action"] == "restore_missing_rows"
+
+
+def test_data_state_recovery_exposes_side_effect_hints_for_prior_mutation(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "orders.db"
+    _prepare_orders_db(db_path)
+
+    api = PTestAPI(work_path=tmp_path / "workspace_side_effect")
+    api.init_environment()
+
+    mutate = api.create_test_case(
+        "database",
+        "sqlite_mutate_order_state",
+        content={
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "query": "UPDATE orders SET state = 'pending' WHERE id = 'ORD-200'",
+        },
+    )
+    mutate_case_id = mutate["data"]["case_id"]
+    assert api.run_test_case(mutate_case_id)["success"] is True
+
+    verify = api.create_test_case(
+        "database",
+        "sqlite_order_after_side_effect",
+        content={
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "query": "SELECT id, state FROM orders WHERE id = 'ORD-200'",
+            "expected_result": [{"id": "ORD-200", "state": "ready"}],
+        },
+    )
+    verify_case_id = verify["data"]["case_id"]
+    run_result = api.run_test_case(verify_case_id)
+    assert run_result["success"] is False
+
+    problems = api.list_problem_records(case_id=verify_case_id, problem_type="data_state")
+    assert problems["count"] == 1
+    problem_id = problems["data"][0]["problem_id"]
+
+    assets = api.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert assets["assets"]["investigation"]["side_effect"]["classification"] == (
+        "possible_data_pollution"
+    )
+    assert (
+        assets["assets"]["investigation"]["side_effect"]["likely_trigger_case_id"]
+        == mutate_case_id
+    )
+    assert (
+        assets["assets"]["investigation"]["environment_recovery"]["assessment"]
+        == "environment_may_have_shifted_by_prior_case"
+    )
+
+    recovery = api.recover_problem(problem_id)
+    assert recovery["success"] is True
+    assert recovery["recovery"]["side_effect_hints"]["classification"] == (
+        "possible_data_pollution"
+    )
+    assert recovery["recovery"]["side_effect_hints"]["likely_trigger_case_id"] == (
+        mutate_case_id
+    )
+    assert recovery["recovery"]["environment_recovery"]["scope"] == (
+        "workspace_side_effect_minimum_recovery"
+    )
+    assert recovery["recovery"]["environment_recovery"]["recommended_sequence"][0] == (
+        "inspect_likely_trigger_case_effects"
+    )

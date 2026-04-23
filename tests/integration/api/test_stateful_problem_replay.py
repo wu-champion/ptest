@@ -226,6 +226,40 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
             ][1]["action"]
             == "rerun_candidate_predecessors_before_replay"
         )
+        assert (
+            assets["assets"]["reproduction_summary"]["side_effect_hints"][
+                "classification"
+            ]
+            == "possible_request_side_effect"
+        )
+        assert (
+            assets["assets"]["reproduction_summary"]["side_effect_hints"][
+                "likely_trigger_case_id"
+            ]
+            == enable_case_id
+        )
+        assert assets["assets"]["investigation"]["side_effect"]["classification"] == (
+            "possible_request_side_effect"
+        )
+        assert (
+            assets["assets"]["investigation"]["environment_recovery"]["assessment"]
+            == "environment_may_have_shifted_by_prior_case"
+        )
+
+        recovery = api.recover_problem(problem_id)
+        assert recovery["success"] is True
+        assert recovery["recovery"]["side_effect_hints"]["classification"] == (
+            "possible_request_side_effect"
+        )
+        assert recovery["recovery"]["side_effect_hints"]["likely_trigger_case_id"] == (
+            enable_case_id
+        )
+        assert recovery["recovery"]["environment_recovery"]["scope"] == (
+            "workspace_side_effect_minimum_recovery"
+        )
+        assert recovery["recovery"]["environment_recovery"]["recommended_sequence"][
+            0
+        ] == "inspect_likely_trigger_case_effects"
 
         replay = api.replay_problem(problem_id)
         assert replay["success"] is True

@@ -78,9 +78,20 @@ def test_api_exposes_problem_records(tmp_path: Path, monkeypatch) -> None:
         f"ptest problem assets {problem_id}",
         f"ptest problem replay {problem_id}",
     ]
+    assert (
+        assets["assets"]["reproduction_summary"]["side_effect_hints"]["classification"]
+        == "no_recent_side_effect_signal"
+    )
     assert assets["assets"]["investigation"]["view"] == "assets"
     assert assets["assets"]["investigation"]["request"]["url"] == (
         "https://example.test/api/demo"
+    )
+    assert assets["assets"]["investigation"]["side_effect"]["classification"] == (
+        "no_recent_side_effect_signal"
+    )
+    assert (
+        assets["assets"]["investigation"]["environment_recovery"]["assessment"]
+        == "no_prior_side_effect_signal_detected"
     )
 
 

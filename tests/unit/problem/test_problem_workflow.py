@@ -10,6 +10,7 @@ import pytest
 from ptest.app import WorkflowService
 from ptest.cases.result import TestCaseResult
 from ptest.models import (
+    ExecutionRecord,
     ManagedObjectRecord,
     OBJECT_STATUS_INSTALLED,
     OBJECT_STATUS_RUNNING,
@@ -1121,3 +1122,114 @@ def test_workflow_service_workspace_recovery_maps_actions_for_problem_types(
     assert crash_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
         "recommended_action"
     ] == "restart"
+
+
+def test_workflow_service_runtime_recovery_exposes_side_effect_hints(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_execution(
+        ExecutionRecord(
+            execution_id="exec_prev_runtime",
+            case_id="mutate_runtime_case",
+            status="passed",
+            duration=0.1,
+            start_time="2026-04-23T10:00:00",
+            end_time="2026-04-23T10:00:01",
+        )
+    )
+    service.storage.save_execution(
+        ExecutionRecord(
+            execution_id="exec_runtime_failure",
+            case_id="runtime_check_case",
+            status="failed",
+            duration=0.1,
+            start_time="2026-04-23T10:00:02",
+            end_time="2026-04-23T10:00:03",
+            error_message="Service demo_runtime_service is not reachable at 127.0.0.1:45678",
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="problem_runtime_side_effect",
+            problem_type="service_runtime",
+            summary="runtime problem after side effect",
+            execution_id="exec_runtime_failure",
+            case_id="runtime_check_case",
+            object_refs=["demo_runtime_service"],
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="problem_runtime_side_effect",
+            problem_type="service_runtime",
+            summary="runtime problem after side effect",
+            execution_id="exec_runtime_failure",
+            case_id="runtime_check_case",
+            object_refs=["demo_runtime_service"],
+            recovery={
+                "supported": False,
+                "mode": "runtime_level_plan",
+                "failure_kind": "port_unreachable",
+                "runtime_target": {
+                    "service_name": "demo_runtime_service",
+                    "object_name": "demo_runtime_service",
+                },
+                "runtime_hints": {
+                    "failure_kind": "port_unreachable",
+                    "check_type": "port",
+                    "connectable": False,
+                },
+                "boundary": {
+                    "scope": "runtime_level_plan",
+                    "assessment": "endpoint_or_healthcheck_failure",
+                },
+            },
+            details={
+                "service": {
+                    "service_name": "demo_runtime_service",
+                    "host": "127.0.0.1",
+                    "port": 45678,
+                    "check_type": "port",
+                },
+                "runtime_result": {
+                    "status": "failed",
+                    "error": "not reachable",
+                },
+                "failure_kind": "port_unreachable",
+            },
+        )
+    )
+
+    detail = service.get_problem_record("problem_runtime_side_effect")
+    assert detail["success"] is True
+    assert detail["problem"]["investigation"]["side_effect"]["classification"] == (
+        "possible_runtime_destabilization"
+    )
+    assert (
+        detail["problem"]["investigation"]["side_effect"]["likely_trigger_case_id"]
+        == "mutate_runtime_case"
+    )
+    assert detail["problem"]["investigation"]["environment_recovery"]["scope"] == (
+        "workspace_side_effect_minimum_recovery"
+    )
+    assert (
+        detail["problem"]["investigation"]["environment_recovery"]["assessment"]
+        == "environment_may_have_shifted_by_prior_case"
+    )
+
+    recovery = service.recover_problem("problem_runtime_side_effect")
+    assert recovery["success"] is True
+    assert recovery["recovery"]["side_effect_hints"]["classification"] == (
+        "possible_runtime_destabilization"
+    )
+    assert recovery["recovery"]["side_effect_hints"]["likely_trigger_case_id"] == (
+        "mutate_runtime_case"
+    )
+    assert recovery["recovery"]["environment_recovery"]["scope"] == (
+        "workspace_side_effect_minimum_recovery"
+    )
+    assert recovery["recovery"]["environment_recovery"]["recommended_sequence"][0] == (
+        "inspect_likely_trigger_case_effects"
+    )

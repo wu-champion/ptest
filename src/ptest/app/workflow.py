@@ -5080,7 +5080,7 @@ class WorkflowService:
                 recommended_actions = boundary.get("recommended_actions")
                 if isinstance(recommended_actions, list):
                     investigation["next_actions"] = recommended_actions
-        investigation["workspace_recovery"] = self._build_workspace_recovery_plan(
+        workspace_recovery = self._build_workspace_recovery_plan(
             problem_id=problem_id,
             problem_type=str(payload.get("problem_type", "")),
             object_refs=payload.get("object_refs", [])
@@ -5093,6 +5093,29 @@ class WorkflowService:
             if isinstance(payload.get("recovery"), dict)
             else {},
         )
+        investigation["workspace_recovery"] = workspace_recovery
+        side_effect_hints = self._build_problem_side_effect_hints(
+            problem_type=str(payload.get("problem_type", "")),
+            execution_id=str(payload.get("execution_id", "")),
+            case_id=str(payload.get("case_id", "")),
+            details=payload.get("details", {})
+            if isinstance(payload.get("details"), dict)
+            else {},
+            recovery=payload.get("recovery", {})
+            if isinstance(payload.get("recovery"), dict)
+            else {},
+        )
+        if side_effect_hints:
+            investigation["side_effect"] = self._build_problem_side_effect_digest(
+                side_effect_hints
+            )
+            investigation["environment_recovery"] = (
+                self._build_environment_recovery_from_side_effect(
+                    problem_type=str(payload.get("problem_type", "")),
+                    side_effect_hints=side_effect_hints,
+                    workspace_recovery=workspace_recovery,
+                )
+            )
         investigation.setdefault("next_actions", [])
         return investigation
 
@@ -5324,6 +5347,140 @@ class WorkflowService:
             "recommended_actions": dependency_hints.get("recommended_actions", []),
         }
 
+    def _build_problem_side_effect_hints(
+        self,
+        *,
+        problem_type: str,
+        execution_id: str,
+        case_id: str,
+        details: dict[str, Any],
+        recovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        if problem_type not in {"api_response", "service_runtime", "data_state"}:
+            return {}
+
+        dependency_hints = self._build_problem_dependency_hints(
+            execution_id=execution_id,
+            case_id=case_id,
+        )
+        signal_strength = str(dependency_hints.get("signal_strength", "none"))
+        candidate_case_ids = dependency_hints.get("candidate_case_ids", [])
+        immediate_predecessor = dependency_hints.get("immediate_predecessor")
+        environment_shift_detected = signal_strength != "none" and (
+            bool(candidate_case_ids) or isinstance(immediate_predecessor, dict)
+        )
+        likely_trigger_case_id = (
+            immediate_predecessor.get("case_id")
+            if isinstance(immediate_predecessor, dict)
+            else None
+        )
+
+        if environment_shift_detected:
+            if problem_type == "api_response":
+                classification = "possible_request_side_effect"
+                reason = (
+                    "recent preceding cases may have changed remote service state "
+                    "before the preserved request failed"
+                )
+            elif problem_type == "data_state":
+                classification = "possible_data_pollution"
+                reason = (
+                    "recent preceding cases may have changed persisted data state "
+                    "before the preserved query failed"
+                )
+            else:
+                classification = "possible_runtime_destabilization"
+                reason = (
+                    "recent preceding cases may have destabilized the target "
+                    "service before the preserved runtime check failed"
+                )
+        else:
+            classification = "no_recent_side_effect_signal"
+            reason = (
+                "no recent execution sequence strongly suggests a prior test-side "
+                "effect for the preserved failure"
+            )
+
+        return {
+            **dependency_hints,
+            "classification": classification,
+            "environment_shift_detected": environment_shift_detected,
+            "likely_trigger_case_id": likely_trigger_case_id,
+            "reason": reason,
+            "problem_scope": problem_type,
+            "runtime_failure_kind": recovery.get("failure_kind")
+            if problem_type == "service_runtime"
+            else None,
+            "request_url": details.get("request", {}).get("url")
+            if isinstance(details.get("request"), dict)
+            else None,
+        }
+
+    def _build_problem_side_effect_digest(
+        self, side_effect_hints: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "classification": side_effect_hints.get("classification"),
+            "signal_strength": side_effect_hints.get("signal_strength", "none"),
+            "environment_shift_detected": side_effect_hints.get(
+                "environment_shift_detected", False
+            ),
+            "likely_trigger_case_id": side_effect_hints.get("likely_trigger_case_id"),
+            "candidate_case_ids": side_effect_hints.get("candidate_case_ids", []),
+            "immediate_predecessor": side_effect_hints.get("immediate_predecessor"),
+            "reason": side_effect_hints.get("reason"),
+        }
+
+    def _build_environment_recovery_from_side_effect(
+        self,
+        *,
+        problem_type: str,
+        side_effect_hints: dict[str, Any],
+        workspace_recovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        signal_strength = str(side_effect_hints.get("signal_strength", "none"))
+        environment_shift_detected = bool(
+            side_effect_hints.get("environment_shift_detected", False)
+        )
+        likely_trigger_case_id = side_effect_hints.get("likely_trigger_case_id")
+        confidence = {
+            "recent_sequence": "medium_for_recent_sequence_signal",
+            "same_case_history": "low_for_same_case_history_only",
+        }.get(signal_strength, "low_when_side_effect_signal_is_sparse")
+        assessment = (
+            "environment_may_have_shifted_by_prior_case"
+            if environment_shift_detected
+            else "no_prior_side_effect_signal_detected"
+        )
+        recommended_sequence: list[str] = []
+        if isinstance(likely_trigger_case_id, str) and likely_trigger_case_id:
+            recommended_sequence.append("inspect_likely_trigger_case_effects")
+        workspace_sequence = workspace_recovery.get("recommended_sequence", [])
+        if isinstance(workspace_sequence, list):
+            recommended_sequence.extend(
+                str(item) for item in workspace_sequence if isinstance(item, str)
+            )
+        recommended_sequence.append("rerun_affected_case_after_baseline_restore")
+        return {
+            "scope": "workspace_side_effect_minimum_recovery",
+            "assessment": assessment,
+            "confidence": confidence,
+            "problem_scope": problem_type,
+            "likely_trigger_case_id": likely_trigger_case_id,
+            "affected_objects": workspace_recovery.get("affected_objects", []),
+            "recommended_sequence": recommended_sequence,
+            "reason": side_effect_hints.get("reason"),
+            "recovery_boundary": {
+                "scope": "workspace_side_effect_minimum_recovery",
+                "does_not_cover": [
+                    "automatic_environment_rollback",
+                    "snapshot_restore",
+                    "container_level_recovery",
+                    "multi_service_side_effect_recovery",
+                ],
+            },
+        }
+
     def _build_problem_recommended_commands(self, problem_id: str) -> list[str]:
         if not problem_id:
             return []
@@ -5450,6 +5607,15 @@ class WorkflowService:
             execution_id=str(payload.get("execution_id", "")),
             case_id=str(payload.get("case_id", "")),
         )
+        side_effect_hints = self._build_problem_side_effect_hints(
+            problem_type="api_response",
+            execution_id=str(payload.get("execution_id", "")),
+            case_id=str(payload.get("case_id", "")),
+            details=details,
+            recovery=payload.get("recovery", {})
+            if isinstance(payload.get("recovery"), dict)
+            else {},
+        )
         observed_failure = {
             "status_code": response.get("observed_status_code"),
             "body": response.get("observed_body"),
@@ -5474,6 +5640,7 @@ class WorkflowService:
                 "missing_assets": preservation.get("missing_assets", []),
             },
             "dependency_hints": dependency_hints,
+            "side_effect_hints": side_effect_hints,
             "recommended_commands": self._build_problem_recommended_commands(
                 str(payload.get("problem_id", ""))
             ),
@@ -5532,6 +5699,22 @@ class WorkflowService:
             details=assets.details if isinstance(assets.details, dict) else {},
             recovery=assets.recovery if isinstance(assets.recovery, dict) else {},
         )
+        side_effect_hints = self._build_problem_side_effect_hints(
+            problem_type=record.problem_type,
+            execution_id=record.execution_id,
+            case_id=record.case_id,
+            details=assets.details if isinstance(assets.details, dict) else {},
+            recovery=assets.recovery if isinstance(assets.recovery, dict) else {},
+        )
+        if side_effect_hints:
+            recovery_plan["side_effect_hints"] = side_effect_hints
+            recovery_plan["environment_recovery"] = (
+                self._build_environment_recovery_from_side_effect(
+                    problem_type=record.problem_type,
+                    side_effect_hints=side_effect_hints,
+                    workspace_recovery=recovery_plan["workspace_recovery"],
+                )
+            )
         return recovery_plan
 
     def _build_workspace_recovery_plan(
