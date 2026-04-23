@@ -1040,6 +1040,106 @@ def test_workflow_service_returns_minimal_recovery_for_crash_dump_problem(
     assert recovery["recovery"]["dump_refs"] == ["core.001"]
 
 
+def test_workflow_crash_dump_recovery_exposes_side_effect_hints(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_execution(
+        ExecutionRecord(
+            execution_id="exec_prev_crash",
+            case_id="mutate_crash_case",
+            status="passed",
+            duration=0.1,
+            start_time="2026-04-23T11:00:00",
+            end_time="2026-04-23T11:00:01",
+        )
+    )
+    service.storage.save_execution(
+        ExecutionRecord(
+            execution_id="exec_crash_failure",
+            case_id="crash_check_case",
+            status="failed",
+            duration=0.1,
+            start_time="2026-04-23T11:00:02",
+            end_time="2026-04-23T11:00:03",
+            error_message="service exited unexpectedly and produced a crash dump",
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="problem_crash_side_effect",
+            problem_type="crash_dump",
+            summary="crash dump after side effect",
+            execution_id="exec_crash_failure",
+            case_id="crash_check_case",
+            object_refs=["demo_crash_service"],
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="problem_crash_side_effect",
+            problem_type="crash_dump",
+            summary="crash dump after side effect",
+            execution_id="exec_crash_failure",
+            case_id="crash_check_case",
+            object_refs=["demo_crash_service"],
+            recovery={
+                "supported": True,
+                "mode": "crash_dump_investigation",
+                "dump_refs": [{"path": str(tmp_path / "demo.core"), "exists": True}],
+                "crash_target": {
+                    "service_name": "demo_crash_service",
+                    "object_name": "demo_crash_service",
+                },
+                "boundary": {
+                    "scope": "crash_asset_preservation",
+                    "assessment": "dump_refs_preserved_for_followup_analysis",
+                },
+            },
+            details={
+                "crash_target": {
+                    "service_name": "demo_crash_service",
+                    "object_name": "demo_crash_service",
+                },
+                "dump_refs": [{"path": str(tmp_path / "demo.core"), "exists": True}],
+                "crash_event": {
+                    "execution_status": "failed",
+                    "error": "segmentation fault",
+                },
+            },
+        )
+    )
+
+    detail = service.get_problem_record("problem_crash_side_effect")
+    assert detail["success"] is True
+    assert detail["problem"]["investigation"]["side_effect"]["classification"] == (
+        "possible_crash_inducing_side_effect"
+    )
+    assert detail["problem"]["investigation"]["side_effect"][
+        "likely_trigger_case_id"
+    ] == "mutate_crash_case"
+    assert (
+        detail["problem"]["investigation"]["environment_recovery"]["assessment"]
+        == "environment_may_have_shifted_by_prior_case"
+    )
+
+    recovery = service.recover_problem("problem_crash_side_effect")
+    assert recovery["success"] is True
+    assert recovery["recovery"]["side_effect_hints"]["classification"] == (
+        "possible_crash_inducing_side_effect"
+    )
+    assert recovery["recovery"]["side_effect_hints"]["likely_trigger_case_id"] == (
+        "mutate_crash_case"
+    )
+    assert recovery["recovery"]["environment_recovery"]["scope"] == (
+        "workspace_side_effect_minimum_recovery"
+    )
+    assert recovery["recovery"]["environment_recovery"]["recommended_sequence"][0] == (
+        "inspect_likely_trigger_case_effects"
+    )
+
+
 def test_workflow_service_workspace_recovery_maps_actions_for_problem_types(
     tmp_path: Path,
 ) -> None:

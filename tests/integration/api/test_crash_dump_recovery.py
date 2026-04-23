@@ -114,3 +114,75 @@ def test_crash_dump_problem_preserves_dump_refs_and_recovery_plan(tmp_path) -> N
         "inspect_dump_refs"
     )
     assert recovery["recovery"]["next_actions"][0]["action"] == "inspect_dump_refs"
+
+
+def test_crash_dump_problem_exposes_side_effect_hints_for_prior_trigger(tmp_path) -> None:
+    port = _find_free_port()
+    dump_path = tmp_path / "side_effect_demo_service.core"
+    service = _OneShotCrashService("127.0.0.1", port, dump_path)
+    service.start()
+
+    api = PTestAPI(work_path=tmp_path / "workspace_crash_dump_side_effect")
+    api.init_environment()
+    trigger = api.create_test_case(
+        "service",
+        "service_crash_trigger_case",
+        content={
+            "service_name": "demo_crash_service",
+            "check_type": "port",
+            "host": "127.0.0.1",
+            "port": port,
+            "timeout": 1,
+            "expected_runtime_state": "running",
+        },
+    )
+    trigger_case_id = trigger["data"]["case_id"]
+    trigger_result = api.run_test_case(trigger_case_id)
+    assert trigger_result["success"] is True
+    assert service.is_stopped() is True
+    assert dump_path.exists() is True
+
+    crash_check = api.create_test_case(
+        "service",
+        "service_crash_side_effect_check",
+        content={
+            "service_name": "demo_crash_service",
+            "check_type": "port",
+            "host": "127.0.0.1",
+            "port": port,
+            "timeout": 1,
+            "expected_runtime_state": "running",
+            "dump_paths": [str(dump_path)],
+        },
+    )
+    crash_case_id = crash_check["data"]["case_id"]
+    crash_result = api.run_test_case(crash_case_id)
+    assert crash_result["success"] is False
+
+    problems = api.list_problem_records(case_id=crash_case_id, problem_type="crash_dump")
+    assert problems["count"] == 1
+    problem_id = problems["data"][0]["problem_id"]
+
+    assets = api.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert assets["assets"]["investigation"]["side_effect"]["classification"] == (
+        "possible_crash_inducing_side_effect"
+    )
+    assert assets["assets"]["investigation"]["side_effect"][
+        "likely_trigger_case_id"
+    ] == trigger_case_id
+    assert assets["assets"]["investigation"]["environment_recovery"]["assessment"] == (
+        "environment_may_have_shifted_by_prior_case"
+    )
+
+    recovery = api.recover_problem(problem_id)
+    assert recovery["success"] is True
+    assert recovery["recovery"]["side_effect_hints"]["classification"] == (
+        "possible_crash_inducing_side_effect"
+    )
+    assert recovery["recovery"]["side_effect_hints"]["likely_trigger_case_id"] == (
+        trigger_case_id
+    )
+    assert recovery["recovery"]["environment_recovery"]["scope"] == (
+        "workspace_side_effect_minimum_recovery"
+    )

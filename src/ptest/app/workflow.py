@@ -5356,7 +5356,12 @@ class WorkflowService:
         details: dict[str, Any],
         recovery: dict[str, Any],
     ) -> dict[str, Any]:
-        if problem_type not in {"api_response", "service_runtime", "data_state"}:
+        if problem_type not in {
+            "api_response",
+            "service_runtime",
+            "data_state",
+            "crash_dump",
+        }:
             return {}
 
         dependency_hints = self._build_problem_dependency_hints(
@@ -5388,6 +5393,12 @@ class WorkflowService:
                     "recent preceding cases may have changed persisted data state "
                     "before the preserved query failed"
                 )
+            elif problem_type == "crash_dump":
+                classification = "possible_crash_inducing_side_effect"
+                reason = (
+                    "recent preceding cases may have destabilized the target "
+                    "service before the preserved crash dump was captured"
+                )
             else:
                 classification = "possible_runtime_destabilization"
                 reason = (
@@ -5410,6 +5421,10 @@ class WorkflowService:
             "problem_scope": problem_type,
             "runtime_failure_kind": recovery.get("failure_kind")
             if problem_type == "service_runtime"
+            else None,
+            "crash_target_service_name": details.get("crash_target", {}).get("service_name")
+            if problem_type == "crash_dump"
+            and isinstance(details.get("crash_target"), dict)
             else None,
             "request_url": details.get("request", {}).get("url")
             if isinstance(details.get("request"), dict)
