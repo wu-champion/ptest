@@ -1228,11 +1228,15 @@ class WorkflowService:
             case_id,
             params=params,
         )
+        crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
+            case_definition
+        )
         self._persist_execution(
             case_id,
             result,
             case_manager,
             case_definition_override=case_definition,
+            crash_snapshot_before=crash_snapshot_before,
         )
         payload = self._result_payload(result)
         payload["message"] = (
@@ -1290,11 +1294,15 @@ class WorkflowService:
                 if isinstance(case_result, tuple) and len(case_result) == 2:
                     case_result, case_definition = case_result
                 if isinstance(case_result, TestCaseResult):
+                    crash_snapshot_before = (
+                        self._capture_workspace_crash_dump_snapshot(case_definition)
+                    )
                     self._persist_execution(
                         case_result.case_id,
                         case_result,
                         case_manager,
                         case_definition_override=case_definition,
+                        crash_snapshot_before=crash_snapshot_before,
                     )
                     results.append(self._result_payload(case_result))
             return self._summarize_results(results)
@@ -1321,11 +1329,15 @@ class WorkflowService:
             if isinstance(case_result, tuple) and len(case_result) == 2:
                 case_result, case_definition = case_result
             if isinstance(case_result, TestCaseResult):
+                crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
+                    case_definition
+                )
                 self._persist_execution(
                     case_result.case_id,
                     case_result,
                     case_manager,
                     case_definition_override=case_definition,
+                    crash_snapshot_before=crash_snapshot_before,
                 )
                 results.append(self._result_payload(case_result))
         return self._summarize_results(results)
@@ -3071,11 +3083,15 @@ class WorkflowService:
         result: TestCaseResult,
         case_manager: CaseManager,
         case_definition_override: dict[str, Any] | None = None,
+        crash_snapshot_before: dict[str, Any] | None = None,
     ) -> ExecutionRecord:
         execution_id = f"{case_id}_{uuid.uuid4().hex[:12]}"
         environment = self.get_environment_status()
         objects = self.list_objects()
         case_definition = case_definition_override or case_manager.get_case(case_id)
+        crash_snapshot_after = self._capture_workspace_crash_dump_snapshot(
+            case_definition
+        )
         result_payload = self._result_payload(result)
         record = ExecutionRecord(
             execution_id=execution_id,
@@ -3090,6 +3106,14 @@ class WorkflowService:
                 "environment": environment,
                 "objects": objects,
                 "case": case_definition,
+                "crash_capture": {
+                    "before": crash_snapshot_before or {},
+                    "after": crash_snapshot_after,
+                    "new_dump_refs": self._detect_new_crash_dump_refs(
+                        crash_snapshot_before or {},
+                        crash_snapshot_after,
+                    ),
+                },
             },
         )
         artifacts = self.storage.save_execution_artifacts(
@@ -3101,9 +3125,16 @@ class WorkflowService:
             output=result.output,
         )
         record.metadata["artifacts"] = artifacts
-        record.metadata["artifacts"] = self.storage.save_execution_artifact_record(
-            record
+        artifact_index = self.storage.save_execution_artifact_record(record)
+        artifact_index.setdefault("indexes", {})
+        artifact_index["indexes"]["log_index"] = artifact_index["indexes"].get(
+            "log_index",
+            str(self.storage.artifacts_dir / execution_id / "logs" / "log_index.json"),
         )
+        artifact_index["log_index"] = (
+            self.storage.get_execution_log_index(execution_id) or {}
+        )
+        record.metadata["artifacts"] = artifact_index
         record = self.storage.save_execution(record)
         self._preserve_problem_for_execution(record)
         return record
@@ -3155,6 +3186,7 @@ class WorkflowService:
             self._is_api_problem_candidate(case_payload)
             or self._is_data_problem_candidate(case_payload)
             or self._is_service_runtime_problem_candidate(case_payload)
+            or self._has_new_crash_dump_refs(record.metadata.get("crash_capture"))
         ):
             return
 
@@ -3181,6 +3213,7 @@ class WorkflowService:
             object_refs=object_refs,
             artifact_refs=artifact_refs,
             log_refs=log_refs,
+            crash_capture=record.metadata.get("crash_capture"),
         )
         if built is None:
             return
@@ -3302,8 +3335,11 @@ class WorkflowService:
         object_refs: list[str],
         artifact_refs: dict[str, Any],
         log_refs: dict[str, Any],
+        crash_capture: Any = None,
     ) -> tuple[ProblemRecord, ProblemAssetRecord] | None:
-        if self._is_crash_dump_problem_candidate(case_payload):
+        if self._is_crash_dump_problem_candidate(case_payload) or self._has_new_crash_dump_refs(
+            crash_capture
+        ):
             return self._build_crash_dump_problem_records(
                 record,
                 case_payload=case_payload,
@@ -3311,6 +3347,7 @@ class WorkflowService:
                 object_refs=object_refs,
                 artifact_refs=artifact_refs,
                 log_refs=log_refs,
+                crash_capture=crash_capture,
             )
         if self._is_api_problem_candidate(case_payload):
             return self._build_api_problem_records(
@@ -3635,6 +3672,7 @@ class WorkflowService:
         object_refs: list[str],
         artifact_refs: dict[str, Any],
         log_refs: dict[str, Any],
+        crash_capture: Any = None,
     ) -> tuple[ProblemRecord, ProblemAssetRecord]:
         summary = self._build_crash_dump_problem_summary(record)
         problem_id = f"problem_{record.execution_id}"
@@ -3648,7 +3686,12 @@ class WorkflowService:
         ):
             runtime_object_refs.append(service_name)
 
-        dump_refs = self._build_crash_dump_refs(case_payload)
+        dump_refs = self._merge_crash_dump_refs(
+            self._build_crash_dump_refs(case_payload),
+            self._extract_new_crash_dump_refs(crash_capture),
+        )
+        object_summary = self._build_crash_dump_object_summary(service_name)
+        log_window = self._build_crash_dump_log_window(log_refs)
         crash_target = {
             "service_name": service_name,
             "object_name": service_name,
@@ -3662,6 +3705,8 @@ class WorkflowService:
             "mode": "crash_dump_investigation",
             "crash_target": crash_target,
             "dump_refs": dump_refs,
+            "object_summary": object_summary,
+            "log_window": log_window,
             "boundary": boundary,
             "recommended_checks": self._build_crash_dump_recommended_checks(
                 dump_refs=dump_refs,
@@ -3686,6 +3731,9 @@ class WorkflowService:
                 "check_type": case_payload.get("check_type", "port"),
             },
             "dump_refs": dump_refs,
+            "object_summary": object_summary,
+            "log_window": log_window,
+            "crash_capture": crash_capture if isinstance(crash_capture, dict) else {},
             "case": case_payload,
         }
         preservation = self._build_preservation_summary(
@@ -3790,6 +3838,140 @@ class WorkflowService:
                 }
             )
         return refs
+
+    def _capture_workspace_crash_dump_snapshot(
+        self,
+        case_definition: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        case_payload = (
+            self._unwrap_case_definition(case_definition)
+            if isinstance(case_definition, dict)
+            else {}
+        )
+        directories = self._resolve_crash_dump_watch_directories(case_payload)
+        refs: list[dict[str, Any]] = []
+        for directory in directories:
+            refs.extend(self._scan_crash_dump_directory(directory))
+        return {
+            "captured_at": datetime.now().isoformat(),
+            "directories": directories,
+            "dump_refs": refs,
+        }
+
+    def _resolve_crash_dump_watch_directories(
+        self,
+        case_payload: dict[str, Any],
+    ) -> list[str]:
+        directories: list[str] = []
+        environment = self.storage.load_environment()
+        if environment and isinstance(environment.metadata, dict):
+            env_crash_capture = environment.metadata.get("crash_capture", {})
+            if isinstance(env_crash_capture, dict):
+                dump_dir = env_crash_capture.get("dump_dir")
+                if isinstance(dump_dir, str) and dump_dir:
+                    directories.append(str(Path(dump_dir).expanduser().resolve()))
+
+        target_name = case_payload.get("object_name") or case_payload.get("service_name")
+        if isinstance(target_name, str) and target_name:
+            record = self.storage.get_object(target_name)
+            if record is not None and isinstance(record.metadata, dict):
+                object_crash_capture = record.metadata.get("crash_capture", {})
+                if isinstance(object_crash_capture, dict):
+                    dump_dir = object_crash_capture.get("dump_dir")
+                    if isinstance(dump_dir, str) and dump_dir:
+                        directories.append(str(Path(dump_dir).expanduser().resolve()))
+
+        unique: list[str] = []
+        seen: set[str] = set()
+        for directory in directories:
+            if directory in seen:
+                continue
+            seen.add(directory)
+            unique.append(directory)
+        return unique
+
+    def _scan_crash_dump_directory(self, directory: str) -> list[dict[str, Any]]:
+        path = Path(directory)
+        if not path.exists() or not path.is_dir():
+            return []
+        refs: list[dict[str, Any]] = []
+        for item in sorted(path.rglob("*")):
+            if not item.is_file() or not self._looks_like_crash_dump_file(item):
+                continue
+            stat = item.stat()
+            refs.append(
+                {
+                    "path": str(item.resolve()),
+                    "exists": True,
+                    "kind": "core_or_dump",
+                    "name": item.name,
+                    "size": stat.st_size,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "source": "workspace_scan",
+                    "directory": str(path.resolve()),
+                }
+            )
+        return refs
+
+    def _looks_like_crash_dump_file(self, path: Path) -> bool:
+        name = path.name.lower()
+        return (
+            name.startswith("core")
+            or name.endswith(".core")
+            or name.endswith(".dump")
+            or name.endswith(".dmp")
+        )
+
+    def _detect_new_crash_dump_refs(
+        self,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        before_refs = before.get("dump_refs", []) if isinstance(before, dict) else []
+        after_refs = after.get("dump_refs", []) if isinstance(after, dict) else []
+        if not isinstance(before_refs, list) or not isinstance(after_refs, list):
+            return []
+        before_paths = {
+            str(item.get("path"))
+            for item in before_refs
+            if isinstance(item, dict) and isinstance(item.get("path"), str)
+        }
+        return [
+            item
+            for item in after_refs
+            if isinstance(item, dict)
+            and isinstance(item.get("path"), str)
+            and item["path"] not in before_paths
+        ]
+
+    def _has_new_crash_dump_refs(self, crash_capture: Any) -> bool:
+        if not isinstance(crash_capture, dict):
+            return False
+        refs = crash_capture.get("new_dump_refs", [])
+        return isinstance(refs, list) and bool(refs)
+
+    def _extract_new_crash_dump_refs(self, crash_capture: Any) -> list[dict[str, Any]]:
+        if not isinstance(crash_capture, dict):
+            return []
+        refs = crash_capture.get("new_dump_refs", [])
+        if not isinstance(refs, list):
+            return []
+        return [item for item in refs if isinstance(item, dict)]
+
+    def _merge_crash_dump_refs(
+        self,
+        explicit_refs: list[dict[str, Any]],
+        auto_refs: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for ref in [*explicit_refs, *auto_refs]:
+            path = ref.get("path")
+            if not isinstance(path, str) or path in seen:
+                continue
+            seen.add(path)
+            merged.append(ref)
+        return merged
 
     def _build_crash_dump_boundary(
         self, dump_refs: list[dict[str, Any]]
@@ -4949,6 +5131,75 @@ class WorkflowService:
             summary["next_actions"] = next_actions
         return summary
 
+    def _build_crash_dump_object_summary(
+        self, service_name: Any
+    ) -> dict[str, Any]:
+        if not isinstance(service_name, str) or not service_name:
+            return {
+                "service_name": service_name,
+                "object_found": False,
+            }
+        record = self.storage.get_object(service_name)
+        if record is None:
+            return {
+                "service_name": service_name,
+                "object_found": False,
+            }
+        crash_capture = (
+            record.metadata.get("crash_capture", {})
+            if isinstance(record.metadata, dict)
+            else {}
+        )
+        if not isinstance(crash_capture, dict):
+            crash_capture = {}
+        return {
+            "service_name": service_name,
+            "object_found": True,
+            "type_name": record.type_name,
+            "status": record.status,
+            "installed": record.installed,
+            "updated_at": record.updated_at,
+            "dump_dir": crash_capture.get("dump_dir"),
+        }
+
+    def _build_crash_dump_log_window(
+        self, log_refs: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not isinstance(log_refs, dict):
+            return {"workspace_logs_dir": None, "file_count": 0, "latest_files": [], "snippets": []}
+        workspace_logs_dir = log_refs.get("workspace_logs_dir")
+        files = log_refs.get("files", [])
+        latest_files = files if isinstance(files, list) else []
+        latest_files = latest_files[-2:]
+        snippets: list[dict[str, Any]] = []
+        if isinstance(workspace_logs_dir, str) and workspace_logs_dir:
+            logs_dir = (self.root_path / workspace_logs_dir).resolve()
+            for item in latest_files:
+                if not isinstance(item, dict):
+                    continue
+                relative_path = item.get("path")
+                if not isinstance(relative_path, str) or not relative_path:
+                    continue
+                log_path = (self.root_path / relative_path).resolve()
+                if not log_path.exists() or not log_path.is_file():
+                    continue
+                try:
+                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    continue
+                snippets.append(
+                    {
+                        "path": relative_path,
+                        "tail": lines[-8:],
+                    }
+                )
+        return {
+            "workspace_logs_dir": workspace_logs_dir if isinstance(workspace_logs_dir, str) else None,
+            "file_count": len(files) if isinstance(files, list) else 0,
+            "latest_files": latest_files,
+            "snippets": snippets,
+        }
+
     def _build_service_runtime_investigation_summary(
         self, payload: dict[str, Any]
     ) -> dict[str, Any]:
@@ -5036,6 +5287,17 @@ class WorkflowService:
             }
         if isinstance(next_actions, list):
             summary["next_actions"] = next_actions
+        object_summary = recovery.get("object_summary", details.get("object_summary", {}))
+        if isinstance(object_summary, dict):
+            summary["object_summary"] = object_summary
+        log_window = recovery.get("log_window", details.get("log_window", {}))
+        if isinstance(log_window, dict):
+            summary["log_window"] = {
+                "workspace_logs_dir": log_window.get("workspace_logs_dir"),
+                "file_count": log_window.get("file_count"),
+                "latest_files": log_window.get("latest_files", []),
+                "snippets": log_window.get("snippets", []),
+            }
         return summary
 
     def _build_problem_dependency_digest(

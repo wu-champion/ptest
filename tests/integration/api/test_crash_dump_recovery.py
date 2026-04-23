@@ -49,6 +49,12 @@ def test_crash_dump_problem_preserves_dump_refs_and_recovery_plan(tmp_path) -> N
     dump_path = tmp_path / "demo_service.core"
     service = _OneShotCrashService("127.0.0.1", port, dump_path)
     service.start()
+    logs_dir = tmp_path / "workspace_crash_dump" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    (logs_dir / "crash.log").write_text(
+        "runtime started\nfatal signal received\n",
+        encoding="utf-8",
+    )
 
     api = PTestAPI(work_path=tmp_path / "workspace_crash_dump")
     api.init_environment()
@@ -85,6 +91,12 @@ def test_crash_dump_problem_preserves_dump_refs_and_recovery_plan(tmp_path) -> N
     )
     assert assets["assets"]["details"]["dump_refs"][0]["path"] == str(dump_path)
     assert assets["assets"]["details"]["dump_refs"][0]["exists"] is True
+    assert assets["assets"]["details"]["log_window"]["file_count"] >= 1
+    assert any(
+        snippet.get("path") == "logs/crash.log"
+        for snippet in assets["assets"]["details"]["log_window"]["snippets"]
+        if isinstance(snippet, dict)
+    )
     assert assets["assets"]["recovery"]["mode"] == "crash_dump_investigation"
     assert assets["assets"]["investigation"]["boundary"]["scope"] == (
         "crash_asset_preservation"
@@ -92,6 +104,7 @@ def test_crash_dump_problem_preserves_dump_refs_and_recovery_plan(tmp_path) -> N
     assert assets["assets"]["investigation"]["boundary"]["assessment"] == (
         "dump_refs_preserved_for_followup_analysis"
     )
+    assert assets["assets"]["investigation"]["log_window"]["file_count"] >= 1
 
     recovery = api.recover_problem(problem_id)
     assert recovery["success"] is True

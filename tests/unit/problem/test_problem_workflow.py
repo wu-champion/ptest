@@ -8,6 +8,7 @@ import requests
 import pytest
 
 from ptest.app import WorkflowService
+from ptest.cases.result import TestCaseResult
 from ptest.models import (
     ManagedObjectRecord,
     OBJECT_STATUS_START_FAILED_PRESERVED,
@@ -70,11 +71,11 @@ def test_workflow_service_preserves_and_replays_api_problem(
     problem = service.get_problem_record(problem_id)
     assert problem["success"] is True
     assert problem["problem"]["execution_id"]
-    assert problem["problem"]["metadata"]["preservation"]["status"] == "partial"
+    assert problem["problem"]["metadata"]["preservation"]["status"] == "success"
     assert problem["problem"]["metadata"]["capabilities"]["can_replay"] is True
     assert problem["problem"]["metadata"]["capabilities"]["can_recover"] is True
     assert problem["problem"]["capabilities"]["can_replay"] is True
-    assert problem["problem"]["preservation"]["status"] == "partial"
+    assert problem["problem"]["preservation"]["status"] == "success"
     assert problem["problem"]["investigation"]["view"] == "problem"
     assert problem["problem"]["investigation"]["problem_type"] == "api_response"
     assert problem["problem"]["investigation"]["request"]["url"] == (
@@ -96,18 +97,12 @@ def test_workflow_service_preserves_and_replays_api_problem(
         assets["assets"]["details"]["request"]["url"] == "https://example.test/api/demo"
     )
     assert "Expected status 200" in assets["assets"]["details"]["response"]["error"]
-    assert assets["assets"]["preservation_status"] == "partial"
-    assert assets["assets"]["details"]["preservation"]["missing_assets"] == [
-        "log_index"
-    ]
-    assert (
-        assets["assets"]["details"]["preservation"]["missing_reasons"]["log_index"]
-        == "log index is not available"
-    )
-    assert assets["assets"]["metadata"]["preservation"]["status"] == "partial"
+    assert assets["assets"]["preservation_status"] == "success"
+    assert assets["assets"]["details"]["preservation"]["missing_assets"] == []
+    assert assets["assets"]["metadata"]["preservation"]["status"] == "success"
     assert assets["assets"]["metadata"]["capabilities"]["can_replay"] is True
     assert assets["assets"]["capabilities"]["can_replay"] is True
-    assert assets["assets"]["preservation"]["status"] == "partial"
+    assert assets["assets"]["preservation"]["status"] == "success"
     assert (
         assets["assets"]["reproduction_summary"]["request"]["url"]
         == "https://example.test/api/demo"
@@ -325,11 +320,11 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert assets["assets"]["investigation"]["next_actions"][0]["action"] == (
         "inspect_data_source_connectivity"
     )
-    assert assets["assets"]["metadata"]["preservation"]["status"] == "partial"
+    assert assets["assets"]["metadata"]["preservation"]["status"] == "success"
     assert assets["assets"]["metadata"]["capabilities"]["can_replay"] is False
     assert assets["assets"]["metadata"]["capabilities"]["can_recover"] is True
     assert assets["assets"]["capabilities"]["can_recover"] is True
-    assert assets["assets"]["preservation"]["status"] == "partial"
+    assert assets["assets"]["preservation"]["status"] == "success"
 
     recovery = service.recover_problem(problem_id)
     assert recovery["success"] is True
@@ -816,6 +811,12 @@ def test_workflow_service_classifies_abnormal_exit_from_expected_running_service
 def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
     service = WorkflowService(tmp_path)
     service.init_environment()
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    (logs_dir / "service.log").write_text(
+        "booting service\nfatal: segmentation fault\n",
+        encoding="utf-8",
+    )
     dump_file = tmp_path / "crash.core"
     dump_file.write_text("fake core content", encoding="utf-8")
     service.add_case(
@@ -857,7 +858,22 @@ def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
     assert assets["assets"]["details"]["crash_target"]["service_name"] == "demo_service"
     assert assets["assets"]["details"]["dump_refs"][0]["path"] == str(dump_file)
     assert assets["assets"]["details"]["dump_refs"][0]["exists"] is True
+    assert assets["assets"]["details"]["object_summary"]["object_found"] is False
+    assert assets["assets"]["details"]["log_window"]["workspace_logs_dir"] == "logs"
+    assert assets["assets"]["details"]["log_window"]["file_count"] >= 1
+    assert any(
+        snippet.get("path") == "logs/service.log"
+        for snippet in assets["assets"]["details"]["log_window"]["snippets"]
+        if isinstance(snippet, dict)
+    )
+    assert any(
+        "fatal: segmentation fault" in snippet.get("tail", [])
+        for snippet in assets["assets"]["details"]["log_window"]["snippets"]
+        if isinstance(snippet, dict)
+    )
     assert assets["assets"]["recovery"]["mode"] == "crash_dump_investigation"
+    assert assets["assets"]["recovery"]["object_summary"]["object_found"] is False
+    assert assets["assets"]["recovery"]["log_window"]["file_count"] >= 1
     assert assets["assets"]["recovery"]["boundary"]["confidence"] == (
         "high_for_existing_dump_refs"
     )
@@ -865,6 +881,8 @@ def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
         "failed"
     )
     assert assets["assets"]["investigation"]["dump_refs"][0]["exists"] is True
+    assert assets["assets"]["investigation"]["object_summary"]["object_found"] is False
+    assert assets["assets"]["investigation"]["log_window"]["file_count"] >= 1
 
     recovery = service.recover_problem(problem_id)
     assert recovery["success"] is True
@@ -876,6 +894,97 @@ def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
     assert recovery["recovery"]["dump_refs"][0]["exists"] is True
     assert recovery["recovery"]["recommended_checks"][0]["purpose"] == (
         "inspect_dump_refs"
+    )
+
+
+def test_workflow_service_auto_discovers_new_crash_dump_refs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+
+    case_definition = {
+        "data": {
+            "type": "service",
+            "service_name": "demo_service",
+            "host": "127.0.0.1",
+            "port": 65503,
+            "check_type": "port",
+            "timeout": 1,
+            "expected_runtime_state": "running",
+        }
+    }
+
+    service.add_case("service_crash_auto_case", case_definition["data"])
+
+    dump_file = (tmp_path / "workspace_dump.core").resolve()
+
+    def _fake_execute_case_with_bindings(case_manager, case_id, params=None):
+        result = TestCaseResult(case_id)
+        result.status = "failed"
+        result.error_message = "connection refused after crash"
+        result.output = "service exited unexpectedly"
+        return result, case_definition
+
+    snapshots = iter(
+        [
+            {"captured_at": "before", "directories": [], "dump_refs": []},
+            {
+                "captured_at": "after",
+                "directories": [str(tmp_path)],
+                "dump_refs": [
+                    {
+                        "path": str(dump_file),
+                        "exists": True,
+                        "kind": "core_or_dump",
+                        "name": dump_file.name,
+                        "size": 128,
+                        "modified_at": "2026-04-23T00:00:00",
+                        "source": "workspace_scan",
+                        "directory": str(tmp_path),
+                    }
+                ],
+            },
+        ]
+    )
+
+    monkeypatch.setattr(
+        service,
+        "_execute_case_with_bindings",
+        _fake_execute_case_with_bindings,
+    )
+    monkeypatch.setattr(
+        service,
+        "_capture_workspace_crash_dump_snapshot",
+        lambda _case_definition: next(snapshots),
+    )
+
+    result = service.run_case("service_crash_auto_case")
+    assert result["success"] is False
+
+    problems = service.list_problem_records(
+        case_id="service_crash_auto_case",
+        problem_type="crash_dump",
+    )
+    assert len(problems) == 1
+    problem_id = problems[0]["problem_id"]
+
+    detail = service.get_problem_record(problem_id)
+    assert detail["success"] is True
+    assert detail["problem"]["problem_type"] == "crash_dump"
+    assert detail["problem"]["investigation"]["dump_refs"][0]["path"] == str(dump_file)
+
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    assert assets["assets"]["details"]["dump_refs"][0]["path"] == str(dump_file)
+    assert assets["assets"]["details"]["dump_refs"][0]["source"] == "workspace_scan"
+    assert assets["assets"]["details"]["crash_capture"]["new_dump_refs"][0]["path"] == str(
+        dump_file
+    )
+    assert assets["assets"]["details"]["object_summary"]["object_found"] is False
+    assert assets["assets"]["recovery"]["dump_refs"][0]["path"] == str(dump_file)
+    assert assets["assets"]["investigation"]["boundary"]["assessment"] == (
+        "dump_refs_preserved_for_followup_analysis"
     )
 
 
