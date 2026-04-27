@@ -198,6 +198,9 @@ class WorkflowService:
             metadata={
                 "object_count": len(objects),
                 "capture_scope": "workspace_minimum_baseline",
+                "object_reference_snapshots": self._build_workspace_baseline_object_references(
+                    objects
+                ),
                 "limitations": [
                     "directory-level copies are not included in this first-stage baseline",
                     "container/system rollback is not included in this first-stage baseline",
@@ -241,6 +244,7 @@ class WorkflowService:
                 object_record.updated_at = datetime.now().isoformat()
                 restored_objects[object_record.name] = object_record
         self.storage.save_objects(restored_objects)
+        directory_restore = self._restore_workspace_baseline_object_references(record)
 
         return {
             "success": True,
@@ -253,6 +257,7 @@ class WorkflowService:
                     "scope": "workspace_minimum_baseline_restore",
                     "restored_object_count": len(restored_objects),
                     "environment_status": restored_environment.status,
+                    "directory_restore": directory_restore,
                     "next_actions": [
                         "verify_recovered_object_state",
                         "rerun_affected_case_after_baseline_restore",
@@ -5984,6 +5989,12 @@ class WorkflowService:
             "capture_scope": record.metadata.get("capture_scope")
             if isinstance(record.metadata, dict)
             else None,
+            "object_reference_count": len(
+                record.metadata.get("object_reference_snapshots", [])
+            )
+            if isinstance(record.metadata, dict)
+            and isinstance(record.metadata.get("object_reference_snapshots"), list)
+            else 0,
             "limitations": record.metadata.get("limitations", [])
             if isinstance(record.metadata, dict)
             else [],
@@ -6005,6 +6016,98 @@ class WorkflowService:
             "assessment": "workspace_baseline_available_for_restore",
             "latest_baseline": self._build_workspace_baseline_summary(latest),
             "recommended_action": "restore_workspace_baseline_if_minimal_recovery_is_insufficient",
+        }
+
+    def _build_workspace_baseline_object_references(
+        self, objects: dict[str, ManagedObjectRecord]
+    ) -> list[dict[str, Any]]:
+        references: list[dict[str, Any]] = []
+        for record in objects.values():
+            config = record.config if isinstance(record.config, dict) else {}
+            managed_instance = (
+                config.get("managed_instance", {})
+                if isinstance(config.get("managed_instance"), dict)
+                else {}
+            )
+            path_entries: list[dict[str, Any]] = []
+            for field in (
+                "instance_root",
+                "install_dir",
+                "data_dir",
+                "config_dir",
+                "log_dir",
+                "run_dir",
+                "dump_dir",
+            ):
+                raw_path = managed_instance.get(field)
+                if isinstance(raw_path, str) and raw_path:
+                    resolved = Path(raw_path).expanduser().resolve()
+                    path_entries.append(
+                        {
+                            "field": field,
+                            "path": str(resolved),
+                            "exists": resolved.exists(),
+                        }
+                    )
+            if path_entries:
+                references.append(
+                    {
+                        "object_name": record.name,
+                        "type_name": record.type_name,
+                        "paths": path_entries,
+                    }
+                )
+        return references
+
+    def _restore_workspace_baseline_object_references(
+        self, record: WorkspaceBaselineRecord
+    ) -> dict[str, Any]:
+        metadata = record.metadata if isinstance(record.metadata, dict) else {}
+        snapshots = (
+            metadata.get("object_reference_snapshots", [])
+            if isinstance(metadata.get("object_reference_snapshots"), list)
+            else []
+        )
+        restored_paths: list[dict[str, Any]] = []
+        skipped_paths: list[dict[str, Any]] = []
+        for item in snapshots:
+            if not isinstance(item, dict):
+                continue
+            object_name = str(item.get("object_name", ""))
+            for path_entry in item.get("paths", []):
+                if not isinstance(path_entry, dict):
+                    continue
+                raw_path = path_entry.get("path")
+                if not isinstance(raw_path, str) or not raw_path:
+                    continue
+                field = str(path_entry.get("field", ""))
+                target = Path(raw_path).expanduser().resolve()
+                try:
+                    target.mkdir(parents=True, exist_ok=True)
+                    restored_paths.append(
+                        {
+                            "object_name": object_name,
+                            "field": field,
+                            "path": str(target),
+                        }
+                    )
+                except OSError as exc:
+                    skipped_paths.append(
+                        {
+                            "object_name": object_name,
+                            "field": field,
+                            "path": str(target),
+                            "reason": str(exc),
+                        }
+                    )
+        return {
+            "scope": "workspace_object_reference_restore",
+            "restored_paths": restored_paths,
+            "skipped_paths": skipped_paths,
+            "limitations": [
+                "directory existence is restored but directory contents are not replayed",
+                "full data image restoration is not included in this stage",
+            ],
         }
 
     def _build_workspace_recovery_post_checks(
