@@ -53,6 +53,35 @@ class PTestAPI:
             data=status,
         )
 
+    def create_workspace_baseline(self, summary: str = "") -> dict[str, Any]:
+        result = self.workflow.create_workspace_baseline(summary=summary)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+        )
+
+    def list_workspace_baselines(self) -> dict[str, Any]:
+        baselines = self.workflow.list_workspace_baselines()
+        return self._api_response(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(baselines)} workspace baselines",
+            data=baselines,
+        )
+
+    def restore_workspace_baseline(self, baseline_id: str) -> dict[str, Any]:
+        result = self.workflow.restore_workspace_baseline(baseline_id)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+        )
+
     def create_test_case(
         self,
         test_type: str,

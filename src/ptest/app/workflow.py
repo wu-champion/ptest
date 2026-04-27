@@ -42,6 +42,7 @@ from ..models import (
     OBJECT_STATUS_START_FAILED_PRESERVED,
     OBJECT_STATUS_STOPPED,
     ToolRecord,
+    WorkspaceBaselineRecord,
     is_clearable_object_status,
     is_failure_preserved_object_status,
     is_resettable_object_status,
@@ -180,6 +181,84 @@ class WorkflowService:
             "cases": len(case_manager.cases),
             "reports": report_count,
             "metadata": record.metadata,
+        }
+
+    def create_workspace_baseline(self, summary: str = "") -> dict[str, Any]:
+        environment = self.storage.load_environment()
+        if environment is None:
+            environment = self.init_environment(self.root_path)
+        objects = self.storage.load_objects()
+        baseline_id = f"baseline_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        record = WorkspaceBaselineRecord(
+            baseline_id=baseline_id,
+            root_path=str(self.root_path),
+            summary=summary or "workspace minimum baseline snapshot",
+            environment=environment.to_dict(),
+            objects=[item.to_dict() for item in objects.values()],
+            metadata={
+                "object_count": len(objects),
+                "capture_scope": "workspace_minimum_baseline",
+                "limitations": [
+                    "directory-level copies are not included in this first-stage baseline",
+                    "container/system rollback is not included in this first-stage baseline",
+                ],
+            },
+        )
+        self.storage.save_workspace_baseline(record)
+        return {
+            "success": True,
+            "status": "created",
+            "message": f"Workspace baseline created: {baseline_id}",
+            "data": self._build_workspace_baseline_summary(record),
+        }
+
+    def list_workspace_baselines(self) -> list[dict[str, Any]]:
+        return [
+            self._build_workspace_baseline_summary(item)
+            for item in self.storage.list_workspace_baselines()
+        ]
+
+    def restore_workspace_baseline(self, baseline_id: str) -> dict[str, Any]:
+        record = self.storage.get_workspace_baseline(baseline_id)
+        if record is None:
+            return {
+                "success": False,
+                "status": "not_found",
+                "message": f"Workspace baseline not found: {baseline_id}",
+                "error": f"Workspace baseline '{baseline_id}' does not exist",
+            }
+
+        environment_data = record.environment if isinstance(record.environment, dict) else {}
+        restored_environment = EnvironmentRecord.from_dict(environment_data)
+        restored_environment.updated_at = datetime.now().isoformat()
+        self.storage.save_environment(restored_environment)
+
+        restored_objects: dict[str, ManagedObjectRecord] = {}
+        raw_objects = record.objects if isinstance(record.objects, list) else []
+        for item in raw_objects:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                object_record = ManagedObjectRecord.from_dict(item)
+                object_record.updated_at = datetime.now().isoformat()
+                restored_objects[object_record.name] = object_record
+        self.storage.save_objects(restored_objects)
+
+        return {
+            "success": True,
+            "status": "restored",
+            "message": f"Workspace baseline restored: {baseline_id}",
+            "data": {
+                "baseline": self._build_workspace_baseline_summary(record),
+                "restored_object_names": sorted(restored_objects.keys()),
+                "verification": {
+                    "scope": "workspace_minimum_baseline_restore",
+                    "restored_object_count": len(restored_objects),
+                    "environment_status": restored_environment.status,
+                    "next_actions": [
+                        "verify_recovered_object_state",
+                        "rerun_affected_case_after_baseline_restore",
+                    ],
+                },
+            },
         }
 
     def install_object(
@@ -5768,6 +5847,7 @@ class WorkflowService:
                     "cross_workspace_recovery",
                 ],
             },
+            "baseline_restore": self._build_workspace_baseline_restore_summary(),
             "post_recovery_checks": self._build_workspace_recovery_post_checks(
                 problem_type=problem_type,
                 problem_id=problem_id,
@@ -5891,6 +5971,41 @@ class WorkflowService:
             "reinstall",
             "a minimal reinstall is the safest generic recovery action for the current object state",
         )
+
+    def _build_workspace_baseline_summary(
+        self, record: WorkspaceBaselineRecord
+    ) -> dict[str, Any]:
+        return {
+            "baseline_id": record.baseline_id,
+            "root_path": record.root_path,
+            "summary": record.summary,
+            "created_at": record.created_at,
+            "object_count": len(record.objects) if isinstance(record.objects, list) else 0,
+            "capture_scope": record.metadata.get("capture_scope")
+            if isinstance(record.metadata, dict)
+            else None,
+            "limitations": record.metadata.get("limitations", [])
+            if isinstance(record.metadata, dict)
+            else [],
+        }
+
+    def _build_workspace_baseline_restore_summary(self) -> dict[str, Any]:
+        baselines = self.storage.list_workspace_baselines()
+        if not baselines:
+            return {
+                "available": False,
+                "scope": "workspace_minimum_baseline_restore",
+                "assessment": "no_workspace_baseline_available",
+                "recommended_action": "create_workspace_baseline_before_heavier_recovery",
+            }
+        latest = baselines[0]
+        return {
+            "available": True,
+            "scope": "workspace_minimum_baseline_restore",
+            "assessment": "workspace_baseline_available_for_restore",
+            "latest_baseline": self._build_workspace_baseline_summary(latest),
+            "recommended_action": "restore_workspace_baseline_if_minimal_recovery_is_insufficient",
+        }
 
     def _build_workspace_recovery_post_checks(
         self,

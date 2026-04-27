@@ -14,6 +14,7 @@ from ..models import (
     ProblemRecoveryRecord,
     ProblemRecord,
     ToolRecord,
+    WorkspaceBaselineRecord,
 )
 
 
@@ -26,6 +27,7 @@ class WorkspaceStorage:
         self.executions_dir = self.meta_dir / "executions"
         self.artifacts_dir = self.meta_dir / "artifacts"
         self.problems_dir = self.meta_dir / "problems"
+        self.baselines_dir = self.meta_dir / "baselines"
         self.environment_file = self.meta_dir / "environment.json"
         self.objects_file = self.meta_dir / "objects.json"
         self.tools_file = self.meta_dir / "tools.json"
@@ -38,6 +40,7 @@ class WorkspaceStorage:
         self.executions_dir.mkdir(parents=True, exist_ok=True)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.problems_dir.mkdir(parents=True, exist_ok=True)
+        self.baselines_dir.mkdir(parents=True, exist_ok=True)
 
     def load_environment(self) -> EnvironmentRecord | None:
         data = self._read_json(self.environment_file)
@@ -114,6 +117,32 @@ class WorkspaceStorage:
 
     def get_tool(self, name: str) -> ToolRecord | None:
         return self.load_tools().get(name)
+
+    def save_workspace_baseline(
+        self, record: WorkspaceBaselineRecord
+    ) -> WorkspaceBaselineRecord:
+        self.ensure_layout()
+        self._write_json(
+            self.baselines_dir / f"{record.baseline_id}.json",
+            record.to_dict(),
+        )
+        return record
+
+    def get_workspace_baseline(self, baseline_id: str) -> WorkspaceBaselineRecord | None:
+        data = self._read_json(self.baselines_dir / f"{baseline_id}.json")
+        if not data:
+            return None
+        return WorkspaceBaselineRecord.from_dict(data)
+
+    def list_workspace_baselines(self) -> list[WorkspaceBaselineRecord]:
+        self.ensure_layout()
+        records: list[WorkspaceBaselineRecord] = []
+        for path in sorted(self.baselines_dir.glob("*.json")):
+            data = self._read_json(path)
+            if data:
+                records.append(WorkspaceBaselineRecord.from_dict(data))
+        records.sort(key=lambda item: item.created_at, reverse=True)
+        return records
 
     def save_execution(self, record: ExecutionRecord) -> ExecutionRecord:
         self.ensure_layout()

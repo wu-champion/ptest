@@ -87,6 +87,25 @@ class EnvironmentRecord:
 
 
 @dataclass
+class WorkspaceBaselineRecord:
+    baseline_id: str
+    root_path: str
+    summary: str = ""
+    created_at: str = field(default_factory=_now_iso)
+    updated_at: str = field(default_factory=_now_iso)
+    environment: dict[str, Any] = field(default_factory=dict)
+    objects: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "WorkspaceBaselineRecord":
+        return cls(**data)
+
+
+@dataclass
 class ManagedObjectRecord:
     name: str
     type_name: str

@@ -9,6 +9,8 @@ def test_workspace_recovery_exposes_minimum_baseline_plan_for_runtime_problem(
 ) -> None:
     api = PTestAPI(work_path=tmp_path / "workspace_recovery_runtime")
     api.init_environment()
+    baseline = api.create_workspace_baseline("runtime baseline")
+    assert baseline["success"] is True
     api.workflow.storage.upsert_object(
         ManagedObjectRecord(
             name="demo_runtime_service",
@@ -65,6 +67,11 @@ def test_workspace_recovery_exposes_minimum_baseline_plan_for_runtime_problem(
     )
     assert workspace_recovery["recovery_boundary"]["scope"] == (
         "workspace_minimum_recovery"
+    )
+    assert workspace_recovery["baseline_restore"]["available"] is True
+    assert (
+        workspace_recovery["baseline_restore"]["latest_baseline"]["baseline_id"]
+        == baseline["data"]["baseline_id"]
     )
     assert workspace_recovery["post_recovery_checks"][0]["action"] == (
         "verify_recovered_object_state"
