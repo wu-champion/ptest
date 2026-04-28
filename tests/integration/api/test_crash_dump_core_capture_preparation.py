@@ -3,7 +3,6 @@ from __future__ import annotations
 import socket
 import tarfile
 import textwrap
-import time
 from pathlib import Path
 
 from ptest.api import PTestAPI

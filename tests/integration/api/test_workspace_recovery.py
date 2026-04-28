@@ -45,13 +45,11 @@ def test_workspace_recovery_exposes_minimum_baseline_plan_for_runtime_problem(
     assert detail["success"] is True
     investigation = detail["problem"]["investigation"]
     assert investigation["workspace_recovery"]["scope"] == "workspace_minimum_recovery"
-    assert investigation["workspace_recovery"]["affected_objects"][0]["object_name"] == (
-        "demo_runtime_service"
-    )
+    assert investigation["workspace_recovery"]["affected_objects"][0][
+        "object_name"
+    ] == ("demo_runtime_service")
     assert (
-        investigation["workspace_recovery"]["affected_objects"][0][
-            "recommended_action"
-        ]
+        investigation["workspace_recovery"]["affected_objects"][0]["recommended_action"]
         == "reinstall"
     )
 

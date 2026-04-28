@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -78,6 +79,8 @@ class WorkflowService:
     """First-phase workflow orchestration service."""
 
     DEFAULT_MANAGED_MYSQL_PORT = 13306
+    WORKSPACE_BASELINE_CONTENT_MAX_BYTES = 256 * 1024
+    WORKSPACE_BASELINE_CONTENT_MAX_FILES = 32
 
     def __init__(
         self,
@@ -188,7 +191,13 @@ class WorkflowService:
         if environment is None:
             environment = self.init_environment(self.root_path)
         objects = self.storage.load_objects()
-        baseline_id = f"baseline_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        baseline_id = (
+            f"baseline_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        )
+        content_capture = self._build_workspace_baseline_content_snapshots(
+            baseline_id,
+            objects,
+        )
         record = WorkspaceBaselineRecord(
             baseline_id=baseline_id,
             root_path=str(self.root_path),
@@ -201,8 +210,12 @@ class WorkflowService:
                 "object_reference_snapshots": self._build_workspace_baseline_object_references(
                     objects
                 ),
+                "content_reference_snapshots": content_capture["snapshots"],
+                "content_reference_skipped": content_capture["skipped"],
                 "limitations": [
-                    "directory-level copies are not included in this first-stage baseline",
+                    "only small explicitly supported content files are copied",
+                    "full directory-level copies are not included in this baseline",
+                    "full database image restoration is not included in this baseline",
                     "container/system rollback is not included in this first-stage baseline",
                 ],
             },
@@ -231,7 +244,9 @@ class WorkflowService:
                 "error": f"Workspace baseline '{baseline_id}' does not exist",
             }
 
-        environment_data = record.environment if isinstance(record.environment, dict) else {}
+        environment_data = (
+            record.environment if isinstance(record.environment, dict) else {}
+        )
         restored_environment = EnvironmentRecord.from_dict(environment_data)
         restored_environment.updated_at = datetime.now().isoformat()
         self.storage.save_environment(restored_environment)
@@ -245,6 +260,7 @@ class WorkflowService:
                 restored_objects[object_record.name] = object_record
         self.storage.save_objects(restored_objects)
         directory_restore = self._restore_workspace_baseline_object_references(record)
+        content_restore = self._restore_workspace_baseline_content_references(record)
 
         return {
             "success": True,
@@ -258,6 +274,7 @@ class WorkflowService:
                     "restored_object_count": len(restored_objects),
                     "environment_status": restored_environment.status,
                     "directory_restore": directory_restore,
+                    "content_restore": content_restore,
                     "next_actions": [
                         "verify_recovered_object_state",
                         "rerun_affected_case_after_baseline_restore",
@@ -1378,8 +1395,8 @@ class WorkflowService:
                 if isinstance(case_result, tuple) and len(case_result) == 2:
                     case_result, case_definition = case_result
                 if isinstance(case_result, TestCaseResult):
-                    crash_snapshot_before = (
-                        self._capture_workspace_crash_dump_snapshot(case_definition)
+                    crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
+                        case_definition
                     )
                     self._persist_execution(
                         case_result.case_id,
@@ -3421,9 +3438,9 @@ class WorkflowService:
         log_refs: dict[str, Any],
         crash_capture: Any = None,
     ) -> tuple[ProblemRecord, ProblemAssetRecord] | None:
-        if self._is_crash_dump_problem_candidate(case_payload) or self._has_new_crash_dump_refs(
-            crash_capture
-        ):
+        if self._is_crash_dump_problem_candidate(
+            case_payload
+        ) or self._has_new_crash_dump_refs(crash_capture):
             return self._build_crash_dump_problem_records(
                 record,
                 case_payload=case_payload,
@@ -3732,19 +3749,14 @@ class WorkflowService:
         case_type = case_definition.get("type")
         return case_type == "database"
 
-    def _is_crash_dump_problem_candidate(
-        self, case_definition: dict[str, Any]
-    ) -> bool:
+    def _is_crash_dump_problem_candidate(self, case_definition: dict[str, Any]) -> bool:
         dump_paths = case_definition.get("dump_paths")
         core_paths = case_definition.get("core_paths")
-        return (
-            case_definition.get("type") == "service"
-            and (
-                isinstance(dump_paths, list)
-                and any(isinstance(item, str) and item for item in dump_paths)
-                or isinstance(core_paths, list)
-                and any(isinstance(item, str) and item for item in core_paths)
-            )
+        return case_definition.get("type") == "service" and (
+            isinstance(dump_paths, list)
+            and any(isinstance(item, str) and item for item in dump_paths)
+            or isinstance(core_paths, list)
+            and any(isinstance(item, str) and item for item in core_paths)
         )
 
     def _build_crash_dump_problem_records(
@@ -3955,7 +3967,9 @@ class WorkflowService:
                 if isinstance(dump_dir, str) and dump_dir:
                     directories.append(str(Path(dump_dir).expanduser().resolve()))
 
-        target_name = case_payload.get("object_name") or case_payload.get("service_name")
+        target_name = case_payload.get("object_name") or case_payload.get(
+            "service_name"
+        )
         if isinstance(target_name, str) and target_name:
             record = self.storage.get_object(target_name)
             if record is not None and isinstance(record.metadata, dict):
@@ -4369,9 +4383,7 @@ class WorkflowService:
         ).lower()
         confidence = "runtime_observation_only"
         assessment = "endpoint_or_healthcheck_failure"
-        reason = (
-            "current recovery plan is based on preserved runtime observations and does not reconstruct full service history"
-        )
+        reason = "current recovery plan is based on preserved runtime observations and does not reconstruct full service history"
         if failure_kind == "startup_failed":
             confidence = "high_for_preserved_start_failure"
             assessment = "startup_failure_detected"
@@ -4389,9 +4401,7 @@ class WorkflowService:
             else:
                 confidence = "reduced_by_runtime_state_gap"
             assessment = "runtime_diverged_from_expected_service_state"
-            reason = (
-                "the service was expected to be running but current runtime observations suggest it exited or became unreachable"
-            )
+            reason = "the service was expected to be running but current runtime observations suggest it exited or became unreachable"
         return {
             "scope": "runtime_level_plan",
             "confidence": confidence,
@@ -5251,9 +5261,7 @@ class WorkflowService:
             summary["next_actions"] = next_actions
         return summary
 
-    def _build_crash_dump_object_summary(
-        self, service_name: Any
-    ) -> dict[str, Any]:
+    def _build_crash_dump_object_summary(self, service_name: Any) -> dict[str, Any]:
         if not isinstance(service_name, str) or not service_name:
             return {
                 "service_name": service_name,
@@ -5282,18 +5290,20 @@ class WorkflowService:
             "dump_dir": crash_capture.get("dump_dir"),
         }
 
-    def _build_crash_dump_log_window(
-        self, log_refs: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _build_crash_dump_log_window(self, log_refs: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(log_refs, dict):
-            return {"workspace_logs_dir": None, "file_count": 0, "latest_files": [], "snippets": []}
+            return {
+                "workspace_logs_dir": None,
+                "file_count": 0,
+                "latest_files": [],
+                "snippets": [],
+            }
         workspace_logs_dir = log_refs.get("workspace_logs_dir")
         files = log_refs.get("files", [])
         latest_files = files if isinstance(files, list) else []
         latest_files = latest_files[-2:]
         snippets: list[dict[str, Any]] = []
         if isinstance(workspace_logs_dir, str) and workspace_logs_dir:
-            logs_dir = (self.root_path / workspace_logs_dir).resolve()
             for item in latest_files:
                 if not isinstance(item, dict):
                     continue
@@ -5304,7 +5314,9 @@ class WorkflowService:
                 if not log_path.exists() or not log_path.is_file():
                     continue
                 try:
-                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    lines = log_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).splitlines()
                 except OSError:
                     continue
                 snippets.append(
@@ -5314,7 +5326,9 @@ class WorkflowService:
                     }
                 )
         return {
-            "workspace_logs_dir": workspace_logs_dir if isinstance(workspace_logs_dir, str) else None,
+            "workspace_logs_dir": workspace_logs_dir
+            if isinstance(workspace_logs_dir, str)
+            else None,
             "file_count": len(files) if isinstance(files, list) else 0,
             "latest_files": latest_files,
             "snippets": snippets,
@@ -5407,7 +5421,9 @@ class WorkflowService:
             }
         if isinstance(next_actions, list):
             summary["next_actions"] = next_actions
-        object_summary = recovery.get("object_summary", details.get("object_summary", {}))
+        object_summary = recovery.get(
+            "object_summary", details.get("object_summary", {})
+        )
         if isinstance(object_summary, dict):
             summary["object_summary"] = object_summary
         log_window = recovery.get("log_window", details.get("log_window", {}))
@@ -5506,7 +5522,9 @@ class WorkflowService:
             "runtime_failure_kind": recovery.get("failure_kind")
             if problem_type == "service_runtime"
             else None,
-            "crash_target_service_name": details.get("crash_target", {}).get("service_name")
+            "crash_target_service_name": details.get("crash_target", {}).get(
+                "service_name"
+            )
             if problem_type == "crash_dump"
             and isinstance(details.get("crash_target"), dict)
             else None,
@@ -5870,7 +5888,11 @@ class WorkflowService:
     ) -> list[dict[str, Any]]:
         candidate_names: list[str] = []
         for raw_name in object_refs:
-            if isinstance(raw_name, str) and raw_name and raw_name not in candidate_names:
+            if (
+                isinstance(raw_name, str)
+                and raw_name
+                and raw_name not in candidate_names
+            ):
                 candidate_names.append(raw_name)
 
         inferred_names = [
@@ -5887,9 +5909,13 @@ class WorkflowService:
             if isinstance(recovery.get("crash_target"), dict)
             else None,
         ]
-        for raw_name in inferred_names:
-            if isinstance(raw_name, str) and raw_name and raw_name not in candidate_names:
-                candidate_names.append(raw_name)
+        for inferred_name in inferred_names:
+            if (
+                isinstance(inferred_name, str)
+                and inferred_name
+                and inferred_name not in candidate_names
+            ):
+                candidate_names.append(inferred_name)
 
         affected_objects: list[dict[str, Any]] = []
         for object_name in candidate_names:
@@ -5985,7 +6011,9 @@ class WorkflowService:
             "root_path": record.root_path,
             "summary": record.summary,
             "created_at": record.created_at,
-            "object_count": len(record.objects) if isinstance(record.objects, list) else 0,
+            "object_count": len(record.objects)
+            if isinstance(record.objects, list)
+            else 0,
             "capture_scope": record.metadata.get("capture_scope")
             if isinstance(record.metadata, dict)
             else None,
@@ -5994,6 +6022,12 @@ class WorkflowService:
             )
             if isinstance(record.metadata, dict)
             and isinstance(record.metadata.get("object_reference_snapshots"), list)
+            else 0,
+            "content_reference_count": len(
+                record.metadata.get("content_reference_snapshots", [])
+            )
+            if isinstance(record.metadata, dict)
+            and isinstance(record.metadata.get("content_reference_snapshots"), list)
             else 0,
             "limitations": record.metadata.get("limitations", [])
             if isinstance(record.metadata, dict)
@@ -6109,6 +6143,335 @@ class WorkflowService:
                 "full data image restoration is not included in this stage",
             ],
         }
+
+    def _build_workspace_baseline_content_snapshots(
+        self,
+        baseline_id: str,
+        objects: dict[str, ManagedObjectRecord],
+    ) -> dict[str, Any]:
+        snapshots: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        workspace_root = self.root_path.resolve()
+        for record in objects.values():
+            config = record.config if isinstance(record.config, dict) else {}
+            managed_instance = (
+                config.get("managed_instance", {})
+                if isinstance(config.get("managed_instance"), dict)
+                else {}
+            )
+            for candidate in self._iter_workspace_baseline_content_candidates(
+                record,
+                managed_instance,
+            ):
+                source = candidate["path"]
+                field = candidate["field"]
+                relative_path = candidate["relative_path"]
+                if len(snapshots) >= self.WORKSPACE_BASELINE_CONTENT_MAX_FILES:
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            "maximum_content_snapshot_file_count_reached",
+                        )
+                    )
+                    continue
+                if not source.is_relative_to(workspace_root):
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            "outside_workspace_not_supported",
+                        )
+                    )
+                    continue
+                if source.is_symlink():
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            "symlink_not_supported",
+                        )
+                    )
+                    continue
+                try:
+                    size_bytes = source.stat().st_size
+                except OSError as exc:
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            str(exc),
+                        )
+                    )
+                    continue
+                if size_bytes > self.WORKSPACE_BASELINE_CONTENT_MAX_BYTES:
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            "file_too_large_for_minimum_content_snapshot",
+                        )
+                    )
+                    continue
+                stored_relative_path = (
+                    Path(baseline_id)
+                    / "content"
+                    / self._safe_workspace_baseline_path_segment(record.name)
+                    / field
+                    / relative_path
+                )
+                stored_path = self.storage.baselines_dir / stored_relative_path
+                try:
+                    stored_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, stored_path)
+                    snapshots.append(
+                        {
+                            "object_name": record.name,
+                            "type_name": record.type_name,
+                            "field": field,
+                            "path": str(source),
+                            "relative_path": relative_path.as_posix(),
+                            "stored_path": stored_relative_path.as_posix(),
+                            "size_bytes": size_bytes,
+                            "sha256": self._sha256_file(source),
+                        }
+                    )
+                except OSError as exc:
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            str(exc),
+                        )
+                    )
+        return {
+            "scope": "workspace_content_reference_snapshot",
+            "snapshots": snapshots,
+            "skipped": skipped,
+            "max_file_bytes": self.WORKSPACE_BASELINE_CONTENT_MAX_BYTES,
+            "max_files": self.WORKSPACE_BASELINE_CONTENT_MAX_FILES,
+        }
+
+    def _iter_workspace_baseline_content_candidates(
+        self,
+        record: ManagedObjectRecord,
+        managed_instance: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        fields = ["config_dir"]
+        if record.type_name.lower() in {"sqlite", "database"}:
+            fields.append("data_dir")
+        for field in fields:
+            raw_path = managed_instance.get(field)
+            if not isinstance(raw_path, str) or not raw_path:
+                continue
+            root = Path(raw_path).expanduser().resolve()
+            if root.is_file():
+                if self._is_supported_workspace_baseline_content_file(
+                    record,
+                    field,
+                    root,
+                ):
+                    candidates.append(
+                        {"field": field, "path": root, "relative_path": Path(root.name)}
+                    )
+                continue
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if not path.is_file():
+                    continue
+                source = path.resolve()
+                if not self._is_supported_workspace_baseline_content_file(
+                    record,
+                    field,
+                    source,
+                ):
+                    continue
+                try:
+                    relative_path = source.relative_to(root)
+                except ValueError:
+                    relative_path = Path(source.name)
+                candidates.append(
+                    {
+                        "field": field,
+                        "path": source,
+                        "relative_path": relative_path,
+                    }
+                )
+        return candidates
+
+    def _is_supported_workspace_baseline_content_file(
+        self,
+        record: ManagedObjectRecord,
+        field: str,
+        path: Path,
+    ) -> bool:
+        if field == "config_dir":
+            return True
+        if field == "data_dir" and record.type_name.lower() in {"sqlite", "database"}:
+            return path.suffix.lower() in {".db", ".sqlite", ".sqlite3"}
+        return False
+
+    def _restore_workspace_baseline_content_references(
+        self,
+        record: WorkspaceBaselineRecord,
+    ) -> dict[str, Any]:
+        metadata = record.metadata if isinstance(record.metadata, dict) else {}
+        snapshots = (
+            metadata.get("content_reference_snapshots", [])
+            if isinstance(metadata.get("content_reference_snapshots"), list)
+            else []
+        )
+        restored_contents: list[dict[str, Any]] = []
+        overwritten_contents: list[dict[str, Any]] = []
+        unchanged_contents: list[dict[str, Any]] = []
+        skipped_contents: list[dict[str, Any]] = []
+        baseline_root = self.storage.baselines_dir.resolve()
+        workspace_root = self.root_path.resolve()
+        for item in snapshots:
+            if not isinstance(item, dict):
+                continue
+            raw_stored_path = item.get("stored_path")
+            raw_target_path = item.get("path")
+            if not isinstance(raw_stored_path, str) or not isinstance(
+                raw_target_path,
+                str,
+            ):
+                continue
+            source = (self.storage.baselines_dir / raw_stored_path).resolve()
+            target = Path(raw_target_path).expanduser().resolve()
+            object_name = str(item.get("object_name", ""))
+            field = str(item.get("field", ""))
+            if not source.is_relative_to(baseline_root):
+                skipped_contents.append(
+                    {
+                        "object_name": object_name,
+                        "field": field,
+                        "path": raw_stored_path,
+                        "reason": "invalid_baseline_content_path",
+                    }
+                )
+                continue
+            if not target.is_relative_to(workspace_root):
+                skipped_contents.append(
+                    {
+                        "object_name": object_name,
+                        "field": field,
+                        "path": str(target),
+                        "reason": "target_outside_workspace_not_supported",
+                    }
+                )
+                continue
+            if not source.exists() or not source.is_file():
+                skipped_contents.append(
+                    {
+                        "object_name": object_name,
+                        "field": field,
+                        "path": str(target),
+                        "reason": "baseline_content_file_not_found",
+                    }
+                )
+                continue
+            if target.exists() and target.is_dir():
+                skipped_contents.append(
+                    {
+                        "object_name": object_name,
+                        "field": field,
+                        "path": str(target),
+                        "reason": "target_path_is_directory",
+                    }
+                )
+                continue
+            try:
+                target_exists = target.exists()
+                target_sha256 = self._sha256_file(target) if target_exists else None
+                source_sha256 = self._sha256_file(source)
+                result_entry = {
+                    "object_name": object_name,
+                    "field": field,
+                    "path": str(target),
+                    "size_bytes": item.get("size_bytes"),
+                    "sha256": item.get("sha256", source_sha256),
+                }
+                if target_sha256 == source_sha256:
+                    unchanged_contents.append(
+                        {
+                            **result_entry,
+                            "action": "already_at_baseline",
+                        }
+                    )
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                if target_exists:
+                    overwritten_contents.append(
+                        {
+                            **result_entry,
+                            "action": "overwritten_to_baseline",
+                            "previous_sha256": target_sha256,
+                        }
+                    )
+                else:
+                    restored_contents.append(
+                        {
+                            **result_entry,
+                            "action": "created_from_baseline",
+                        }
+                    )
+            except OSError as exc:
+                skipped_contents.append(
+                    {
+                        "object_name": object_name,
+                        "field": field,
+                        "path": str(target),
+                        "reason": str(exc),
+                    }
+                )
+        return {
+            "scope": "workspace_content_reference_restore",
+            "restored_contents": restored_contents,
+            "overwritten_contents": overwritten_contents,
+            "unchanged_contents": unchanged_contents,
+            "skipped_contents": skipped_contents,
+            "limitations": [
+                "only small explicitly supported content files are restored",
+                "full database image restoration is not included in this stage",
+                "container/system rollback is not included in this stage",
+            ],
+        }
+
+    def _build_workspace_baseline_content_skip(
+        self,
+        record: ManagedObjectRecord,
+        field: str,
+        path: Path,
+        reason: str,
+    ) -> dict[str, Any]:
+        return {
+            "object_name": record.name,
+            "type_name": record.type_name,
+            "field": field,
+            "path": str(path),
+            "reason": reason,
+        }
+
+    def _safe_workspace_baseline_path_segment(self, value: str) -> str:
+        safe_value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._")
+        return safe_value or "object"
+
+    def _sha256_file(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as file_obj:
+            for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def _build_workspace_recovery_post_checks(
         self,
@@ -6351,14 +6714,10 @@ class WorkflowService:
         if has_predecessors:
             confidence = "reduced_by_recent_execution_context"
         assessment = "query_level_plan"
-        reason = (
-            "current recovery plan summarizes query-level evidence only and does not reconstruct historical database state"
-        )
+        reason = "current recovery plan summarizes query-level evidence only and does not reconstruct historical database state"
         if has_predecessors:
             assessment = "possible_precondition_or_sequence_dependency"
-            reason = (
-                "recent executions may have changed the data state before this preserved failure, so the current recovery plan should be treated as a query-level hint"
-            )
+            reason = "recent executions may have changed the data state before this preserved failure, so the current recovery plan should be treated as a query-level hint"
         recommended_actions = origin_hints.get("recommended_actions", [])
         if not isinstance(recommended_actions, list):
             recommended_actions = []

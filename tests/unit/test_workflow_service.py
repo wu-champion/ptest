@@ -691,9 +691,10 @@ def test_workflow_service_starts_mysql_managed_instance(tmp_path: Path) -> None:
     assert normalized_binary.endswith("bin/mysqld") or normalized_binary.endswith(
         "bin/mysqld.cmd"
     )
-    assert status["object"]["metadata"]["crash_capture"]["enable_attempt"][
-        "attempted"
-    ] is True
+    assert (
+        status["object"]["metadata"]["crash_capture"]["enable_attempt"]["attempted"]
+        is True
+    )
 
     stop_result = service.stop_object("mysql_service")
     assert stop_result["success"] is True

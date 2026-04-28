@@ -433,9 +433,10 @@ def test_workflow_service_data_state_origin_hints_reflect_recent_predecessors(
     assert assets["assets"]["recovery"]["origin_hints"]["candidate_case_ids"] == [
         "setup_case"
     ]
-    assert assets["assets"]["recovery"]["origin_hints"]["immediate_predecessor"][
-        "case_id"
-    ] == "setup_case"
+    assert (
+        assets["assets"]["recovery"]["origin_hints"]["immediate_predecessor"]["case_id"]
+        == "setup_case"
+    )
     assert assets["assets"]["recovery"]["origin_hints"]["query_context"] == (
         "status_filtered_query"
     )
@@ -711,12 +712,16 @@ def test_workflow_service_preserves_service_runtime_problem(tmp_path: Path) -> N
     assert recovery["recovery"]["next_actions"][0]["action"] == (
         "inspect_recent_runtime_logs"
     )
-    assert recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
-        "object_name"
-    ] == "demo_service"
-    assert recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
-        "recommended_action"
-    ] == "reinstall"
+    assert (
+        recovery["recovery"]["workspace_recovery"]["affected_objects"][0]["object_name"]
+        == "demo_service"
+    )
+    assert (
+        recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+            "recommended_action"
+        ]
+        == "reinstall"
+    )
 
 
 def test_workflow_service_classifies_start_failed_service_runtime_problem(
@@ -819,9 +824,10 @@ def test_workflow_service_classifies_abnormal_exit_from_expected_running_service
         "inspect_exit_logs_before_restart"
     )
     assert assets["assets"]["investigation"]["failure_kind"] == "abnormal_exit"
-    assert assets["assets"]["investigation"]["runtime_hints"][
-        "expected_runtime_state"
-    ] == "running"
+    assert (
+        assets["assets"]["investigation"]["runtime_hints"]["expected_runtime_state"]
+        == "running"
+    )
 
 
 def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
@@ -911,12 +917,16 @@ def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
     assert recovery["recovery"]["recommended_checks"][0]["purpose"] == (
         "inspect_dump_refs"
     )
-    assert recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
-        "object_name"
-    ] == "demo_service"
-    assert recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
-        "recommended_action"
-    ] == "reinstall"
+    assert (
+        recovery["recovery"]["workspace_recovery"]["affected_objects"][0]["object_name"]
+        == "demo_service"
+    )
+    assert (
+        recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+            "recommended_action"
+        ]
+        == "reinstall"
+    )
 
 
 def test_workflow_service_auto_discovers_new_crash_dump_refs(
@@ -1000,9 +1010,9 @@ def test_workflow_service_auto_discovers_new_crash_dump_refs(
     assert assets["success"] is True
     assert assets["assets"]["details"]["dump_refs"][0]["path"] == str(dump_file)
     assert assets["assets"]["details"]["dump_refs"][0]["source"] == "workspace_scan"
-    assert assets["assets"]["details"]["crash_capture"]["new_dump_refs"][0]["path"] == str(
-        dump_file
-    )
+    assert assets["assets"]["details"]["crash_capture"]["new_dump_refs"][0][
+        "path"
+    ] == str(dump_file)
     assert assets["assets"]["details"]["object_summary"]["object_found"] is False
     assert assets["assets"]["recovery"]["dump_refs"][0]["path"] == str(dump_file)
     assert assets["assets"]["investigation"]["boundary"]["assessment"] == (
@@ -1116,9 +1126,10 @@ def test_workflow_crash_dump_recovery_exposes_side_effect_hints(
     assert detail["problem"]["investigation"]["side_effect"]["classification"] == (
         "possible_crash_inducing_side_effect"
     )
-    assert detail["problem"]["investigation"]["side_effect"][
-        "likely_trigger_case_id"
-    ] == "mutate_crash_case"
+    assert (
+        detail["problem"]["investigation"]["side_effect"]["likely_trigger_case_id"]
+        == "mutate_crash_case"
+    )
     assert (
         detail["problem"]["investigation"]["environment_recovery"]["assessment"]
         == "environment_may_have_shifted_by_prior_case"
@@ -1204,24 +1215,36 @@ def test_workflow_service_workspace_recovery_maps_actions_for_problem_types(
         )
 
     api_recovery = service.recover_problem("problem_api_001")
-    assert api_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
-        "recommended_action"
-    ] == "restart"
+    assert (
+        api_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+            "recommended_action"
+        ]
+        == "restart"
+    )
 
     data_recovery = service.recover_problem("problem_data_001")
-    assert data_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
-        "recommended_action"
-    ] == "reset"
+    assert (
+        data_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+            "recommended_action"
+        ]
+        == "reset"
+    )
 
     runtime_recovery = service.recover_problem("problem_runtime_001")
-    assert runtime_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
-        "recommended_action"
-    ] == "restart"
+    assert (
+        runtime_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+            "recommended_action"
+        ]
+        == "restart"
+    )
 
     crash_recovery = service.recover_problem("problem_crash_002")
-    assert crash_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
-        "recommended_action"
-    ] == "restart"
+    assert (
+        crash_recovery["recovery"]["workspace_recovery"]["affected_objects"][0][
+            "recommended_action"
+        ]
+        == "restart"
+    )
 
 
 def test_workflow_service_runtime_recovery_exposes_side_effect_hints(

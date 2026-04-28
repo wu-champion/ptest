@@ -128,7 +128,9 @@ class WorkspaceStorage:
         )
         return record
 
-    def get_workspace_baseline(self, baseline_id: str) -> WorkspaceBaselineRecord | None:
+    def get_workspace_baseline(
+        self, baseline_id: str
+    ) -> WorkspaceBaselineRecord | None:
         data = self._read_json(self.baselines_dir / f"{baseline_id}.json")
         if not data:
             return None

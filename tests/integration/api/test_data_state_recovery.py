@@ -185,7 +185,9 @@ def test_data_state_recovery_exposes_side_effect_hints_for_prior_mutation(
     run_result = api.run_test_case(verify_case_id)
     assert run_result["success"] is False
 
-    problems = api.list_problem_records(case_id=verify_case_id, problem_type="data_state")
+    problems = api.list_problem_records(
+        case_id=verify_case_id, problem_type="data_state"
+    )
     assert problems["count"] == 1
     problem_id = problems["data"][0]["problem_id"]
 

@@ -257,9 +257,10 @@ def test_stateful_api_hidden_dependency_replay_exposes_request_level_boundary(
         assert recovery["recovery"]["environment_recovery"]["scope"] == (
             "workspace_side_effect_minimum_recovery"
         )
-        assert recovery["recovery"]["environment_recovery"]["recommended_sequence"][
-            0
-        ] == "inspect_likely_trigger_case_effects"
+        assert (
+            recovery["recovery"]["environment_recovery"]["recommended_sequence"][0]
+            == "inspect_likely_trigger_case_effects"
+        )
 
         replay = api.replay_problem(problem_id)
         assert replay["success"] is True
