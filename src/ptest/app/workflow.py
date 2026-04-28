@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-import resource
 import socket
 import time
 import uuid
@@ -55,6 +54,12 @@ from ..reports.generator import ReportGenerator
 from ..suites import SuiteManager
 from ..storage import WorkspaceStorage
 from ..tools.manager import ToolManager
+
+_resource: Any
+try:
+    import resource as _resource
+except ImportError:
+    _resource = None
 
 
 class _ReplayResponseView:
@@ -2780,13 +2785,13 @@ class WorkflowService:
         dump_dir: str | Path | None = None,
     ) -> dict[str, Any]:
         resolved_dump_dir = Path(dump_dir or self._workspace_dump_dir()).resolve()
-        core_supported = hasattr(resource, "RLIMIT_CORE")
+        core_supported = _resource is not None and hasattr(_resource, "RLIMIT_CORE")
         current_limit = None
         limitations: list[str] = []
         core_enabled = False
         if core_supported:
             try:
-                soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+                soft, hard = _resource.getrlimit(_resource.RLIMIT_CORE)
                 current_limit = {
                     "soft": self._serialize_core_limit_value(soft),
                     "hard": self._serialize_core_limit_value(hard),
@@ -2877,19 +2882,19 @@ class WorkflowService:
             updated["enable_attempt"] = enable_attempt
             return updated
 
-        if not updated.get("core_supported", False):
+        if _resource is None or not updated.get("core_supported", False):
             enable_attempt["status"] = "failed"
             enable_attempt["failure_reason"] = "core_rlimit_unsupported"
             updated["enable_attempt"] = enable_attempt
             return updated
 
         try:
-            soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+            soft, hard = _resource.getrlimit(_resource.RLIMIT_CORE)
             if soft == 0:
                 if hard == 0:
                     raise RuntimeError("process_core_hard_limit_disabled")
-                resource.setrlimit(resource.RLIMIT_CORE, (hard, hard))
-                soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+                _resource.setrlimit(_resource.RLIMIT_CORE, (hard, hard))
+                soft, hard = _resource.getrlimit(_resource.RLIMIT_CORE)
             updated["current_limit"] = {
                 "soft": self._serialize_core_limit_value(soft),
                 "hard": self._serialize_core_limit_value(hard),
@@ -2910,7 +2915,7 @@ class WorkflowService:
         return updated
 
     def _serialize_core_limit_value(self, value: int) -> str | int:
-        if value == resource.RLIM_INFINITY:
+        if _resource is not None and value == _resource.RLIM_INFINITY:
             return "unlimited"
         return value
 
