@@ -1407,6 +1407,11 @@ def test_workflow_service_runs_case_and_generates_report(tmp_path: Path) -> None
     assert (artifact_dir / "indexes" / "artifact_index.json").exists()
     assert (artifact_dir / "logs" / "log_index.json").exists()
     artifacts = executions[0]["metadata"]["artifacts"]
+    assert "\\" not in artifacts["directory"]
+    assert "\\" not in artifacts["files"]["environment"]
+    assert "\\" not in artifacts["files"]["execution"]
+    assert "\\" not in artifacts["indexes"]["artifact_index"]
+    assert "\\" not in artifacts["indexes"]["log_index"]
     assert _normalized_path(artifacts["directory"]).startswith(".ptest/artifacts/")
     assert _normalized_path(artifacts["files"]["environment"]).endswith(
         "context/environment.json"
@@ -1426,6 +1431,8 @@ def test_workflow_service_runs_case_and_generates_report(tmp_path: Path) -> None
     log_index = json.loads(
         (artifact_dir / "logs" / "log_index.json").read_text(encoding="utf-8")
     )
+    assert "\\" not in artifact_index["files"]["execution"]
+    assert "\\" not in artifact_index["indexes"]["log_index"]
     assert _normalized_path(artifact_index["files"]["execution"]).endswith(
         "result/execution.json"
     )

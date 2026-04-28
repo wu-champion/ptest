@@ -200,7 +200,7 @@ class WorkspaceStorage:
             if isinstance(output, str):
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(output, encoding="utf-8")
-                files["output"] = str(output_path.relative_to(self.root_path))
+                files["output"] = self._relative_workspace_path(output_path)
             else:
                 files["output"] = self._write_artifact_file(output_path, output)
 
@@ -234,14 +234,14 @@ class WorkspaceStorage:
             log_index,
         )
         indexes = {
-            "artifact_index": str(
-                (indexes_dir / "artifact_index.json").relative_to(self.root_path)
+            "artifact_index": self._relative_workspace_path(
+                indexes_dir / "artifact_index.json"
             ),
             "log_index": log_index_path,
         }
         artifact_manifest = {
             "execution_id": execution_id,
-            "directory": str(artifact_dir.relative_to(self.root_path)),
+            "directory": self._relative_workspace_path(artifact_dir),
             "files": files,
             "categories": categories,
             "indexes": indexes,
@@ -263,11 +263,11 @@ class WorkspaceStorage:
         artifact_index_path = artifact_dir / "indexes" / "artifact_index.json"
         artifact_index = self._read_json(artifact_index_path) or {
             "execution_id": record.execution_id,
-            "directory": str(artifact_dir.relative_to(self.root_path)),
+            "directory": self._relative_workspace_path(artifact_dir),
             "files": {},
             "categories": {},
             "indexes": {
-                "artifact_index": str(artifact_index_path.relative_to(self.root_path)),
+                "artifact_index": self._relative_workspace_path(artifact_index_path),
             },
         }
         files = artifact_index.setdefault("files", {})
@@ -462,7 +462,7 @@ class WorkspaceStorage:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2, ensure_ascii=False, default=str)
-        return str(path.relative_to(self.root_path))
+        return self._relative_workspace_path(path)
 
     def _list_workspace_logs(self) -> list[dict[str, Any]]:
         logs_dir = self.root_path / "logs"
@@ -474,7 +474,7 @@ class WorkspaceStorage:
             stat = path.stat()
             entries.append(
                 {
-                    "path": str(path.relative_to(self.root_path)),
+                    "path": self._relative_workspace_path(path),
                     "size": stat.st_size,
                     "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 }
@@ -483,7 +483,7 @@ class WorkspaceStorage:
 
     def _relative_workspace_path(self, path: Path) -> str:
         try:
-            return str(path.relative_to(self.root_path))
+            return path.relative_to(self.root_path).as_posix()
         except ValueError:
             return str(path)
 
