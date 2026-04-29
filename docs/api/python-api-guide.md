@@ -175,7 +175,9 @@ print(artifacts["data"]["contents"]["result/execution.json"])
 
 ```python
 problems = api.list_problem_records(case_id=case_id)
-print(problems["data"])
+print(problems["count"])
+print(problems["filters"])
+print(problems["problems"])
 
 problem_id = problems["data"][0]["problem_id"]
 
@@ -184,17 +186,42 @@ assets = api.get_problem_assets(problem_id)
 recovery = api.recover_problem(problem_id)
 
 print(detail["data"]["problem_type"])
+print(detail["data"]["capabilities"])
 print(assets["data"]["preservation_status"])
+print(assets["assets"]["reproduction_summary"])
 print(recovery["data"]["mode"])
 ```
 
-如果问题类型支持最小重放：
+其中：
+
+- `list_problem_records()` 现在会稳定返回 `count`、`filters`、`problems`
+- `get_problem_record()` / `get_problem_assets()` 仍保留 `data`，同时也会给出更直接的 `problem` / `assets` 别名字段
+- 对 `api_response` 问题，`get_problem_assets()` 还会给出 `reproduction_summary`，方便把一次接口失败的最小复现材料直接交给别人复看
+- `reproduction_summary.dependency_hints` 会补充失败前最近执行过的 case 线索，帮助你判断这次问题是否可能受前置执行影响
+- `dependency_hints.recommended_actions` 会直接给出下一步排查建议，例如先检查最近前置 case，或先按顺序重跑候选前置 case 再 replay
+- `get_problem_record()` / `get_problem_assets()` / `replay_problem()` 现在都会额外带一个统一的 `investigation` 视图，适合先消费问题摘要、依赖线索和下一步动作，再决定是否读取更细的原始字段
+- 对 `data_state` 问题，`get_problem_record()` / `get_problem_assets()` / `recover_problem()` 也会稳定带出 `origin_hints` 和 `boundary`，方便在恢复前先判断问题更像缺数据、脏数据还是字段值偏差，以及当前计划是不是只到查询级恢复建议
+
+如果 `detail["data"]["capabilities"]["can_replay"]` 为 `True`，则可以继续做最小重放：
 
 ```python
 replay = api.replay_problem(problem_id)
 print(replay["data"])
 print(replay["recovery_action"])
+print(replay["replay"]["comparison"])
+print(replay["replay"]["comparison"]["summary"])
+print(replay["replay"]["comparison"]["highlights"])
 ```
+
+对于 `api_response` 问题，`replay["replay"]["comparison"]` 会直接给出原始失败现场与当前 replay 结果的对比摘要，
+并通过 `assertion_outcome` / `reproduced` 告诉你这次 replay 是否仍然复现原问题。当前 `comparison.summary`
+会优先给出更适合机器消费的 `status / boundary / headers / body` 变化概要，而 `comparison.highlights` 更适合人直接阅读。
+如果原始失败阶段没有保全到响应头或响应体，`comparison.summary` 也会明确把这些字段标记为当前不可比较。
+其中 `comparison.summary.body.*_preview` 只会给出轻量预览，帮助快速判断变化方向，不会直接展开成完整 patch。
+其中 `comparison.summary.boundary` 会固定说明当前 replay 的可信边界，例如它只重放保全下来的请求，不会自动重建历史环境状态或前置 case 影响。
+如果工作区里存在与本次失败相邻的前置执行，`comparison.summary.boundary.dependency_hints` 也会一起给出，方便把 replay 结果和可能的依赖来源对起来看。
+同时 `comparison.summary.boundary.recommended_actions` 会给出结构化下一步动作建议，方便 CLI、自动化脚本或上层工具直接消费。
+如果你只想先拿一份稳定的调查结论，也可以优先看 `replay["replay"]["investigation"]`，它会把 request、boundary、dependency、next_actions 统一收在一起。
 
 ## 报告
 

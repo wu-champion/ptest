@@ -1,3 +1,28 @@
+## [1.9.0] - 2026-04-29
+
+### Added - 新增功能
+
+- 新增 `problem` 问题保全、资产查看、恢复建议和调查摘要的最小闭环增强
+- 新增 `api_response` 问题复现材料摘要、重放对比摘要和推荐动作提示
+- 新增 `data_state` 问题保全与最小恢复方案，并补充 SQLite / MySQL 相关验证场景
+- 新增 `service_runtime` 问题保全与最小恢复链路，覆盖服务运行态偏离、启动失败和异常退出场景
+- 新增 `crash_dump` 问题保全主线，支持 dump/core 引用保全、工作区级 core 捕获准备、自动发现和调查摘要
+- 新增测试副作用与 crash_dump 副作用恢复建议
+- 新增 workspace recovery 最小恢复基线、workspace baseline snapshot 恢复和对象引用恢复能力
+
+### Changed - 改进
+
+- 统一问题记录、问题资产、调查摘要和恢复动作在 CLI / Python API / WorkflowService 中的对外表达
+- 增强问题列表过滤、空结果语义、恢复边界提示和可信摘要
+- 增强 workspace baseline 内容恢复，使恢复计划能更清晰地表达对象、目录和资产引用边界
+- 将执行 artifact、日志索引等工作区相对路径统一写为 `/` 分隔，便于跨平台消费
+
+### Fixed - 修复
+
+- 修复 Windows 下缺少 `resource` 模块导致单元测试收集失败的问题
+- 修复 Windows 下 artifact/log 相对路径使用反斜杠，导致 crash_dump 日志窗口断言和跨平台资产消费不稳定的问题
+- 修复 replay 依赖提示来源、边界提示和推荐动作表达不完整的问题
+
 ## [1.8.0] - 2026-04-11
 
 ### Added - 新增功能

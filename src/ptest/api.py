@@ -53,6 +53,35 @@ class PTestAPI:
             data=status,
         )
 
+    def create_workspace_baseline(self, summary: str = "") -> dict[str, Any]:
+        result = self.workflow.create_workspace_baseline(summary=summary)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+        )
+
+    def list_workspace_baselines(self) -> dict[str, Any]:
+        baselines = self.workflow.list_workspace_baselines()
+        return self._api_response(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(baselines)} workspace baselines",
+            data=baselines,
+        )
+
+    def restore_workspace_baseline(self, baseline_id: str) -> dict[str, Any]:
+        result = self.workflow.restore_workspace_baseline(baseline_id)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+        )
+
     def create_test_case(
         self,
         test_type: str,
@@ -303,11 +332,23 @@ class PTestAPI:
             case_id=case_id,
             execution_id=execution_id,
         )
+        filters = {
+            key: value
+            for key, value in {
+                "problem_type": problem_type,
+                "case_id": case_id,
+                "execution_id": execution_id,
+            }.items()
+            if value is not None
+        }
         return self._api_response(
             success=True,
             status="ok",
             message=f"Retrieved {len(records)} problem records",
             data=records,
+            problems=records,
+            count=len(records),
+            filters=filters,
         )
 
     def get_problem_record(self, problem_id: str) -> dict[str, Any]:
@@ -317,6 +358,7 @@ class PTestAPI:
             status=result["status"],
             message=result["message"],
             data=result.get("problem"),
+            problem=result.get("problem"),
             error=result.get("error"),
             error_code=result.get("error_code"),
         )
@@ -328,6 +370,7 @@ class PTestAPI:
             status=result["status"],
             message=result["message"],
             data=result.get("assets"),
+            assets=result.get("assets"),
             error=result.get("error"),
             error_code=result.get("error_code"),
         )
@@ -339,6 +382,7 @@ class PTestAPI:
             status=result["status"],
             message=result["message"],
             data=result.get("recovery_action"),
+            recovery_action=result.get("recovery_action"),
             error=result.get("error"),
             error_code=result.get("error_code"),
         )
@@ -350,6 +394,7 @@ class PTestAPI:
             status=result["status"],
             message=result["message"],
             data=result.get("replay"),
+            replay=result.get("replay"),
             recovery_action=result.get("recovery_action"),
             error=result.get("error"),
             error_code=result.get("error_code"),
@@ -362,6 +407,7 @@ class PTestAPI:
             status=result["status"],
             message=result["message"],
             data=result.get("recovery"),
+            recovery=result.get("recovery"),
             recovery_action=result.get("recovery_action"),
             error=result.get("error"),
             error_code=result.get("error_code"),

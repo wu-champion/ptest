@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import os
+import re
 import socket
 import time
 import uuid
@@ -12,6 +15,7 @@ from typing import Any, cast
 
 from ..cases.manager import CaseManager
 from ..cases.result import TestCaseResult
+from ..assertions.factory import AssertionFactory
 from ..config import DEFAULT_CONFIG
 from ..contract.manager import ContractManager
 from ..data.generator import DataGenerationConfig, DataGenerator, DataTemplate
@@ -24,13 +28,21 @@ from ..models import (
     InstallationSourceAsset,
     ManagedObjectRecord,
     MySQLLifecycleScenarioConfig,
+    OBJECT_STATUS_CREATED,
     OBJECT_STATUS_ERROR,
     OBJECT_STATUS_INSTALL_FAILED_PRESERVED,
     OBJECT_STATUS_INSTALLED,
+    PROBLEM_ACTION_PRESERVED,
+    PROBLEM_PRESERVATION_FAILED,
+    PROBLEM_PRESERVATION_PARTIAL,
+    PROBLEM_PRESERVATION_SUCCESS,
+    PROBLEM_STATUS_OPEN,
+    OBJECT_STATUS_REMOVED,
     OBJECT_STATUS_RUNNING,
     OBJECT_STATUS_START_FAILED_PRESERVED,
     OBJECT_STATUS_STOPPED,
     ToolRecord,
+    WorkspaceBaselineRecord,
     is_clearable_object_status,
     is_failure_preserved_object_status,
     is_resettable_object_status,
@@ -43,11 +55,37 @@ from ..suites import SuiteManager
 from ..storage import WorkspaceStorage
 from ..tools.manager import ToolManager
 
+_resource: Any
+try:
+    import resource as _resource
+except ImportError:
+    _resource = None
+
+
+class _ReplayResponseView:
+    def __init__(self, status_code: int, headers: dict[str, Any], body: Any) -> None:
+        self.status_code = status_code
+        self.headers = headers
+        self._body = body
+        if isinstance(body, str):
+            self.text = body
+        elif isinstance(body, (dict, list)):
+            self.text = json.dumps(body, ensure_ascii=False, sort_keys=True)
+        else:
+            self.text = str(body)
+
+    def json(self) -> Any:
+        if isinstance(self._body, str):
+            raise ValueError("response body is not json")
+        return self._body
+
 
 class WorkflowService:
     """First-phase workflow orchestration service."""
 
     DEFAULT_MANAGED_MYSQL_PORT = 13306
+    WORKSPACE_BASELINE_CONTENT_MAX_BYTES = 256 * 1024
+    WORKSPACE_BASELINE_CONTENT_MAX_FILES = 32
 
     def __init__(
         self,
@@ -88,7 +126,11 @@ class WorkflowService:
                 metadata={
                     "reports_dir": str(env_manager.report_dir),
                     "logs_dir": str(env_manager.log_dir),
+                    "dumps_dir": str(env_manager.dump_dir),
                     "isolation": isolation_metadata,
+                    "crash_capture": self._build_environment_crash_capture_capability(
+                        env_manager.dump_dir
+                    ),
                 },
             )
             return self.storage.save_environment(record)
@@ -149,6 +191,103 @@ class WorkflowService:
             "metadata": record.metadata,
         }
 
+    def create_workspace_baseline(self, summary: str = "") -> dict[str, Any]:
+        environment = self.storage.load_environment()
+        if environment is None:
+            environment = self.init_environment(self.root_path)
+        objects = self.storage.load_objects()
+        baseline_id = (
+            f"baseline_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        )
+        content_capture = self._build_workspace_baseline_content_snapshots(
+            baseline_id,
+            objects,
+        )
+        record = WorkspaceBaselineRecord(
+            baseline_id=baseline_id,
+            root_path=str(self.root_path),
+            summary=summary or "workspace minimum baseline snapshot",
+            environment=environment.to_dict(),
+            objects=[item.to_dict() for item in objects.values()],
+            metadata={
+                "object_count": len(objects),
+                "capture_scope": "workspace_minimum_baseline",
+                "object_reference_snapshots": self._build_workspace_baseline_object_references(
+                    objects
+                ),
+                "content_reference_snapshots": content_capture["snapshots"],
+                "content_reference_skipped": content_capture["skipped"],
+                "limitations": [
+                    "only small explicitly supported content files are copied",
+                    "full directory-level copies are not included in this baseline",
+                    "full database image restoration is not included in this baseline",
+                    "container/system rollback is not included in this first-stage baseline",
+                ],
+            },
+        )
+        self.storage.save_workspace_baseline(record)
+        return {
+            "success": True,
+            "status": "created",
+            "message": f"Workspace baseline created: {baseline_id}",
+            "data": self._build_workspace_baseline_summary(record),
+        }
+
+    def list_workspace_baselines(self) -> list[dict[str, Any]]:
+        return [
+            self._build_workspace_baseline_summary(item)
+            for item in self.storage.list_workspace_baselines()
+        ]
+
+    def restore_workspace_baseline(self, baseline_id: str) -> dict[str, Any]:
+        record = self.storage.get_workspace_baseline(baseline_id)
+        if record is None:
+            return {
+                "success": False,
+                "status": "not_found",
+                "message": f"Workspace baseline not found: {baseline_id}",
+                "error": f"Workspace baseline '{baseline_id}' does not exist",
+            }
+
+        environment_data = (
+            record.environment if isinstance(record.environment, dict) else {}
+        )
+        restored_environment = EnvironmentRecord.from_dict(environment_data)
+        restored_environment.updated_at = datetime.now().isoformat()
+        self.storage.save_environment(restored_environment)
+
+        restored_objects: dict[str, ManagedObjectRecord] = {}
+        raw_objects = record.objects if isinstance(record.objects, list) else []
+        for item in raw_objects:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                object_record = ManagedObjectRecord.from_dict(item)
+                object_record.updated_at = datetime.now().isoformat()
+                restored_objects[object_record.name] = object_record
+        self.storage.save_objects(restored_objects)
+        directory_restore = self._restore_workspace_baseline_object_references(record)
+        content_restore = self._restore_workspace_baseline_content_references(record)
+
+        return {
+            "success": True,
+            "status": "restored",
+            "message": f"Workspace baseline restored: {baseline_id}",
+            "data": {
+                "baseline": self._build_workspace_baseline_summary(record),
+                "restored_object_names": sorted(restored_objects.keys()),
+                "verification": {
+                    "scope": "workspace_minimum_baseline_restore",
+                    "restored_object_count": len(restored_objects),
+                    "environment_status": restored_environment.status,
+                    "directory_restore": directory_restore,
+                    "content_restore": content_restore,
+                    "next_actions": [
+                        "verify_recovered_object_state",
+                        "rerun_affected_case_after_baseline_restore",
+                    ],
+                },
+            },
+        }
+
     def install_object(
         self, obj_type: str, name: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -179,6 +318,10 @@ class WorkflowService:
             metadata=self._collect_object_metadata(materialized)
             if materialized
             else {},
+        )
+        record.metadata["crash_capture"] = self._merge_object_crash_capture_capability(
+            record,
+            record.metadata.get("crash_capture"),
         )
         if record.status == OBJECT_STATUS_INSTALL_FAILED_PRESERVED:
             record.metadata["failure_state"] = self._build_failure_state_metadata(
@@ -248,6 +391,7 @@ class WorkflowService:
             "files_dir": str(instance_root / "mysql-files"),
             "log_dir": str(instance_root / "logs"),
             "run_dir": str(instance_root / "run"),
+            "dump_dir": str(instance_root / "dumps"),
         }
         port = self._coerce_mysql_port(
             params.get("port", params.get("server_port")),
@@ -308,6 +452,9 @@ class WorkflowService:
                 "pid_file": str(Path(directories["run_dir"]) / "mysql.pid"),
                 "socket_file": str(Path(directories["run_dir"]) / "mysql.sock"),
                 "managed_instance": directories,
+                "crash_capture": self._build_object_crash_capture_capability(
+                    dump_dir=directories["dump_dir"]
+                ),
                 "dependency_assets": dependency_assets,
                 "scenario": scenario.to_dict(),
             }
@@ -1187,11 +1334,15 @@ class WorkflowService:
             case_id,
             params=params,
         )
+        crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
+            case_definition
+        )
         self._persist_execution(
             case_id,
             result,
             case_manager,
             case_definition_override=case_definition,
+            crash_snapshot_before=crash_snapshot_before,
         )
         payload = self._result_payload(result)
         payload["message"] = (
@@ -1249,11 +1400,15 @@ class WorkflowService:
                 if isinstance(case_result, tuple) and len(case_result) == 2:
                     case_result, case_definition = case_result
                 if isinstance(case_result, TestCaseResult):
+                    crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
+                        case_definition
+                    )
                     self._persist_execution(
                         case_result.case_id,
                         case_result,
                         case_manager,
                         case_definition_override=case_definition,
+                        crash_snapshot_before=crash_snapshot_before,
                     )
                     results.append(self._result_payload(case_result))
             return self._summarize_results(results)
@@ -1280,11 +1435,15 @@ class WorkflowService:
             if isinstance(case_result, tuple) and len(case_result) == 2:
                 case_result, case_definition = case_result
             if isinstance(case_result, TestCaseResult):
+                crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
+                    case_definition
+                )
                 self._persist_execution(
                     case_result.case_id,
                     case_result,
                     case_manager,
                     case_definition_override=case_definition,
+                    crash_snapshot_before=crash_snapshot_before,
                 )
                 results.append(self._result_payload(case_result))
         return self._summarize_results(results)
@@ -1373,7 +1532,10 @@ class WorkflowService:
         case_id: str | None = None,
         execution_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        records = self.storage.load_problem_records().values()
+        records = self._list_problem_record_models(
+            case_id=case_id,
+            execution_id=execution_id,
+        )
         filtered = []
         for record in records:
             if problem_type is not None and record.problem_type != problem_type:
@@ -1382,31 +1544,108 @@ class WorkflowService:
                 continue
             if execution_id is not None and record.execution_id != execution_id:
                 continue
-            filtered.append(record.to_dict())
+            filtered.append(self._problem_record_payload(record))
         return sorted(filtered, key=lambda item: item["created_at"], reverse=True)
-
-    def get_problem_record(self, problem_id: str) -> dict[str, Any]:
-        record = self.storage.get_problem_record(problem_id)
-        if record is None:
-            return self._not_found_result("problem", problem_id)
-        return self._operation_result(
-            success=True,
-            status="ok",
-            message=f"Problem '{problem_id}' retrieved",
-            data=record.to_dict(),
-            problem=record.to_dict(),
-        )
 
     def get_problem_assets(self, problem_id: str) -> dict[str, Any]:
         assets = self.storage.get_problem_assets(problem_id)
         if assets is None:
             return self._not_found_result("problem_assets", problem_id)
+        payload = self._problem_assets_payload(assets)
         return self._operation_result(
             success=True,
             status="ok",
             message=f"Assets for problem '{problem_id}' retrieved",
-            data=assets.to_dict(),
-            assets=assets.to_dict(),
+            data=payload,
+            assets=payload,
+        )
+
+    def _problem_record_payload(self, record: ProblemRecord) -> dict[str, Any]:
+        payload = record.to_dict()
+        metadata = payload.get("metadata", {})
+        preservation = metadata.get("preservation", {})
+        capabilities = metadata.get("capabilities", {})
+        if isinstance(preservation, dict):
+            payload["preservation"] = preservation
+        if isinstance(capabilities, dict):
+            payload["capabilities"] = capabilities
+        latest_comparison = self._extract_problem_latest_comparison(payload)
+        payload["investigation"] = self._build_problem_investigation_summary(
+            payload,
+            view="problem",
+            comparison=latest_comparison
+            if isinstance(latest_comparison, dict)
+            else None,
+        )
+        return payload
+
+    def _problem_assets_payload(self, assets: ProblemAssetRecord) -> dict[str, Any]:
+        payload = assets.to_dict()
+        metadata = payload.get("metadata", {})
+        details = payload.get("details", {})
+        preservation = {}
+        if isinstance(details, dict):
+            raw_preservation = details.get("preservation", {})
+            if isinstance(raw_preservation, dict):
+                preservation = raw_preservation
+        if not preservation and isinstance(metadata, dict):
+            raw_preservation = metadata.get("preservation", {})
+            if isinstance(raw_preservation, dict):
+                preservation = raw_preservation
+        capabilities = metadata.get("capabilities", {})
+        if isinstance(preservation, dict):
+            payload["preservation"] = preservation
+        if isinstance(capabilities, dict):
+            payload["capabilities"] = capabilities
+        reproduction_summary = self._build_problem_reproduction_summary(payload)
+        if reproduction_summary is not None:
+            payload["reproduction_summary"] = reproduction_summary
+        latest_comparison = self._extract_problem_latest_comparison(payload)
+        payload["investigation"] = self._build_problem_investigation_summary(
+            payload,
+            view="assets",
+            reproduction_summary=(
+                reproduction_summary if isinstance(reproduction_summary, dict) else None
+            ),
+            comparison=latest_comparison
+            if isinstance(latest_comparison, dict)
+            else None,
+        )
+        return payload
+
+    def get_problem_record(self, problem_id: str) -> dict[str, Any]:
+        record = self.storage.get_problem_record(problem_id)
+        if record is None:
+            return self._not_found_result("problem", problem_id)
+        payload = self._problem_record_payload(record)
+        assets = self.storage.get_problem_assets(problem_id)
+        if assets is not None:
+            assets_payload = self._problem_assets_payload(assets)
+            payload_for_investigation = {
+                **payload,
+                "details": assets_payload.get("details", {}),
+                "recovery": assets_payload.get("recovery", {}),
+                "preservation": assets_payload.get(
+                    "preservation", payload.get("preservation", {})
+                ),
+                "capabilities": assets_payload.get(
+                    "capabilities", payload.get("capabilities", {})
+                ),
+            }
+            payload["investigation"] = self._build_problem_investigation_summary(
+                payload_for_investigation,
+                view="problem",
+                reproduction_summary=assets_payload.get("reproduction_summary")
+                if isinstance(assets_payload.get("reproduction_summary"), dict)
+                else None,
+                comparison=self._extract_problem_latest_comparison(payload),
+            )
+        return self._operation_result(
+            success=True,
+            status="ok",
+            message=f"Problem '{problem_id}' retrieved",
+            data=payload,
+            problem=payload,
         )
 
     def get_problem_recovery(self, problem_id: str) -> dict[str, Any]:
@@ -1428,7 +1667,7 @@ class WorkflowService:
         assets = self.storage.get_problem_assets(problem_id)
         if assets is None:
             return self._not_found_result("problem", problem_id)
-        if assets.problem_type != "api_response":
+        if not self._supports_problem_replay(assets):
             return self._operation_result(
                 success=False,
                 status="unsupported",
@@ -1518,6 +1757,28 @@ class WorkflowService:
                 "body": response_body,
             },
         }
+        comparison = self._build_api_replay_comparison(assets, replay_result)
+        replay_result["comparison"] = comparison
+        replay_result["reproduced"] = comparison["expectation"]["reproduced"]
+        replay_result["investigation"] = self._build_problem_investigation_summary(
+            {
+                "problem_id": problem_id,
+                "problem_type": assets.problem_type,
+                "summary": assets.summary,
+                "preservation": assets.details.get("preservation", {})
+                if isinstance(assets.details, dict)
+                else {},
+                "capabilities": assets.metadata.get("capabilities", {})
+                if isinstance(assets.metadata, dict)
+                else {},
+                "latest_action": f"replay:{'completed'}",
+            },
+            view="replay",
+            reproduction_summary=self._build_problem_reproduction_summary(
+                self._problem_assets_payload(assets)
+            ),
+            comparison=comparison,
+        )
         recovery_action = self._record_problem_recovery_action(
             record,
             assets,
@@ -1542,6 +1803,14 @@ class WorkflowService:
         assets = self.storage.get_problem_assets(problem_id)
         if assets is None:
             return self._not_found_result("problem_assets", problem_id)
+        if not self._supports_problem_recovery(assets):
+            return self._operation_result(
+                success=False,
+                status="unsupported",
+                message=f"Problem '{problem_id}' does not support recover",
+                error="problem_recover_unsupported",
+                error_code="problem_recover_unsupported",
+            )
 
         recovery = self._build_recovery_plan(record, assets)
         recovery_action = self._record_problem_recovery_action(
@@ -1761,6 +2030,14 @@ class WorkflowService:
             )
         metadata = record.metadata.copy()
         metadata.update(self._collect_object_metadata(obj))
+        metadata["crash_capture"] = self._merge_object_crash_capture_capability(
+            record,
+            metadata.get("crash_capture"),
+        )
+        if action in {"start", "restart"}:
+            metadata["crash_capture"] = self._attempt_object_crash_capture_enable(
+                metadata["crash_capture"]
+            )
         if not success and is_failure_preserved_object_status(record.status):
             metadata["failure_state"] = self._build_failure_state_metadata(
                 phase=action,
@@ -2500,6 +2777,148 @@ class WorkflowService:
             "runtime": self._collect_object_runtime_snapshot(obj),
         }
 
+    def _workspace_dump_dir(self) -> Path:
+        return self.root_path / "dumps"
+
+    def _build_environment_crash_capture_capability(
+        self,
+        dump_dir: str | Path | None = None,
+    ) -> dict[str, Any]:
+        resolved_dump_dir = Path(dump_dir or self._workspace_dump_dir()).resolve()
+        core_supported = _resource is not None and hasattr(_resource, "RLIMIT_CORE")
+        current_limit = None
+        limitations: list[str] = []
+        core_enabled = False
+        if core_supported:
+            try:
+                soft, hard = _resource.getrlimit(_resource.RLIMIT_CORE)
+                current_limit = {
+                    "soft": self._serialize_core_limit_value(soft),
+                    "hard": self._serialize_core_limit_value(hard),
+                }
+                core_enabled = soft != 0
+                if hard == 0:
+                    limitations.append("process_core_hard_limit_disabled")
+            except (OSError, ValueError) as exc:
+                limitations.append(f"core_limit_probe_failed:{exc}")
+        else:
+            limitations.append("core_rlimit_unsupported")
+        return {
+            "core_supported": core_supported,
+            "core_enabled": core_enabled,
+            "dump_dir": str(resolved_dump_dir),
+            "limitations": limitations,
+            "enable_attempt": {
+                "attempted": False,
+                "status": "pending",
+                "strategy": "process_rlimit_core",
+                "failure_reason": "",
+            },
+            "current_limit": current_limit,
+        }
+
+    def _build_object_crash_capture_capability(
+        self,
+        dump_dir: str | Path | None = None,
+    ) -> dict[str, Any]:
+        capability = self._build_environment_crash_capture_capability(
+            dump_dir=dump_dir or self._workspace_dump_dir()
+        )
+        capability["source"] = "object_runtime_wrapper"
+        return capability
+
+    def _merge_object_crash_capture_capability(
+        self,
+        record: ManagedObjectRecord,
+        existing: Any,
+    ) -> dict[str, Any]:
+        if isinstance(existing, dict) and existing.get("dump_dir"):
+            capability = existing.copy()
+        else:
+            managed_instance = (
+                record.config.get("managed_instance", {})
+                if isinstance(record.config, dict)
+                else {}
+            )
+            dump_dir = None
+            if isinstance(managed_instance, dict):
+                dump_dir = managed_instance.get("dump_dir")
+            capability = self._build_object_crash_capture_capability(dump_dir=dump_dir)
+        enable_attempt = capability.get("enable_attempt")
+        if not isinstance(enable_attempt, dict):
+            capability["enable_attempt"] = {
+                "attempted": False,
+                "status": "pending",
+                "strategy": "process_rlimit_core",
+                "failure_reason": "",
+            }
+        return capability
+
+    def _attempt_object_crash_capture_enable(
+        self,
+        capability: dict[str, Any],
+    ) -> dict[str, Any]:
+        updated = capability.copy()
+        dump_dir = Path(str(updated.get("dump_dir") or self._workspace_dump_dir()))
+        enable_attempt = dict(updated.get("enable_attempt", {}))
+        enable_attempt.update(
+            {
+                "attempted": True,
+                "strategy": "process_rlimit_core",
+                "failure_reason": "",
+                "attempted_at": datetime.now().isoformat(),
+            }
+        )
+
+        try:
+            dump_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            updated["core_enabled"] = False
+            limitations = list(updated.get("limitations", []))
+            limitations.append("dump_dir_unavailable")
+            updated["limitations"] = limitations
+            enable_attempt["status"] = "failed"
+            enable_attempt["failure_reason"] = str(exc)
+            updated["enable_attempt"] = enable_attempt
+            return updated
+
+        if _resource is None or not updated.get("core_supported", False):
+            enable_attempt["status"] = "failed"
+            enable_attempt["failure_reason"] = "core_rlimit_unsupported"
+            updated["enable_attempt"] = enable_attempt
+            return updated
+
+        try:
+            soft, hard = _resource.getrlimit(_resource.RLIMIT_CORE)
+            if soft == 0:
+                if hard == 0:
+                    raise RuntimeError("process_core_hard_limit_disabled")
+                _resource.setrlimit(_resource.RLIMIT_CORE, (hard, hard))
+                soft, hard = _resource.getrlimit(_resource.RLIMIT_CORE)
+            updated["current_limit"] = {
+                "soft": self._serialize_core_limit_value(soft),
+                "hard": self._serialize_core_limit_value(hard),
+            }
+            updated["core_enabled"] = soft != 0
+            enable_attempt["status"] = "success" if soft != 0 else "failed"
+            if soft == 0:
+                enable_attempt["failure_reason"] = "process_core_soft_limit_disabled"
+        except (OSError, ValueError, RuntimeError) as exc:
+            updated["core_enabled"] = False
+            limitations = list(updated.get("limitations", []))
+            limitations.append("core_enable_attempt_failed")
+            updated["limitations"] = limitations
+            enable_attempt["status"] = "failed"
+            enable_attempt["failure_reason"] = str(exc)
+
+        updated["enable_attempt"] = enable_attempt
+        return updated
+
+    def _serialize_core_limit_value(self, value: int) -> str | int:
+        if _resource is not None and value == _resource.RLIM_INFINITY:
+            return "unlimited"
+        return value
+
     def _collect_object_runtime_snapshot(
         self,
         obj: Any,
@@ -2770,11 +3189,15 @@ class WorkflowService:
         result: TestCaseResult,
         case_manager: CaseManager,
         case_definition_override: dict[str, Any] | None = None,
+        crash_snapshot_before: dict[str, Any] | None = None,
     ) -> ExecutionRecord:
         execution_id = f"{case_id}_{uuid.uuid4().hex[:12]}"
         environment = self.get_environment_status()
         objects = self.list_objects()
         case_definition = case_definition_override or case_manager.get_case(case_id)
+        crash_snapshot_after = self._capture_workspace_crash_dump_snapshot(
+            case_definition
+        )
         result_payload = self._result_payload(result)
         record = ExecutionRecord(
             execution_id=execution_id,
@@ -2789,6 +3212,14 @@ class WorkflowService:
                 "environment": environment,
                 "objects": objects,
                 "case": case_definition,
+                "crash_capture": {
+                    "before": crash_snapshot_before or {},
+                    "after": crash_snapshot_after,
+                    "new_dump_refs": self._detect_new_crash_dump_refs(
+                        crash_snapshot_before or {},
+                        crash_snapshot_after,
+                    ),
+                },
             },
         )
         artifacts = self.storage.save_execution_artifacts(
@@ -2800,9 +3231,16 @@ class WorkflowService:
             output=result.output,
         )
         record.metadata["artifacts"] = artifacts
-        record.metadata["artifacts"] = self.storage.save_execution_artifact_record(
-            record
+        artifact_index = self.storage.save_execution_artifact_record(record)
+        artifact_index.setdefault("indexes", {})
+        artifact_index["indexes"]["log_index"] = artifact_index["indexes"].get(
+            "log_index",
+            str(self.storage.artifacts_dir / execution_id / "logs" / "log_index.json"),
         )
+        artifact_index["log_index"] = (
+            self.storage.get_execution_log_index(execution_id) or {}
+        )
+        record.metadata["artifacts"] = artifact_index
         record = self.storage.save_execution(record)
         self._preserve_problem_for_execution(record)
         return record
@@ -2854,6 +3292,7 @@ class WorkflowService:
             self._is_api_problem_candidate(case_payload)
             or self._is_data_problem_candidate(case_payload)
             or self._is_service_runtime_problem_candidate(case_payload)
+            or self._has_new_crash_dump_refs(record.metadata.get("crash_capture"))
         ):
             return
 
@@ -2880,17 +3319,55 @@ class WorkflowService:
             object_refs=object_refs,
             artifact_refs=artifact_refs,
             log_refs=log_refs,
+            crash_capture=record.metadata.get("crash_capture"),
         )
         if built is None:
             return
         problem_record, problem_assets = built
 
-        self.storage.save_problem_record(problem_record)
-        self.storage.save_problem_assets(problem_assets)
+        self._save_problem_bundle(problem_record, problem_assets)
         problems = record.metadata.setdefault("problems", [])
         if isinstance(problems, list):
-            problems.append(problem_record.to_dict())
+            problem_dict = problem_record.to_dict()
+            existing_index = next(
+                (
+                    idx
+                    for idx, item in enumerate(problems)
+                    if isinstance(item, dict)
+                    and item.get("problem_id") == problem_record.problem_id
+                ),
+                None,
+            )
+            if existing_index is None:
+                problems.append(problem_dict)
+            else:
+                problems[existing_index] = problem_dict
             self.storage.save_execution(record)
+
+    def _list_problem_record_models(
+        self,
+        *,
+        case_id: str | None = None,
+        execution_id: str | None = None,
+    ) -> list[ProblemRecord]:
+        if execution_id is not None and case_id is not None:
+            execution_records = {
+                record.problem_id: record
+                for record in self.storage.list_problem_records_for_execution(
+                    execution_id
+                )
+            }
+            case_problem_ids = set(self.storage.list_problem_ids_for_case(case_id))
+            return [
+                record
+                for problem_id, record in execution_records.items()
+                if problem_id in case_problem_ids
+            ]
+        if execution_id is not None:
+            return self.storage.list_problem_records_for_execution(execution_id)
+        if case_id is not None:
+            return self.storage.list_problem_records_for_case(case_id)
+        return list(self.storage.load_problem_records().values())
 
     def _existing_object_created_at(self, name: str) -> str:
         record = self.storage.get_object(name)
@@ -2964,7 +3441,20 @@ class WorkflowService:
         object_refs: list[str],
         artifact_refs: dict[str, Any],
         log_refs: dict[str, Any],
+        crash_capture: Any = None,
     ) -> tuple[ProblemRecord, ProblemAssetRecord] | None:
+        if self._is_crash_dump_problem_candidate(
+            case_payload
+        ) or self._has_new_crash_dump_refs(crash_capture):
+            return self._build_crash_dump_problem_records(
+                record,
+                case_payload=case_payload,
+                environment_id=environment_id,
+                object_refs=object_refs,
+                artifact_refs=artifact_refs,
+                log_refs=log_refs,
+                crash_capture=crash_capture,
+            )
         if self._is_api_problem_candidate(case_payload):
             return self._build_api_problem_records(
                 record,
@@ -3008,28 +3498,8 @@ class WorkflowService:
         summary = self._build_problem_summary(record)
         problem_id = f"problem_{record.execution_id}"
         now = datetime.now().isoformat()
-        problem_record = ProblemRecord(
-            problem_id=problem_id,
-            problem_type="api_response",
-            summary=summary,
-            status="open",
-            preservation_status="success",
-            execution_id=record.execution_id,
-            case_id=record.case_id,
-            environment_id=environment_id,
-            object_refs=object_refs,
-            artifact_refs=self._problem_artifact_refs(artifact_refs),
-            log_refs=log_refs,
-            latest_action="preserved",
-            created_at=now,
-            updated_at=now,
-            metadata={"source": "execution_failure"},
-        )
-        observed_response = {
-            "output": record.output,
-            "error": record.error_message,
-            "status": record.status,
-        }
+        problem_artifact_refs = self._problem_artifact_refs(artifact_refs)
+        observed_response = self._build_api_observed_response(record, case_payload)
         preservation = self._build_preservation_summary(
             {
                 "request_context": (
@@ -3046,8 +3516,8 @@ class WorkflowService:
                 ),
                 "execution_artifacts": (
                     bool(
-                        problem_record.artifact_refs.get("execution_artifacts")
-                        or problem_record.artifact_refs.get("artifact_index")
+                        problem_artifact_refs.get("execution_artifacts")
+                        or problem_artifact_refs.get("artifact_index")
                     ),
                     "execution artifacts were not preserved",
                 ),
@@ -3057,14 +3527,26 @@ class WorkflowService:
                 ),
             }
         )
-        problem_record.preservation_status = preservation["status"]
-        problem_record.metadata["preservation"] = preservation
-        problem_assets = ProblemAssetRecord(
+        problem_record = self._new_problem_record(
             problem_id=problem_id,
             problem_type="api_response",
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
+            execution_id=record.execution_id,
+            case_id=record.case_id,
+            environment_id=environment_id,
+            object_refs=object_refs,
+            artifact_refs=problem_artifact_refs,
+            log_refs=log_refs,
+            created_at=now,
+            updated_at=now,
+            metadata={"source": "execution_failure"},
+        )
+        problem_assets = self._new_problem_assets(
+            problem_id=problem_id,
+            problem_type="api_response",
+            summary=summary,
+            preservation=preservation,
             execution_id=record.execution_id,
             case_id=record.case_id,
             environment_id=environment_id,
@@ -3084,9 +3566,34 @@ class WorkflowService:
             },
             created_at=now,
             updated_at=now,
-            metadata={"source_execution": record.execution_id},
+            metadata={
+                "source": "execution_failure",
+                "source_execution": record.execution_id,
+            },
         )
         return problem_record, problem_assets
+
+    def _build_api_observed_response(
+        self, record: ExecutionRecord, case_payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        assertions = case_payload.get("assertions", [])
+        expected_status: int | None = None
+        if not assertions:
+            raw_expected_status = case_payload.get("expected_status", 200)
+            if isinstance(raw_expected_status, int):
+                expected_status = raw_expected_status
+        expected_response = case_payload.get("expected_response")
+        return {
+            "output": record.output,
+            "error": record.error_message,
+            "status": record.status,
+            "expected_status": expected_status,
+            "expected_response": expected_response,
+            "observed_status_code": self._extract_api_observed_status_code(
+                record.error_message
+            ),
+            "observed_body": self._extract_api_observed_body(record),
+        }
 
     def _build_data_problem_records(
         self,
@@ -3102,6 +3609,25 @@ class WorkflowService:
         problem_id = f"problem_{record.execution_id}"
         now = datetime.now().isoformat()
         database_path = case_payload.get("database", "")
+        actual_result = self._extract_data_actual_result(record)
+        data_state_analysis = self._analyze_data_state_problem(
+            expected_result=case_payload.get("expected_result"),
+            actual_result=actual_result,
+            query=str(case_payload.get("query", "")),
+        )
+        origin_hints = self._build_data_state_origin_hints(
+            execution_id=record.execution_id,
+            case_id=record.case_id,
+            failure_kind=data_state_analysis["failure_kind"],
+            query=str(case_payload.get("query", "")),
+        )
+        boundary = self._build_data_state_recovery_boundary(
+            failure_kind=data_state_analysis["failure_kind"],
+            origin_hints=origin_hints,
+        )
+        boundary_actions = boundary.get("recommended_actions")
+        if not isinstance(boundary_actions, list) or not boundary_actions:
+            boundary_actions = data_state_analysis["next_actions"]
         recovery_hints = {
             "supported": False,
             "mode": "minimal_state_hints",
@@ -3109,8 +3635,15 @@ class WorkflowService:
             "database": database_path,
             "query": case_payload.get("query", ""),
             "expected_result": case_payload.get("expected_result"),
+            "failure_kind": data_state_analysis["failure_kind"],
+            "state_hints": data_state_analysis["state_hints"],
+            "origin_hints": origin_hints,
+            "boundary": boundary,
+            "recommended_queries": data_state_analysis["recommended_queries"],
+            "suggested_repairs": data_state_analysis["suggested_repairs"],
+            "next_actions": boundary_actions,
+            "limitations": data_state_analysis["limitations"],
         }
-        actual_result = self._extract_data_actual_result(record)
         details = {
             "data_source": {
                 "db_type": case_payload.get("db_type", "unknown"),
@@ -3126,6 +3659,9 @@ class WorkflowService:
             ],
             "expected_result": case_payload.get("expected_result"),
             "actual_result": actual_result,
+            "failure_kind": data_state_analysis["failure_kind"],
+            "state_hints": data_state_analysis["state_hints"],
+            "origin_hints": origin_hints,
             "error": record.error_message,
             "case": case_payload,
         }
@@ -3166,32 +3702,26 @@ class WorkflowService:
                 ),
             }
         )
-        problem_record = ProblemRecord(
+        problem_record = self._new_problem_record(
             problem_id=problem_id,
             problem_type="data_state",
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id=record.execution_id,
             case_id=record.case_id,
             environment_id=environment_id,
             object_refs=object_refs,
             artifact_refs=self._problem_artifact_refs(artifact_refs),
             log_refs=log_refs,
-            latest_action="preserved",
             created_at=now,
             updated_at=now,
-            metadata={
-                "source": "execution_failure",
-                "preservation": preservation,
-            },
+            metadata={"source": "execution_failure"},
         )
-        problem_assets = ProblemAssetRecord(
+        problem_assets = self._new_problem_assets(
             problem_id=problem_id,
             problem_type="data_state",
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id=record.execution_id,
             case_id=record.case_id,
             environment_id=environment_id,
@@ -3202,7 +3732,10 @@ class WorkflowService:
             details={**details, "preservation": preservation},
             created_at=now,
             updated_at=now,
-            metadata={"source_execution": record.execution_id},
+            metadata={
+                "source": "execution_failure",
+                "source_execution": record.execution_id,
+            },
         )
         return problem_record, problem_assets
 
@@ -3220,6 +3753,397 @@ class WorkflowService:
     def _is_data_problem_candidate(self, case_definition: dict[str, Any]) -> bool:
         case_type = case_definition.get("type")
         return case_type == "database"
+
+    def _is_crash_dump_problem_candidate(self, case_definition: dict[str, Any]) -> bool:
+        dump_paths = case_definition.get("dump_paths")
+        core_paths = case_definition.get("core_paths")
+        return case_definition.get("type") == "service" and (
+            isinstance(dump_paths, list)
+            and any(isinstance(item, str) and item for item in dump_paths)
+            or isinstance(core_paths, list)
+            and any(isinstance(item, str) and item for item in core_paths)
+        )
+
+    def _build_crash_dump_problem_records(
+        self,
+        record: ExecutionRecord,
+        *,
+        case_payload: dict[str, Any],
+        environment_id: str,
+        object_refs: list[str],
+        artifact_refs: dict[str, Any],
+        log_refs: dict[str, Any],
+        crash_capture: Any = None,
+    ) -> tuple[ProblemRecord, ProblemAssetRecord]:
+        summary = self._build_crash_dump_problem_summary(record)
+        problem_id = f"problem_{record.execution_id}"
+        now = datetime.now().isoformat()
+        service_name = case_payload.get("service_name", "")
+        runtime_object_refs = object_refs.copy()
+        if (
+            isinstance(service_name, str)
+            and service_name
+            and service_name not in runtime_object_refs
+        ):
+            runtime_object_refs.append(service_name)
+
+        dump_refs = self._merge_crash_dump_refs(
+            self._build_crash_dump_refs(case_payload),
+            self._extract_new_crash_dump_refs(crash_capture),
+        )
+        object_summary = self._build_crash_dump_object_summary(service_name)
+        log_window = self._build_crash_dump_log_window(log_refs)
+        crash_target = {
+            "service_name": service_name,
+            "object_name": service_name,
+            "runtime_backend": "object_or_external_service",
+            "host": case_payload.get("host", "localhost"),
+            "port": case_payload.get("port", 8080),
+        }
+        boundary = self._build_crash_dump_boundary(dump_refs)
+        recovery = {
+            "supported": False,
+            "mode": "crash_dump_investigation",
+            "crash_target": crash_target,
+            "dump_refs": dump_refs,
+            "object_summary": object_summary,
+            "log_window": log_window,
+            "boundary": boundary,
+            "recommended_checks": self._build_crash_dump_recommended_checks(
+                dump_refs=dump_refs,
+                crash_target=crash_target,
+            ),
+            "next_actions": self._build_crash_dump_next_actions(dump_refs),
+            "limitations": [
+                "current crash_dump recovery preserves dump/core references but does not parse dump contents",
+                "current crash_dump recovery does not reconstruct historical runtime state automatically",
+            ],
+        }
+        details = {
+            "crash_target": crash_target,
+            "crash_event": {
+                "detected_at": record.end_time or now,
+                "execution_status": record.status,
+                "error": record.error_message,
+                "output": record.output,
+            },
+            "runtime_context": {
+                "expected_runtime_state": case_payload.get("expected_runtime_state"),
+                "check_type": case_payload.get("check_type", "port"),
+            },
+            "dump_refs": dump_refs,
+            "object_summary": object_summary,
+            "log_window": log_window,
+            "crash_capture": crash_capture if isinstance(crash_capture, dict) else {},
+            "case": case_payload,
+        }
+        preservation = self._build_preservation_summary(
+            {
+                "crash_target": (
+                    bool(service_name),
+                    "crash target identity was not preserved",
+                ),
+                "dump_refs": (
+                    bool(dump_refs),
+                    "no dump/core references were preserved",
+                ),
+                "runtime_result": (
+                    bool(record.error_message or record.output),
+                    "runtime failure context was not preserved",
+                ),
+                "environment_ref": (
+                    bool(environment_id),
+                    "environment reference is not available",
+                ),
+                "execution_artifacts": (
+                    bool(
+                        artifact_refs.get("directory")
+                        or self._problem_artifact_refs(artifact_refs).get(
+                            "artifact_index"
+                        )
+                    ),
+                    "execution artifacts were not preserved",
+                ),
+                "log_index": (
+                    bool(log_refs.get("workspace_logs_dir")),
+                    "log index is not available",
+                ),
+            }
+        )
+        problem_record = self._new_problem_record(
+            problem_id=problem_id,
+            problem_type="crash_dump",
+            summary=summary,
+            preservation=preservation,
+            execution_id=record.execution_id,
+            case_id=record.case_id,
+            environment_id=environment_id,
+            object_refs=runtime_object_refs,
+            artifact_refs=self._problem_artifact_refs(artifact_refs),
+            log_refs=log_refs,
+            created_at=now,
+            updated_at=now,
+            metadata={"source": "execution_failure"},
+        )
+        problem_assets = self._new_problem_assets(
+            problem_id=problem_id,
+            problem_type="crash_dump",
+            summary=summary,
+            preservation=preservation,
+            execution_id=record.execution_id,
+            case_id=record.case_id,
+            environment_id=environment_id,
+            object_refs=runtime_object_refs,
+            artifact_refs=problem_record.artifact_refs.copy(),
+            log_refs=log_refs,
+            recovery=recovery,
+            details={**details, "preservation": preservation},
+            created_at=now,
+            updated_at=now,
+            metadata={
+                "source": "execution_failure",
+                "source_execution": record.execution_id,
+            },
+        )
+        return problem_record, problem_assets
+
+    def _build_crash_dump_problem_summary(self, record: ExecutionRecord) -> str:
+        error = record.error_message.strip() or "Crash or dump-producing failure"
+        return f"Crash/dump problem for case '{record.case_id}': {error}"
+
+    def _build_crash_dump_refs(
+        self, case_payload: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        raw_paths = case_payload.get("dump_paths", case_payload.get("core_paths", []))
+        if not isinstance(raw_paths, list):
+            return []
+        refs: list[dict[str, Any]] = []
+        for item in raw_paths:
+            if not isinstance(item, str) or not item:
+                continue
+            path = Path(item).expanduser()
+            exists = path.exists()
+            stat = path.stat() if exists else None
+            refs.append(
+                {
+                    "path": str(path),
+                    "exists": exists,
+                    "kind": "core_or_dump",
+                    "name": path.name,
+                    "size": stat.st_size if stat is not None else None,
+                    "modified_at": (
+                        datetime.fromtimestamp(stat.st_mtime).isoformat()
+                        if stat is not None
+                        else None
+                    ),
+                }
+            )
+        return refs
+
+    def _capture_workspace_crash_dump_snapshot(
+        self,
+        case_definition: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        case_payload = (
+            self._unwrap_case_definition(case_definition)
+            if isinstance(case_definition, dict)
+            else {}
+        )
+        directories = self._resolve_crash_dump_watch_directories(case_payload)
+        refs: list[dict[str, Any]] = []
+        for directory in directories:
+            refs.extend(self._scan_crash_dump_directory(directory))
+        return {
+            "captured_at": datetime.now().isoformat(),
+            "directories": directories,
+            "dump_refs": refs,
+        }
+
+    def _resolve_crash_dump_watch_directories(
+        self,
+        case_payload: dict[str, Any],
+    ) -> list[str]:
+        directories: list[str] = []
+        environment = self.storage.load_environment()
+        if environment and isinstance(environment.metadata, dict):
+            env_crash_capture = environment.metadata.get("crash_capture", {})
+            if isinstance(env_crash_capture, dict):
+                dump_dir = env_crash_capture.get("dump_dir")
+                if isinstance(dump_dir, str) and dump_dir:
+                    directories.append(str(Path(dump_dir).expanduser().resolve()))
+
+        target_name = case_payload.get("object_name") or case_payload.get(
+            "service_name"
+        )
+        if isinstance(target_name, str) and target_name:
+            record = self.storage.get_object(target_name)
+            if record is not None and isinstance(record.metadata, dict):
+                object_crash_capture = record.metadata.get("crash_capture", {})
+                if isinstance(object_crash_capture, dict):
+                    dump_dir = object_crash_capture.get("dump_dir")
+                    if isinstance(dump_dir, str) and dump_dir:
+                        directories.append(str(Path(dump_dir).expanduser().resolve()))
+
+        unique: list[str] = []
+        seen: set[str] = set()
+        for directory in directories:
+            if directory in seen:
+                continue
+            seen.add(directory)
+            unique.append(directory)
+        return unique
+
+    def _scan_crash_dump_directory(self, directory: str) -> list[dict[str, Any]]:
+        path = Path(directory)
+        if not path.exists() or not path.is_dir():
+            return []
+        refs: list[dict[str, Any]] = []
+        for item in sorted(path.rglob("*")):
+            if not item.is_file() or not self._looks_like_crash_dump_file(item):
+                continue
+            stat = item.stat()
+            refs.append(
+                {
+                    "path": str(item.resolve()),
+                    "exists": True,
+                    "kind": "core_or_dump",
+                    "name": item.name,
+                    "size": stat.st_size,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "source": "workspace_scan",
+                    "directory": str(path.resolve()),
+                }
+            )
+        return refs
+
+    def _looks_like_crash_dump_file(self, path: Path) -> bool:
+        name = path.name.lower()
+        return (
+            name.startswith("core")
+            or name.endswith(".core")
+            or name.endswith(".dump")
+            or name.endswith(".dmp")
+        )
+
+    def _detect_new_crash_dump_refs(
+        self,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        before_refs = before.get("dump_refs", []) if isinstance(before, dict) else []
+        after_refs = after.get("dump_refs", []) if isinstance(after, dict) else []
+        if not isinstance(before_refs, list) or not isinstance(after_refs, list):
+            return []
+        before_paths = {
+            str(item.get("path"))
+            for item in before_refs
+            if isinstance(item, dict) and isinstance(item.get("path"), str)
+        }
+        return [
+            item
+            for item in after_refs
+            if isinstance(item, dict)
+            and isinstance(item.get("path"), str)
+            and item["path"] not in before_paths
+        ]
+
+    def _has_new_crash_dump_refs(self, crash_capture: Any) -> bool:
+        if not isinstance(crash_capture, dict):
+            return False
+        refs = crash_capture.get("new_dump_refs", [])
+        return isinstance(refs, list) and bool(refs)
+
+    def _extract_new_crash_dump_refs(self, crash_capture: Any) -> list[dict[str, Any]]:
+        if not isinstance(crash_capture, dict):
+            return []
+        refs = crash_capture.get("new_dump_refs", [])
+        if not isinstance(refs, list):
+            return []
+        return [item for item in refs if isinstance(item, dict)]
+
+    def _merge_crash_dump_refs(
+        self,
+        explicit_refs: list[dict[str, Any]],
+        auto_refs: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for ref in [*explicit_refs, *auto_refs]:
+            path = ref.get("path")
+            if not isinstance(path, str) or path in seen:
+                continue
+            seen.add(path)
+            merged.append(ref)
+        return merged
+
+    def _build_crash_dump_boundary(
+        self, dump_refs: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        existing_refs = [ref for ref in dump_refs if ref.get("exists") is True]
+        return {
+            "scope": "crash_asset_preservation",
+            "confidence": (
+                "high_for_existing_dump_refs"
+                if existing_refs
+                else "reference_only_without_dump_file"
+            ),
+            "assessment": (
+                "dump_refs_preserved_for_followup_analysis"
+                if existing_refs
+                else "dump_refs_declared_but_dump_not_found"
+            ),
+            "reason": (
+                "the current crash_dump flow preserves dump/core references for follow-up investigation but does not parse dump contents"
+            ),
+            "needs_dump_analysis": True,
+        }
+
+    def _build_crash_dump_recommended_checks(
+        self,
+        *,
+        dump_refs: list[dict[str, Any]],
+        crash_target: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "purpose": "inspect_dump_refs",
+                "dump_count": len(dump_refs),
+            },
+            {
+                "purpose": "inspect_recent_runtime_logs",
+                "service_name": crash_target.get("service_name"),
+            },
+            {
+                "purpose": "inspect_runtime_target",
+                "host": crash_target.get("host"),
+                "port": crash_target.get("port"),
+            },
+        ]
+
+    def _build_crash_dump_next_actions(
+        self, dump_refs: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        actions = [
+            {
+                "priority": "high",
+                "action": "inspect_dump_refs",
+                "reason": "verify whether the preserved dump/core files are present and complete",
+            },
+            {
+                "priority": "high",
+                "action": "inspect_recent_runtime_logs",
+                "reason": "use the crash window logs to confirm pre-crash runtime context",
+            },
+        ]
+        if any(ref.get("exists") is True for ref in dump_refs):
+            actions.append(
+                {
+                    "priority": "medium",
+                    "action": "prepare_followup_dump_analysis",
+                    "reason": "the dump/core asset exists and can be used in a deeper crash investigation phase",
+                }
+            )
+        return actions
 
     def _build_data_problem_summary(self, record: ExecutionRecord) -> str:
         error = record.error_message.strip() or "Execution failed"
@@ -3267,14 +4191,48 @@ class WorkflowService:
             },
             "case": case_payload,
         }
+        runtime_hints = self._build_service_runtime_hints(
+            case_payload=case_payload,
+            record=record,
+            service_name=service_name,
+        )
+        boundary = self._build_service_runtime_recovery_boundary(runtime_hints)
         recovery = {
             "supported": False,
-            "mode": "basic_runtime_validation",
+            "mode": "runtime_level_plan",
             "service_name": service_name,
             "host": case_payload.get("host", "localhost"),
             "port": case_payload.get("port", 8080),
             "check_type": case_payload.get("check_type", "port"),
+            "runtime_target": {
+                "service_name": service_name,
+                "object_name": service_name,
+                "runtime_backend": "object_or_external_service",
+                "host": case_payload.get("host", "localhost"),
+                "port": case_payload.get("port", 8080),
+            },
+            "failure_kind": runtime_hints["failure_kind"],
+            "runtime_hints": runtime_hints,
+            "recommended_checks": self._build_service_runtime_recommended_checks(
+                case_payload=case_payload,
+                runtime_hints=runtime_hints,
+            ),
+            "suggested_repairs": self._build_service_runtime_suggested_repairs(
+                case_payload=case_payload,
+                runtime_hints=runtime_hints,
+            ),
+            "next_actions": self._build_service_runtime_next_actions(
+                case_payload=case_payload,
+                runtime_hints=runtime_hints,
+            ),
+            "limitations": [
+                "current recovery output is a plan only and does not execute service recovery automatically",
+                "current service_runtime recovery does not reconstruct full historical runtime context",
+            ],
+            "boundary": boundary,
         }
+        details["failure_kind"] = runtime_hints["failure_kind"]
+        details["runtime_hints"] = runtime_hints
         preservation = self._build_preservation_summary(
             {
                 "service_context": (
@@ -3304,32 +4262,26 @@ class WorkflowService:
                 ),
             }
         )
-        problem_record = ProblemRecord(
+        problem_record = self._new_problem_record(
             problem_id=problem_id,
             problem_type="service_runtime",
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id=record.execution_id,
             case_id=record.case_id,
             environment_id=environment_id,
             object_refs=runtime_object_refs,
             artifact_refs=self._problem_artifact_refs(artifact_refs),
             log_refs=log_refs,
-            latest_action="preserved",
             created_at=now,
             updated_at=now,
-            metadata={
-                "source": "execution_failure",
-                "preservation": preservation,
-            },
+            metadata={"source": "execution_failure"},
         )
-        problem_assets = ProblemAssetRecord(
+        problem_assets = self._new_problem_assets(
             problem_id=problem_id,
             problem_type="service_runtime",
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id=record.execution_id,
             case_id=record.case_id,
             environment_id=environment_id,
@@ -3340,13 +4292,226 @@ class WorkflowService:
             details={**details, "preservation": preservation},
             created_at=now,
             updated_at=now,
-            metadata={"source_execution": record.execution_id},
+            metadata={
+                "source": "execution_failure",
+                "source_execution": record.execution_id,
+            },
         )
         return problem_record, problem_assets
 
     def _build_service_runtime_problem_summary(self, record: ExecutionRecord) -> str:
         error = record.error_message.strip() or "Execution failed"
         return f"Service runtime problem for case '{record.case_id}': {error}"
+
+    def _build_service_runtime_hints(
+        self,
+        *,
+        case_payload: dict[str, Any],
+        record: ExecutionRecord,
+        service_name: str,
+    ) -> dict[str, Any]:
+        host = case_payload.get("host", "localhost")
+        port = case_payload.get("port", 8080)
+        check_type = str(case_payload.get("check_type", "port"))
+        object_record = (
+            self.storage.get_object(service_name)
+            if isinstance(service_name, str) and service_name
+            else None
+        )
+        object_status = object_record.status if object_record is not None else None
+        expected_runtime_state = str(
+            case_payload.get("expected_runtime_state", "")
+        ).lower()
+        error_text = str(record.error_message or "")
+        error_lower = error_text.lower()
+
+        failure_kind = "healthcheck_failed"
+        if object_status == OBJECT_STATUS_START_FAILED_PRESERVED:
+            failure_kind = "startup_failed"
+        elif object_status in {
+            OBJECT_STATUS_CREATED,
+            OBJECT_STATUS_INSTALLED,
+            OBJECT_STATUS_STOPPED,
+            OBJECT_STATUS_REMOVED,
+        }:
+            failure_kind = "not_started"
+        elif object_status == OBJECT_STATUS_ERROR:
+            failure_kind = "abnormal_exit"
+        elif "not reachable" in error_lower:
+            if (
+                object_status == OBJECT_STATUS_RUNNING
+                or expected_runtime_state == "running"
+            ):
+                failure_kind = "abnormal_exit"
+            else:
+                failure_kind = "port_unreachable"
+        elif "unsupported check type" in error_lower:
+            failure_kind = "healthcheck_failed"
+        elif "timeout" in error_lower or "timed out" in error_lower:
+            failure_kind = "healthcheck_failed"
+        elif "connection refused" in error_lower or "connection reset" in error_lower:
+            failure_kind = "port_unreachable"
+
+        return {
+            "object_status": object_status,
+            "check_type": check_type,
+            "connectable": False,
+            "host": host,
+            "port": port,
+            "expected_runtime_state": expected_runtime_state or None,
+            "error_keywords": self._extract_service_runtime_error_keywords(error_text),
+            "failure_kind": failure_kind,
+        }
+
+    def _extract_service_runtime_error_keywords(self, error_text: str) -> list[str]:
+        keywords: list[str] = []
+        lowered = error_text.lower()
+        if "not reachable" in lowered:
+            keywords.append("not_reachable")
+        if "timeout" in lowered or "timed out" in lowered:
+            keywords.append("timeout")
+        if "connection refused" in lowered:
+            keywords.append("connection_refused")
+        if "unsupported check type" in lowered:
+            keywords.append("unsupported_check_type")
+        if "error" in lowered and "service test error" in lowered:
+            keywords.append("service_test_error")
+        return keywords
+
+    def _build_service_runtime_recovery_boundary(
+        self, runtime_hints: dict[str, Any]
+    ) -> dict[str, Any]:
+        failure_kind = str(runtime_hints.get("failure_kind", "healthcheck_failed"))
+        object_status = runtime_hints.get("object_status")
+        expected_runtime_state = str(
+            runtime_hints.get("expected_runtime_state") or ""
+        ).lower()
+        confidence = "runtime_observation_only"
+        assessment = "endpoint_or_healthcheck_failure"
+        reason = "current recovery plan is based on preserved runtime observations and does not reconstruct full service history"
+        if failure_kind == "startup_failed":
+            confidence = "high_for_preserved_start_failure"
+            assessment = "startup_failure_detected"
+            reason = "the related managed object is preserved in a start-failed state"
+        elif failure_kind == "not_started":
+            confidence = "high_for_non_running_object"
+            assessment = "service_not_started"
+            reason = "the related managed object is not currently in a running state"
+        elif failure_kind == "abnormal_exit":
+            if (
+                object_status == OBJECT_STATUS_RUNNING
+                or expected_runtime_state == "running"
+            ):
+                confidence = "high_for_expected_running_service"
+            else:
+                confidence = "reduced_by_runtime_state_gap"
+            assessment = "runtime_diverged_from_expected_service_state"
+            reason = "the service was expected to be running but current runtime observations suggest it exited or became unreachable"
+        return {
+            "scope": "runtime_level_plan",
+            "confidence": confidence,
+            "assessment": assessment,
+            "reason": reason,
+            "needs_runtime_history": failure_kind in {"abnormal_exit"},
+            "does_not_cover": [
+                "automatic_service_restart",
+                "core_dump_analysis",
+                "deep_resource_diagnostics",
+            ],
+        }
+
+    def _build_service_runtime_recommended_checks(
+        self, *, case_payload: dict[str, Any], runtime_hints: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "purpose": "inspect_runtime_status",
+                "check_type": runtime_hints.get("check_type"),
+                "host": case_payload.get("host", "localhost"),
+                "port": case_payload.get("port", 8080),
+            },
+            {
+                "purpose": "inspect_recent_runtime_logs",
+                "service_name": case_payload.get("service_name", ""),
+            },
+        ]
+
+    def _build_service_runtime_suggested_repairs(
+        self, *, case_payload: dict[str, Any], runtime_hints: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        failure_kind = str(runtime_hints.get("failure_kind", "healthcheck_failed"))
+        service_name = case_payload.get("service_name", "")
+        if failure_kind == "startup_failed":
+            return [
+                {
+                    "action": "inspect_start_failure_and_fix_prerequisites",
+                    "service_name": service_name,
+                    "reason": "the service failed during startup and should be checked before any retry",
+                }
+            ]
+        if failure_kind == "not_started":
+            return [
+                {
+                    "action": "start_service_or_verify_runtime_preconditions",
+                    "service_name": service_name,
+                    "reason": "the service is not currently running",
+                }
+            ]
+        if failure_kind == "abnormal_exit":
+            return [
+                {
+                    "action": "inspect_exit_logs_before_restart",
+                    "service_name": service_name,
+                    "reason": "the service appears to have exited after being expected to run",
+                }
+            ]
+        if failure_kind == "port_unreachable":
+            return [
+                {
+                    "action": "verify_endpoint_reachability_and_port_binding",
+                    "service_name": service_name,
+                    "reason": "the preserved runtime check could not reach the configured endpoint",
+                }
+            ]
+        return [
+            {
+                "action": "inspect_healthcheck_configuration",
+                "service_name": service_name,
+                "reason": "the runtime validation failed and needs a focused healthcheck review",
+            }
+        ]
+
+    def _build_service_runtime_next_actions(
+        self, *, case_payload: dict[str, Any], runtime_hints: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        actions = [
+            {
+                "priority": "high",
+                "action": "inspect_recent_runtime_logs",
+                "service_name": case_payload.get("service_name", ""),
+                "reason": "check the latest runtime failure context before retrying the preserved validation",
+            }
+        ]
+        failure_kind = str(runtime_hints.get("failure_kind", "healthcheck_failed"))
+        if failure_kind in {"not_started", "startup_failed"}:
+            actions.append(
+                {
+                    "priority": "high",
+                    "action": "retry_service_start_after_prerequisite_check",
+                    "service_name": case_payload.get("service_name", ""),
+                    "reason": "confirm the service can enter a healthy running state before rerunning the check",
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "priority": "high",
+                    "action": "rerun_runtime_validation",
+                    "service_name": case_payload.get("service_name", ""),
+                    "reason": "rerun the preserved runtime check after validating endpoint availability",
+                }
+            )
+        return actions
 
     def _extract_data_actual_result(self, record: ExecutionRecord) -> Any:
         if record.output not in (None, ""):
@@ -3360,32 +4525,1995 @@ class WorkflowService:
         except (SyntaxError, ValueError):
             return raw_actual
 
+    def _extract_api_observed_status_code(self, error_message: str) -> int | None:
+        matched = re.search(r"Expected status \d+, got (\d+)", error_message)
+        if matched is None:
+            return None
+        try:
+            return int(matched.group(1))
+        except ValueError:
+            return None
+
+    def _extract_api_observed_body(self, record: ExecutionRecord) -> Any:
+        if record.output not in (None, ""):
+            return record.output
+        marker = "Actual:"
+        if marker not in record.error_message:
+            return None
+        raw_actual = record.error_message.split(marker, maxsplit=1)[1].strip()
+        try:
+            return ast.literal_eval(raw_actual)
+        except (SyntaxError, ValueError):
+            return raw_actual
+
+    def _compare_problem_values(self, expected: Any, actual: Any) -> bool:
+        if isinstance(expected, dict) and isinstance(actual, dict):
+            for key, expected_value in expected.items():
+                if key not in actual:
+                    return False
+                if not self._compare_problem_values(expected_value, actual[key]):
+                    return False
+            return True
+        if isinstance(expected, list) and isinstance(actual, list):
+            if len(expected) != len(actual):
+                return False
+            for exp_item, act_item in zip(expected, actual):
+                if not self._compare_problem_values(exp_item, act_item):
+                    return False
+            return True
+        return expected == actual
+
+    def _evaluate_api_assertions(
+        self,
+        response: _ReplayResponseView,
+        assertions_config: list[Any],
+    ) -> list[str]:
+        failures: list[str] = []
+        actual_json = None
+        content_type = str(response.headers.get("content-type", ""))
+        if content_type.startswith("application/json"):
+            try:
+                actual_json = response.json()
+            except Exception:
+                actual_json = None
+
+        for idx, assertion_item in enumerate(assertions_config):
+            if not isinstance(assertion_item, dict):
+                failures.append(f"Assertion {idx}: invalid format")
+                continue
+            assertion_type = assertion_item.get("type", "")
+            if not assertion_type:
+                failures.append(f"Assertion {idx}: missing 'type'")
+                continue
+
+            try:
+                actual: Any
+                expected: Any
+                kwargs: dict[str, Any]
+                if assertion_type in ("status_code", "statuscode"):
+                    actual = response.status_code
+                    expected = assertion_item.get("expected")
+                    kwargs = {}
+                elif assertion_type in ("json_path", "jsonpath"):
+                    actual = actual_json if actual_json is not None else {}
+                    expected = assertion_item.get("expected")
+                    kwargs = {"path": assertion_item.get("path", "")}
+                elif assertion_type in ("body", "bodyassertion"):
+                    actual = response.text
+                    expected = assertion_item.get("expected")
+                    kwargs = {}
+                elif assertion_type in ("header", "headerassertion"):
+                    actual = dict(response.headers)
+                    expected = assertion_item.get("expected")
+                    kwargs = {"header_name": assertion_item.get("header", "")}
+                elif assertion_type in ("regex", "regexassertion"):
+                    actual = response.text
+                    expected = assertion_item.get("expected")
+                    kwargs = {}
+                elif assertion_type in ("schema", "schemaassertion"):
+                    actual = actual_json if actual_json is not None else {}
+                    expected = assertion_item.get("expected")
+                    kwargs = {"schema": assertion_item.get("schema", {})}
+                else:
+                    actual = response
+                    expected = assertion_item.get("expected")
+                    kwargs = {
+                        key: value
+                        for key, value in assertion_item.items()
+                        if key not in ("type", "expected", "description")
+                    }
+                assertion = AssertionFactory.create(assertion_type)
+                result = assertion.assert_value(actual, expected=expected, **kwargs)
+                if result.passed:
+                    continue
+                message = f"Assertion {idx} ({assertion_type}) failed: {result.message}"
+                if result.extra:
+                    message += f" - {result.extra}"
+                failures.append(message)
+            except ValueError as exc:
+                failures.append(f"Assertion {idx} ({assertion_type}): {str(exc)}")
+            except Exception as exc:
+                failures.append(
+                    f"Assertion {idx} ({assertion_type}): unexpected error: {str(exc)}"
+                )
+
+        return failures
+
+    def _evaluate_api_replay_expectation(
+        self,
+        case_payload: dict[str, Any],
+        replay_response: dict[str, Any],
+    ) -> dict[str, Any]:
+        status_code = int(replay_response.get("status_code", 0))
+        headers = replay_response.get("headers", {})
+        body = replay_response.get("body")
+        response_view = _ReplayResponseView(
+            status_code=status_code,
+            headers=headers if isinstance(headers, dict) else {},
+            body=body,
+        )
+        assertions = case_payload.get("assertions", [])
+        if assertions:
+            failures = self._evaluate_api_assertions(response_view, assertions)
+            reproduced = bool(failures)
+            return {
+                "reproduced": reproduced,
+                "status": "reproduced" if reproduced else "not_reproduced",
+                "reason": (
+                    failures[0]
+                    if failures
+                    else "replay response now satisfies the original assertions"
+                ),
+                "failed_assertions": failures,
+            }
+
+        expected_status = case_payload.get("expected_status", 200)
+        if isinstance(expected_status, int) and status_code != expected_status:
+            return {
+                "reproduced": True,
+                "status": "reproduced",
+                "reason": f"Expected status {expected_status}, got {status_code}",
+                "expected_status": expected_status,
+                "actual_status": status_code,
+                "failed_assertions": [],
+            }
+
+        expected_response = case_payload.get("expected_response", {})
+        if expected_response:
+            if not self._compare_problem_values(expected_response, body):
+                return {
+                    "reproduced": True,
+                    "status": "reproduced",
+                    "reason": "Replay response body still does not match expected_response",
+                    "expected_response": expected_response,
+                    "actual_response": body,
+                    "failed_assertions": [],
+                }
+
+        return {
+            "reproduced": False,
+            "status": "not_reproduced",
+            "reason": "replay response now satisfies the original expectation",
+            "expected_status": expected_status
+            if isinstance(expected_status, int)
+            else None,
+            "failed_assertions": [],
+        }
+
+    def _build_api_replay_comparison(
+        self,
+        assets: ProblemAssetRecord,
+        replay_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        details = assets.details if isinstance(assets.details, dict) else {}
+        case_payload = details.get("case", {})
+        preserved_response = details.get("response", {})
+        replay_response = replay_result.get("response", {})
+        expectation = self._evaluate_api_replay_expectation(
+            case_payload if isinstance(case_payload, dict) else {},
+            replay_response if isinstance(replay_response, dict) else {},
+        )
+
+        preserved_status = (
+            preserved_response.get("observed_status_code")
+            if isinstance(preserved_response, dict)
+            else None
+        )
+        replay_status = (
+            replay_response.get("status_code")
+            if isinstance(replay_response, dict)
+            else None
+        )
+        preserved_body = (
+            preserved_response.get("observed_body")
+            if isinstance(preserved_response, dict)
+            else None
+        )
+        replay_body = (
+            replay_response.get("body") if isinstance(replay_response, dict) else None
+        )
+        status_code_changed = (
+            None
+            if preserved_status is None or replay_status is None
+            else preserved_status != replay_status
+        )
+        response_body_changed = (
+            None
+            if preserved_body is None
+            else not self._compare_problem_values(preserved_body, replay_body)
+        )
+        dependency_hints = self._build_problem_dependency_hints(
+            execution_id=assets.execution_id,
+            case_id=assets.case_id,
+        )
+        boundary = self._build_api_replay_boundary_summary(
+            expectation=expectation,
+            status_code_changed=status_code_changed,
+            response_body_changed=response_body_changed,
+            dependency_hints=dependency_hints,
+        )
+        highlights = self._build_api_replay_highlights(
+            preserved_status=preserved_status,
+            replay_status=replay_status,
+            status_code_changed=status_code_changed,
+            response_body_changed=response_body_changed,
+            expectation=expectation,
+            boundary=boundary,
+        )
+        summary = self._build_api_replay_summary(
+            preserved_response=(
+                preserved_response if isinstance(preserved_response, dict) else {}
+            ),
+            replay_response=replay_response
+            if isinstance(replay_response, dict)
+            else {},
+            expectation=expectation,
+            status_code_changed=status_code_changed,
+            response_body_changed=response_body_changed,
+            boundary=boundary,
+        )
+        return {
+            "original_failure": {
+                "status_code": preserved_status,
+                "body": preserved_body,
+                "error": (
+                    preserved_response.get("error")
+                    if isinstance(preserved_response, dict)
+                    else None
+                ),
+            },
+            "replay_response": {
+                "status_code": replay_status,
+                "body": replay_body,
+            },
+            "status_code_changed": status_code_changed,
+            "response_body_changed": response_body_changed,
+            "expectation": expectation,
+            "assertion_outcome": expectation["status"],
+            "boundary": boundary,
+            "highlights": highlights,
+            "summary": summary,
+        }
+
+    def _build_api_replay_highlights(
+        self,
+        *,
+        preserved_status: Any,
+        replay_status: Any,
+        status_code_changed: bool | None,
+        response_body_changed: bool | None,
+        expectation: dict[str, Any],
+        boundary: dict[str, Any],
+    ) -> list[str]:
+        highlights: list[str] = []
+        if status_code_changed is True:
+            highlights.append(
+                f"status code changed from {preserved_status} to {replay_status}"
+            )
+        elif status_code_changed is False and replay_status is not None:
+            highlights.append(f"status code stayed at {replay_status}")
+
+        if response_body_changed is True:
+            highlights.append(
+                "response body changed compared with the preserved failure"
+            )
+        elif response_body_changed is False:
+            highlights.append("response body stayed the same as the preserved failure")
+
+        if expectation.get("reproduced") is True:
+            highlights.append("replay still reproduces the original problem")
+        else:
+            highlights.append("replay no longer reproduces the original problem")
+
+        reason = expectation.get("reason")
+        if isinstance(reason, str) and reason:
+            highlights.append(reason)
+
+        boundary_reason = boundary.get("reason")
+        if isinstance(boundary_reason, str) and boundary_reason:
+            highlights.append(boundary_reason)
+
+        recommended_actions = boundary.get("recommended_actions")
+        if isinstance(recommended_actions, list) and recommended_actions:
+            first_action = recommended_actions[0]
+            if isinstance(first_action, dict):
+                action_name = first_action.get("action")
+                if isinstance(action_name, str) and action_name:
+                    highlights.append(f"next suggested step: {action_name}")
+
+        return highlights
+
+    def _build_api_replay_summary(
+        self,
+        *,
+        preserved_response: dict[str, Any],
+        replay_response: dict[str, Any],
+        expectation: dict[str, Any],
+        status_code_changed: bool | None,
+        response_body_changed: bool | None,
+        boundary: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "reproduced": expectation.get("reproduced"),
+            "assertion_outcome": expectation.get("status"),
+            "status": {
+                "changed": status_code_changed,
+                "from": preserved_response.get("observed_status_code"),
+                "to": replay_response.get("status_code"),
+            },
+            "boundary": boundary,
+            "headers": self._build_api_replay_header_summary(replay_response),
+            "body": self._build_api_replay_body_summary(
+                preserved_body=preserved_response.get("observed_body"),
+                replay_body=replay_response.get("body"),
+                response_body_changed=response_body_changed,
+            ),
+        }
+
+    def _build_api_replay_boundary_summary(
+        self,
+        *,
+        expectation: dict[str, Any],
+        status_code_changed: bool | None,
+        response_body_changed: bool | None,
+        dependency_hints: dict[str, Any],
+    ) -> dict[str, Any]:
+        reproduced = expectation.get("reproduced") is True
+        has_dependency_candidates = bool(dependency_hints.get("candidate_case_ids"))
+        dependency_case_ids = dependency_hints.get("candidate_case_ids", [])
+        recommended_actions = dependency_hints.get("recommended_actions", [])
+        dependency_suffix = ""
+        if isinstance(dependency_case_ids, list) and dependency_case_ids:
+            dependency_suffix = (
+                f"; recent preceding cases: {', '.join(map(str, dependency_case_ids))}"
+            )
+        hidden_dependency_possible = reproduced is False and (
+            status_code_changed is True
+            or response_body_changed is True
+            or has_dependency_candidates
+        )
+
+        if reproduced:
+            confidence = "request_reproduced"
+            assessment = "reproduced_under_current_workspace_state"
+            reason = (
+                "current replay reproduces the preserved request-level failure "
+                "under the current workspace state"
+            )
+        elif hidden_dependency_possible:
+            confidence = "request_only"
+            assessment = "diverged_from_preserved_failure"
+            reason = (
+                "current replay only reruns the preserved request and may miss "
+                "prior state changes or hidden dependencies"
+                f"{dependency_suffix}"
+            )
+        else:
+            confidence = "request_only"
+            assessment = "not_reproduced_under_current_workspace_state"
+            reason = (
+                "current replay reruns only the preserved request and does not "
+                "recreate historical environment state"
+                f"{dependency_suffix}"
+            )
+
+        return {
+            "scope": "request_level",
+            "confidence": confidence,
+            "assessment": assessment,
+            "recreates_environment_state": False,
+            "replays_prior_case_effects": False,
+            "hidden_dependency_possible": hidden_dependency_possible,
+            "dependency_hints": dependency_hints,
+            "recommended_actions": recommended_actions,
+            "reason": reason,
+        }
+
+    def _build_problem_dependency_hints(
+        self,
+        *,
+        execution_id: str,
+        case_id: str,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        if not execution_id:
+            return {
+                "recent_predecessors": [],
+                "candidate_case_ids": [],
+                "recent_same_case": None,
+                "immediate_predecessor": None,
+                "signal_strength": "none",
+                "recommended_actions": [],
+            }
+
+        records = sorted(
+            self.storage.list_executions(),
+            key=lambda item: (item.end_time, item.start_time, item.execution_id),
+        )
+        current_index = next(
+            (
+                index
+                for index, item in enumerate(records)
+                if item.execution_id == execution_id
+            ),
+            None,
+        )
+        if current_index is None:
+            return {
+                "recent_predecessors": [],
+                "candidate_case_ids": [],
+                "recent_same_case": None,
+                "immediate_predecessor": None,
+                "signal_strength": "none",
+                "recommended_actions": [],
+            }
+
+        predecessors = records[:current_index]
+        recent_predecessors = predecessors[-limit:]
+        predecessor_payloads = [
+            {
+                "execution_id": item.execution_id,
+                "case_id": item.case_id,
+                "status": item.status,
+                "end_time": item.end_time,
+            }
+            for item in reversed(recent_predecessors)
+        ]
+        immediate_predecessor = (
+            predecessor_payloads[0] if predecessor_payloads else None
+        )
+        recent_same_case = next(
+            (
+                {
+                    "execution_id": item.execution_id,
+                    "case_id": item.case_id,
+                    "status": item.status,
+                    "end_time": item.end_time,
+                }
+                for item in reversed(predecessors)
+                if item.case_id == case_id
+            ),
+            None,
+        )
+        candidate_case_ids: list[str] = []
+        for item in predecessor_payloads:
+            predecessor_case_id = item["case_id"]
+            if predecessor_case_id == case_id:
+                continue
+            if predecessor_case_id not in candidate_case_ids:
+                candidate_case_ids.append(predecessor_case_id)
+
+        signal_strength = self._classify_problem_dependency_signal(
+            candidate_case_ids=candidate_case_ids,
+            recent_same_case=recent_same_case,
+        )
+        recommended_actions = self._build_problem_dependency_actions(
+            candidate_case_ids=candidate_case_ids,
+            immediate_predecessor=immediate_predecessor,
+            recent_same_case=recent_same_case,
+        )
+
+        return {
+            "recent_predecessors": predecessor_payloads,
+            "candidate_case_ids": candidate_case_ids,
+            "recent_same_case": recent_same_case,
+            "immediate_predecessor": immediate_predecessor,
+            "signal_strength": signal_strength,
+            "recommended_actions": recommended_actions,
+        }
+
+    def _classify_problem_dependency_signal(
+        self,
+        *,
+        candidate_case_ids: list[str],
+        recent_same_case: dict[str, Any] | None,
+    ) -> str:
+        has_candidates = bool(candidate_case_ids)
+        has_same_case = recent_same_case is not None
+        if has_candidates and has_same_case:
+            return "sequence_and_repeat_history"
+        if has_candidates:
+            return "recent_sequence"
+        if has_same_case:
+            return "repeat_history"
+        return "none"
+
+    def _build_problem_dependency_actions(
+        self,
+        *,
+        candidate_case_ids: list[str],
+        immediate_predecessor: dict[str, Any] | None,
+        recent_same_case: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        actions: list[dict[str, Any]] = []
+        if immediate_predecessor is not None:
+            actions.append(
+                {
+                    "priority": "high",
+                    "action": "inspect_immediate_predecessor",
+                    "case_id": immediate_predecessor.get("case_id"),
+                    "execution_id": immediate_predecessor.get("execution_id"),
+                    "reason": "review the case that ran immediately before the preserved failure",
+                }
+            )
+        if candidate_case_ids:
+            actions.append(
+                {
+                    "priority": "high",
+                    "action": "rerun_candidate_predecessors_before_replay",
+                    "case_ids": candidate_case_ids,
+                    "reason": "rerun the recent predecessor cases before replaying again to check for stateful dependencies",
+                }
+            )
+        if recent_same_case is not None:
+            actions.append(
+                {
+                    "priority": "medium",
+                    "action": "compare_recent_same_case",
+                    "case_id": recent_same_case.get("case_id"),
+                    "execution_id": recent_same_case.get("execution_id"),
+                    "reason": "compare the preserved failure with the most recent execution of the same case",
+                }
+            )
+        return actions
+
+    def _extract_problem_latest_comparison(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        metadata = payload.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return None
+        latest_recovery = metadata.get("latest_recovery", {})
+        if not isinstance(latest_recovery, dict):
+            return None
+        if latest_recovery.get("action_type") != "replay":
+            return None
+        result = latest_recovery.get("result_summary", {})
+        if not isinstance(result, dict) or not result:
+            result = latest_recovery.get("result", {})
+        if not isinstance(result, dict):
+            return None
+        comparison = result.get("comparison")
+        return comparison if isinstance(comparison, dict) else None
+
+    def _build_problem_investigation_summary(
+        self,
+        payload: dict[str, Any],
+        *,
+        view: str,
+        reproduction_summary: dict[str, Any] | None = None,
+        comparison: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        problem_id = str(payload.get("problem_id", ""))
+        capabilities = payload.get("capabilities", {})
+        if not isinstance(capabilities, dict):
+            capabilities = {}
+        preservation = payload.get("preservation", {})
+        if not isinstance(preservation, dict):
+            preservation = {}
+        investigation: dict[str, Any] = {
+            "view": view,
+            "problem_id": problem_id,
+            "problem_type": payload.get("problem_type"),
+            "summary": payload.get("summary"),
+            "preservation_status": preservation.get("status"),
+            "latest_action": payload.get("latest_action"),
+            "capabilities": {
+                "can_replay": capabilities.get("can_replay"),
+                "can_recover": capabilities.get("can_recover"),
+                "replay_mode": capabilities.get("replay_mode"),
+                "recover_mode": capabilities.get("recover_mode"),
+            },
+            "recommended_commands": self._build_problem_recommended_commands(
+                problem_id
+            ),
+        }
+        if payload.get("problem_type") == "data_state":
+            data_investigation = self._build_data_state_investigation_summary(payload)
+            investigation.update(data_investigation)
+        if payload.get("problem_type") == "service_runtime":
+            runtime_investigation = self._build_service_runtime_investigation_summary(
+                payload
+            )
+            investigation.update(runtime_investigation)
+        if payload.get("problem_type") == "crash_dump":
+            crash_investigation = self._build_crash_dump_investigation_summary(payload)
+            investigation.update(crash_investigation)
+        if isinstance(reproduction_summary, dict):
+            request = reproduction_summary.get("request", {})
+            if isinstance(request, dict):
+                investigation["request"] = {
+                    "method": request.get("method"),
+                    "url": request.get("url"),
+                }
+            expected = reproduction_summary.get("expected", {})
+            if isinstance(expected, dict):
+                investigation["expected"] = expected
+            dependency_hints = reproduction_summary.get("dependency_hints")
+            if isinstance(dependency_hints, dict):
+                investigation["dependency"] = self._build_problem_dependency_digest(
+                    dependency_hints
+                )
+                investigation["next_actions"] = dependency_hints.get(
+                    "recommended_actions", []
+                )
+        if isinstance(comparison, dict):
+            boundary = comparison.get("boundary", {})
+            if isinstance(boundary, dict):
+                investigation["replay"] = {
+                    "reproduced": comparison.get("expectation", {}).get("reproduced")
+                    if isinstance(comparison.get("expectation"), dict)
+                    else comparison.get("reproduced"),
+                    "assessment": boundary.get("assessment"),
+                    "scope": boundary.get("scope"),
+                    "confidence": boundary.get("confidence"),
+                    "hidden_dependency_possible": boundary.get(
+                        "hidden_dependency_possible"
+                    ),
+                }
+                dependency_hints = boundary.get("dependency_hints")
+                if isinstance(dependency_hints, dict):
+                    investigation["dependency"] = self._build_problem_dependency_digest(
+                        dependency_hints
+                    )
+                recommended_actions = boundary.get("recommended_actions")
+                if isinstance(recommended_actions, list):
+                    investigation["next_actions"] = recommended_actions
+        workspace_recovery = self._build_workspace_recovery_plan(
+            problem_id=problem_id,
+            problem_type=str(payload.get("problem_type", "")),
+            object_refs=payload.get("object_refs", [])
+            if isinstance(payload.get("object_refs"), list)
+            else [],
+            details=payload.get("details", {})
+            if isinstance(payload.get("details"), dict)
+            else {},
+            recovery=payload.get("recovery", {})
+            if isinstance(payload.get("recovery"), dict)
+            else {},
+        )
+        investigation["workspace_recovery"] = workspace_recovery
+        side_effect_hints = self._build_problem_side_effect_hints(
+            problem_type=str(payload.get("problem_type", "")),
+            execution_id=str(payload.get("execution_id", "")),
+            case_id=str(payload.get("case_id", "")),
+            details=payload.get("details", {})
+            if isinstance(payload.get("details"), dict)
+            else {},
+            recovery=payload.get("recovery", {})
+            if isinstance(payload.get("recovery"), dict)
+            else {},
+        )
+        if side_effect_hints:
+            investigation["side_effect"] = self._build_problem_side_effect_digest(
+                side_effect_hints
+            )
+            investigation["environment_recovery"] = (
+                self._build_environment_recovery_from_side_effect(
+                    problem_type=str(payload.get("problem_type", "")),
+                    side_effect_hints=side_effect_hints,
+                    workspace_recovery=workspace_recovery,
+                )
+            )
+        investigation.setdefault("next_actions", [])
+        return investigation
+
+    def _build_data_state_investigation_summary(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        details = payload.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        recovery = payload.get("recovery", {})
+        if not isinstance(recovery, dict):
+            recovery = {}
+        data_source = details.get("data_source", {})
+        if not isinstance(data_source, dict):
+            data_source = {}
+        failure_kind = recovery.get("failure_kind", details.get("failure_kind"))
+        state_hints = recovery.get("state_hints", details.get("state_hints", {}))
+        origin_hints = recovery.get("origin_hints", details.get("origin_hints", {}))
+        boundary = recovery.get("boundary", {})
+        next_actions = recovery.get("next_actions", [])
+        summary: dict[str, Any] = {
+            "data_source": {
+                "db_type": data_source.get("db_type"),
+                "database": data_source.get("database"),
+                "host": data_source.get("host"),
+                "port": data_source.get("port"),
+            },
+            "failure_kind": failure_kind,
+            "state_hints": state_hints if isinstance(state_hints, dict) else {},
+        }
+        if isinstance(origin_hints, dict):
+            summary["origin_hints"] = {
+                "classification": origin_hints.get("classification"),
+                "query_context": origin_hints.get("query_context"),
+                "signal_strength": origin_hints.get("signal_strength"),
+                "candidate_case_ids": origin_hints.get("candidate_case_ids", []),
+                "immediate_predecessor": origin_hints.get("immediate_predecessor"),
+                "recent_same_case": origin_hints.get("recent_same_case"),
+            }
+        if isinstance(boundary, dict):
+            summary["boundary"] = {
+                "scope": boundary.get("scope"),
+                "confidence": boundary.get("confidence"),
+                "assessment": boundary.get("assessment"),
+                "reason": boundary.get("reason"),
+                "needs_historical_state": boundary.get("needs_historical_state"),
+            }
+        if isinstance(next_actions, list):
+            summary["next_actions"] = next_actions
+        return summary
+
+    def _build_crash_dump_object_summary(self, service_name: Any) -> dict[str, Any]:
+        if not isinstance(service_name, str) or not service_name:
+            return {
+                "service_name": service_name,
+                "object_found": False,
+            }
+        record = self.storage.get_object(service_name)
+        if record is None:
+            return {
+                "service_name": service_name,
+                "object_found": False,
+            }
+        crash_capture = (
+            record.metadata.get("crash_capture", {})
+            if isinstance(record.metadata, dict)
+            else {}
+        )
+        if not isinstance(crash_capture, dict):
+            crash_capture = {}
+        return {
+            "service_name": service_name,
+            "object_found": True,
+            "type_name": record.type_name,
+            "status": record.status,
+            "installed": record.installed,
+            "updated_at": record.updated_at,
+            "dump_dir": crash_capture.get("dump_dir"),
+        }
+
+    def _build_crash_dump_log_window(self, log_refs: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(log_refs, dict):
+            return {
+                "workspace_logs_dir": None,
+                "file_count": 0,
+                "latest_files": [],
+                "snippets": [],
+            }
+        workspace_logs_dir = log_refs.get("workspace_logs_dir")
+        files = log_refs.get("files", [])
+        latest_files = files if isinstance(files, list) else []
+        latest_files = latest_files[-2:]
+        snippets: list[dict[str, Any]] = []
+        if isinstance(workspace_logs_dir, str) and workspace_logs_dir:
+            for item in latest_files:
+                if not isinstance(item, dict):
+                    continue
+                relative_path = item.get("path")
+                if not isinstance(relative_path, str) or not relative_path:
+                    continue
+                log_path = (self.root_path / relative_path).resolve()
+                if not log_path.exists() or not log_path.is_file():
+                    continue
+                try:
+                    lines = log_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).splitlines()
+                except OSError:
+                    continue
+                snippets.append(
+                    {
+                        "path": relative_path,
+                        "tail": lines[-8:],
+                    }
+                )
+        return {
+            "workspace_logs_dir": workspace_logs_dir
+            if isinstance(workspace_logs_dir, str)
+            else None,
+            "file_count": len(files) if isinstance(files, list) else 0,
+            "latest_files": latest_files,
+            "snippets": snippets,
+        }
+
+    def _build_service_runtime_investigation_summary(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        details = payload.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        recovery = payload.get("recovery", {})
+        if not isinstance(recovery, dict):
+            recovery = {}
+        service = details.get("service", {})
+        if not isinstance(service, dict):
+            service = {}
+        runtime_result = details.get("runtime_result", {})
+        if not isinstance(runtime_result, dict):
+            runtime_result = {}
+        failure_kind = recovery.get("failure_kind", details.get("failure_kind"))
+        runtime_hints = recovery.get("runtime_hints", details.get("runtime_hints", {}))
+        boundary = recovery.get("boundary", {})
+        next_actions = recovery.get("next_actions", [])
+        summary: dict[str, Any] = {
+            "runtime_target": {
+                "service_name": service.get("service_name"),
+                "object_name": service.get("service_name"),
+                "runtime_backend": "object_or_external_service",
+                "host": service.get("host"),
+                "port": service.get("port"),
+            },
+            "failure_kind": failure_kind,
+            "runtime_status": runtime_result.get("status"),
+        }
+        if isinstance(runtime_hints, dict):
+            summary["runtime_hints"] = {
+                "object_status": runtime_hints.get("object_status"),
+                "check_type": runtime_hints.get("check_type"),
+                "connectable": runtime_hints.get("connectable"),
+                "expected_runtime_state": runtime_hints.get("expected_runtime_state"),
+                "error_keywords": runtime_hints.get("error_keywords", []),
+            }
+        if isinstance(boundary, dict):
+            summary["boundary"] = {
+                "scope": boundary.get("scope"),
+                "confidence": boundary.get("confidence"),
+                "assessment": boundary.get("assessment"),
+                "reason": boundary.get("reason"),
+                "needs_runtime_history": boundary.get("needs_runtime_history"),
+            }
+        if isinstance(next_actions, list):
+            summary["next_actions"] = next_actions
+        return summary
+
+    def _build_crash_dump_investigation_summary(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        details = payload.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        recovery = payload.get("recovery", {})
+        if not isinstance(recovery, dict):
+            recovery = {}
+        crash_target = details.get("crash_target", {})
+        if not isinstance(crash_target, dict):
+            crash_target = {}
+        crash_event = details.get("crash_event", {})
+        if not isinstance(crash_event, dict):
+            crash_event = {}
+        dump_refs = recovery.get("dump_refs", details.get("dump_refs", []))
+        boundary = recovery.get("boundary", {})
+        next_actions = recovery.get("next_actions", [])
+        summary: dict[str, Any] = {
+            "crash_target": crash_target,
+            "crash_summary": {
+                "execution_status": crash_event.get("execution_status"),
+                "detected_at": crash_event.get("detected_at"),
+                "error": crash_event.get("error"),
+            },
+            "dump_refs": dump_refs if isinstance(dump_refs, list) else [],
+        }
+        if isinstance(boundary, dict):
+            summary["boundary"] = {
+                "scope": boundary.get("scope"),
+                "confidence": boundary.get("confidence"),
+                "assessment": boundary.get("assessment"),
+                "reason": boundary.get("reason"),
+                "needs_dump_analysis": boundary.get("needs_dump_analysis"),
+            }
+        if isinstance(next_actions, list):
+            summary["next_actions"] = next_actions
+        object_summary = recovery.get(
+            "object_summary", details.get("object_summary", {})
+        )
+        if isinstance(object_summary, dict):
+            summary["object_summary"] = object_summary
+        log_window = recovery.get("log_window", details.get("log_window", {}))
+        if isinstance(log_window, dict):
+            summary["log_window"] = {
+                "workspace_logs_dir": log_window.get("workspace_logs_dir"),
+                "file_count": log_window.get("file_count"),
+                "latest_files": log_window.get("latest_files", []),
+                "snippets": log_window.get("snippets", []),
+            }
+        return summary
+
+    def _build_problem_dependency_digest(
+        self, dependency_hints: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "signal_strength": dependency_hints.get("signal_strength", "none"),
+            "candidate_case_ids": dependency_hints.get("candidate_case_ids", []),
+            "immediate_predecessor": dependency_hints.get("immediate_predecessor"),
+            "recent_same_case": dependency_hints.get("recent_same_case"),
+            "recommended_actions": dependency_hints.get("recommended_actions", []),
+        }
+
+    def _build_problem_side_effect_hints(
+        self,
+        *,
+        problem_type: str,
+        execution_id: str,
+        case_id: str,
+        details: dict[str, Any],
+        recovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        if problem_type not in {
+            "api_response",
+            "service_runtime",
+            "data_state",
+            "crash_dump",
+        }:
+            return {}
+
+        dependency_hints = self._build_problem_dependency_hints(
+            execution_id=execution_id,
+            case_id=case_id,
+        )
+        signal_strength = str(dependency_hints.get("signal_strength", "none"))
+        candidate_case_ids = dependency_hints.get("candidate_case_ids", [])
+        immediate_predecessor = dependency_hints.get("immediate_predecessor")
+        environment_shift_detected = signal_strength != "none" and (
+            bool(candidate_case_ids) or isinstance(immediate_predecessor, dict)
+        )
+        likely_trigger_case_id = (
+            immediate_predecessor.get("case_id")
+            if isinstance(immediate_predecessor, dict)
+            else None
+        )
+
+        if environment_shift_detected:
+            if problem_type == "api_response":
+                classification = "possible_request_side_effect"
+                reason = (
+                    "recent preceding cases may have changed remote service state "
+                    "before the preserved request failed"
+                )
+            elif problem_type == "data_state":
+                classification = "possible_data_pollution"
+                reason = (
+                    "recent preceding cases may have changed persisted data state "
+                    "before the preserved query failed"
+                )
+            elif problem_type == "crash_dump":
+                classification = "possible_crash_inducing_side_effect"
+                reason = (
+                    "recent preceding cases may have destabilized the target "
+                    "service before the preserved crash dump was captured"
+                )
+            else:
+                classification = "possible_runtime_destabilization"
+                reason = (
+                    "recent preceding cases may have destabilized the target "
+                    "service before the preserved runtime check failed"
+                )
+        else:
+            classification = "no_recent_side_effect_signal"
+            reason = (
+                "no recent execution sequence strongly suggests a prior test-side "
+                "effect for the preserved failure"
+            )
+
+        return {
+            **dependency_hints,
+            "classification": classification,
+            "environment_shift_detected": environment_shift_detected,
+            "likely_trigger_case_id": likely_trigger_case_id,
+            "reason": reason,
+            "problem_scope": problem_type,
+            "runtime_failure_kind": recovery.get("failure_kind")
+            if problem_type == "service_runtime"
+            else None,
+            "crash_target_service_name": details.get("crash_target", {}).get(
+                "service_name"
+            )
+            if problem_type == "crash_dump"
+            and isinstance(details.get("crash_target"), dict)
+            else None,
+            "request_url": details.get("request", {}).get("url")
+            if isinstance(details.get("request"), dict)
+            else None,
+        }
+
+    def _build_problem_side_effect_digest(
+        self, side_effect_hints: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "classification": side_effect_hints.get("classification"),
+            "signal_strength": side_effect_hints.get("signal_strength", "none"),
+            "environment_shift_detected": side_effect_hints.get(
+                "environment_shift_detected", False
+            ),
+            "likely_trigger_case_id": side_effect_hints.get("likely_trigger_case_id"),
+            "candidate_case_ids": side_effect_hints.get("candidate_case_ids", []),
+            "immediate_predecessor": side_effect_hints.get("immediate_predecessor"),
+            "reason": side_effect_hints.get("reason"),
+        }
+
+    def _build_environment_recovery_from_side_effect(
+        self,
+        *,
+        problem_type: str,
+        side_effect_hints: dict[str, Any],
+        workspace_recovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        signal_strength = str(side_effect_hints.get("signal_strength", "none"))
+        environment_shift_detected = bool(
+            side_effect_hints.get("environment_shift_detected", False)
+        )
+        likely_trigger_case_id = side_effect_hints.get("likely_trigger_case_id")
+        confidence = {
+            "recent_sequence": "medium_for_recent_sequence_signal",
+            "same_case_history": "low_for_same_case_history_only",
+        }.get(signal_strength, "low_when_side_effect_signal_is_sparse")
+        assessment = (
+            "environment_may_have_shifted_by_prior_case"
+            if environment_shift_detected
+            else "no_prior_side_effect_signal_detected"
+        )
+        recommended_sequence: list[str] = []
+        if isinstance(likely_trigger_case_id, str) and likely_trigger_case_id:
+            recommended_sequence.append("inspect_likely_trigger_case_effects")
+        workspace_sequence = workspace_recovery.get("recommended_sequence", [])
+        if isinstance(workspace_sequence, list):
+            recommended_sequence.extend(
+                str(item) for item in workspace_sequence if isinstance(item, str)
+            )
+        recommended_sequence.append("rerun_affected_case_after_baseline_restore")
+        return {
+            "scope": "workspace_side_effect_minimum_recovery",
+            "assessment": assessment,
+            "confidence": confidence,
+            "problem_scope": problem_type,
+            "likely_trigger_case_id": likely_trigger_case_id,
+            "affected_objects": workspace_recovery.get("affected_objects", []),
+            "recommended_sequence": recommended_sequence,
+            "reason": side_effect_hints.get("reason"),
+            "recovery_boundary": {
+                "scope": "workspace_side_effect_minimum_recovery",
+                "does_not_cover": [
+                    "automatic_environment_rollback",
+                    "snapshot_restore",
+                    "container_level_recovery",
+                    "multi_service_side_effect_recovery",
+                ],
+            },
+        }
+
+    def _build_problem_recommended_commands(self, problem_id: str) -> list[str]:
+        if not problem_id:
+            return []
+        return [
+            f"ptest problem show {problem_id}",
+            f"ptest problem assets {problem_id}",
+            f"ptest problem replay {problem_id}",
+        ]
+
+    def _build_api_replay_header_summary(
+        self, replay_response: dict[str, Any]
+    ) -> dict[str, Any]:
+        replay_headers = replay_response.get("headers", {})
+        if not isinstance(replay_headers, dict):
+            replay_headers = {}
+        header_names = sorted(str(key) for key in replay_headers.keys())
+        return {
+            "comparable": False,
+            "reason": "preserved response headers are not available in the current problem record",
+            "replay_header_count": len(header_names),
+            "replay_header_names": header_names,
+        }
+
+    def _build_api_replay_body_summary(
+        self,
+        *,
+        preserved_body: Any,
+        replay_body: Any,
+        response_body_changed: bool | None,
+    ) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            "comparable": preserved_body is not None,
+            "changed": response_body_changed,
+            "preserved_type": self._problem_value_type_name(preserved_body),
+            "replay_type": self._problem_value_type_name(replay_body),
+            "change_kind": "preserved_body_unavailable",
+            "preserved_preview": self._problem_value_preview(preserved_body),
+            "replay_preview": self._problem_value_preview(replay_body),
+        }
+        if preserved_body is None:
+            return summary
+        if response_body_changed is False:
+            summary["change_kind"] = "same"
+            return summary
+        if type(preserved_body) is not type(replay_body):
+            summary["change_kind"] = "type_changed"
+            return summary
+        if isinstance(preserved_body, dict) and isinstance(replay_body, dict):
+            preserved_keys = set(preserved_body.keys())
+            replay_keys = set(replay_body.keys())
+            changed_keys = sorted(
+                key
+                for key in preserved_keys & replay_keys
+                if not self._compare_problem_values(
+                    preserved_body[key], replay_body[key]
+                )
+            )
+            summary["change_kind"] = "top_level_fields_changed"
+            summary["added_top_level_fields"] = sorted(replay_keys - preserved_keys)
+            summary["removed_top_level_fields"] = sorted(preserved_keys - replay_keys)
+            summary["changed_top_level_fields"] = changed_keys
+            return summary
+        if isinstance(preserved_body, list) and isinstance(replay_body, list):
+            summary["change_kind"] = "sequence_changed"
+            summary["preserved_length"] = len(preserved_body)
+            summary["replay_length"] = len(replay_body)
+            return summary
+        summary["change_kind"] = "value_changed"
+        return summary
+
+    def _problem_value_type_name(self, value: Any) -> str:
+        if value is None:
+            return "none"
+        if isinstance(value, dict):
+            return "object"
+        if isinstance(value, list):
+            return "array"
+        if isinstance(value, str):
+            return "string"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, int | float):
+            return "number"
+        return type(value).__name__
+
+    def _problem_value_preview(self, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            preview: dict[str, Any] = {}
+            for key in sorted(value.keys())[:3]:
+                preview[str(key)] = self._problem_preview_leaf(value[key])
+            return preview
+        if isinstance(value, list):
+            return [self._problem_preview_leaf(item) for item in value[:3]]
+        return self._problem_preview_leaf(value)
+
+    def _problem_preview_leaf(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return "{...}"
+        if isinstance(value, list):
+            return f"[... x{len(value)}]"
+        return value
+
+    def _build_problem_reproduction_summary(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        if payload.get("problem_type") != "api_response":
+            return None
+        details = payload.get("details", {})
+        if not isinstance(details, dict):
+            return None
+
+        request = details.get("request", {})
+        response = details.get("response", {})
+        preservation = payload.get("preservation", {})
+        if not isinstance(request, dict) or not isinstance(response, dict):
+            return None
+        if not isinstance(preservation, dict):
+            preservation = {}
+
+        expected = self._build_api_expected_summary(details)
+        dependency_hints = self._build_problem_dependency_hints(
+            execution_id=str(payload.get("execution_id", "")),
+            case_id=str(payload.get("case_id", "")),
+        )
+        side_effect_hints = self._build_problem_side_effect_hints(
+            problem_type="api_response",
+            execution_id=str(payload.get("execution_id", "")),
+            case_id=str(payload.get("case_id", "")),
+            details=details,
+            recovery=payload.get("recovery", {})
+            if isinstance(payload.get("recovery"), dict)
+            else {},
+        )
+        observed_failure = {
+            "status_code": response.get("observed_status_code"),
+            "body": response.get("observed_body"),
+            "error": response.get("error"),
+        }
+        return {
+            "problem_id": payload.get("problem_id"),
+            "problem_type": payload.get("problem_type"),
+            "case_id": payload.get("case_id"),
+            "summary": payload.get("summary"),
+            "request": {
+                "method": request.get("method", "GET"),
+                "url": request.get("url", ""),
+                "headers": request.get("headers", {}),
+                "params": request.get("params"),
+                "body": request.get("body"),
+            },
+            "expected": expected,
+            "observed_failure": observed_failure,
+            "preservation": {
+                "status": preservation.get("status"),
+                "missing_assets": preservation.get("missing_assets", []),
+            },
+            "dependency_hints": dependency_hints,
+            "side_effect_hints": side_effect_hints,
+            "recommended_commands": self._build_problem_recommended_commands(
+                str(payload.get("problem_id", ""))
+            ),
+        }
+
+    def _build_api_expected_summary(self, details: dict[str, Any]) -> dict[str, Any]:
+        response = details.get("response", {})
+        case_payload = details.get("case", {})
+        if not isinstance(response, dict):
+            response = {}
+        if not isinstance(case_payload, dict):
+            case_payload = {}
+
+        return {
+            "status_code": response.get("expected_status"),
+            "response_body": response.get("expected_response"),
+            "assertions": case_payload.get("assertions", []),
+        }
+
     def _build_recovery_plan(
         self, record: ProblemRecord, assets: ProblemAssetRecord
     ) -> dict[str, Any]:
+        recovery_plan: dict[str, Any]
         if assets.problem_type == "api_response":
-            return self._build_api_recovery_plan(record, assets)
-        if assets.problem_type == "data_state":
-            return self._build_data_recovery_plan(record, assets)
-        if assets.problem_type in {
+            recovery_plan = self._build_api_recovery_plan(record, assets)
+        elif assets.problem_type == "data_state":
+            recovery_plan = self._build_data_recovery_plan(record, assets)
+        elif assets.problem_type in {
             "environment_init",
             "dependency_object",
             "dependency_configuration",
         }:
-            return self._build_environment_dependency_recovery_plan(record, assets)
-        if assets.problem_type == "service_runtime":
-            return self._build_service_runtime_recovery_plan(record, assets)
+            recovery_plan = self._build_environment_dependency_recovery_plan(
+                record, assets
+            )
+        elif assets.problem_type == "service_runtime":
+            recovery_plan = self._build_service_runtime_recovery_plan(record, assets)
+        elif assets.problem_type == "crash_dump":
+            recovery_plan = self._build_crash_dump_recovery_plan(record, assets)
+        else:
+            recovery = assets.recovery if isinstance(assets.recovery, dict) else {}
+            recovery_plan = {
+                "problem_id": record.problem_id,
+                "problem_type": record.problem_type,
+                "summary": record.summary,
+                "supported": bool(recovery.get("supported", False)),
+                "mode": recovery.get("mode", "unsupported"),
+                "steps": [],
+                "hints": recovery,
+            }
 
-        recovery = assets.recovery if isinstance(assets.recovery, dict) else {}
+        recovery_plan["workspace_recovery"] = self._build_workspace_recovery_plan(
+            problem_id=record.problem_id,
+            problem_type=record.problem_type,
+            object_refs=record.object_refs,
+            details=assets.details if isinstance(assets.details, dict) else {},
+            recovery=assets.recovery if isinstance(assets.recovery, dict) else {},
+        )
+        side_effect_hints = self._build_problem_side_effect_hints(
+            problem_type=record.problem_type,
+            execution_id=record.execution_id,
+            case_id=record.case_id,
+            details=assets.details if isinstance(assets.details, dict) else {},
+            recovery=assets.recovery if isinstance(assets.recovery, dict) else {},
+        )
+        if side_effect_hints:
+            recovery_plan["side_effect_hints"] = side_effect_hints
+            recovery_plan["environment_recovery"] = (
+                self._build_environment_recovery_from_side_effect(
+                    problem_type=record.problem_type,
+                    side_effect_hints=side_effect_hints,
+                    workspace_recovery=recovery_plan["workspace_recovery"],
+                )
+            )
+        return recovery_plan
+
+    def _build_workspace_recovery_plan(
+        self,
+        *,
+        problem_id: str,
+        problem_type: str,
+        object_refs: list[str],
+        details: dict[str, Any],
+        recovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        affected_objects = self._build_workspace_recovery_affected_objects(
+            problem_type=problem_type,
+            object_refs=object_refs,
+            details=details,
+            recovery=recovery,
+        )
         return {
-            "problem_id": record.problem_id,
-            "problem_type": record.problem_type,
-            "summary": record.summary,
-            "supported": bool(recovery.get("supported", False)),
-            "mode": recovery.get("mode", "unsupported"),
-            "steps": [],
-            "hints": recovery,
+            "scope": "workspace_minimum_recovery",
+            "problem_id": problem_id,
+            "affected_objects": affected_objects,
+            "recommended_sequence": [
+                item["object_name"]
+                for item in affected_objects
+                if isinstance(item.get("object_name"), str) and item.get("object_name")
+            ],
+            "recovery_boundary": {
+                "scope": "workspace_minimum_recovery",
+                "confidence": "minimal_object_level_plan",
+                "assessment": "object_level_recovery_plan_only",
+                "reason": "current workspace recovery summarizes minimal object actions only and does not execute them automatically",
+                "does_not_cover": [
+                    "automatic_recovery_execution",
+                    "historical_state_snapshot_restore",
+                    "container_level_recovery",
+                    "cross_workspace_recovery",
+                ],
+            },
+            "baseline_restore": self._build_workspace_baseline_restore_summary(),
+            "post_recovery_checks": self._build_workspace_recovery_post_checks(
+                problem_type=problem_type,
+                problem_id=problem_id,
+                affected_objects=affected_objects,
+            ),
         }
+
+    def _build_workspace_recovery_affected_objects(
+        self,
+        *,
+        problem_type: str,
+        object_refs: list[str],
+        details: dict[str, Any],
+        recovery: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        candidate_names: list[str] = []
+        for raw_name in object_refs:
+            if (
+                isinstance(raw_name, str)
+                and raw_name
+                and raw_name not in candidate_names
+            ):
+                candidate_names.append(raw_name)
+
+        inferred_names = [
+            details.get("service", {}).get("service_name")
+            if isinstance(details.get("service"), dict)
+            else None,
+            details.get("crash_target", {}).get("service_name")
+            if isinstance(details.get("crash_target"), dict)
+            else None,
+            recovery.get("runtime_target", {}).get("object_name")
+            if isinstance(recovery.get("runtime_target"), dict)
+            else None,
+            recovery.get("crash_target", {}).get("object_name")
+            if isinstance(recovery.get("crash_target"), dict)
+            else None,
+        ]
+        for inferred_name in inferred_names:
+            if (
+                isinstance(inferred_name, str)
+                and inferred_name
+                and inferred_name not in candidate_names
+            ):
+                candidate_names.append(inferred_name)
+
+        affected_objects: list[dict[str, Any]] = []
+        for object_name in candidate_names:
+            record = self.storage.get_object(object_name)
+            if record is None:
+                affected_objects.append(
+                    {
+                        "object_name": object_name,
+                        "object_found": False,
+                        "recommended_action": "reinstall",
+                        "reason": "the referenced object is not present in workspace state and should be recreated before deeper recovery",
+                    }
+                )
+                continue
+            recommended_action, reason = self._derive_workspace_recovery_action(
+                problem_type=problem_type,
+                status=record.status,
+            )
+            affected_objects.append(
+                {
+                    "object_name": object_name,
+                    "object_found": True,
+                    "type_name": record.type_name,
+                    "current_status": record.status,
+                    "installed": record.installed,
+                    "recommended_action": recommended_action,
+                    "reason": reason,
+                }
+            )
+        return affected_objects
+
+    def _derive_workspace_recovery_action(
+        self, *, problem_type: str, status: str
+    ) -> tuple[str, str]:
+        if is_failure_preserved_object_status(status):
+            return (
+                "reinstall",
+                "the object is already in a preserved failure state, so reinstall is the safest minimal recovery action",
+            )
+        if problem_type == "data_state":
+            if status in {
+                OBJECT_STATUS_RUNNING,
+                OBJECT_STATUS_STOPPED,
+                OBJECT_STATUS_INSTALLED,
+            }:
+                return (
+                    "reset",
+                    "data/state problems should first return the bound object to a clean minimal baseline before rerunning the preserved query",
+                )
+            if is_clearable_object_status(status):
+                return (
+                    "clear",
+                    "the object can be cleared to remove residual state before rerunning validation",
+                )
+            return (
+                "reinstall",
+                "the object is not in a clean resettable state, so reinstall is the safer minimal fallback",
+            )
+        if problem_type in {"service_runtime", "crash_dump", "api_response"}:
+            if status in {
+                OBJECT_STATUS_RUNNING,
+                OBJECT_STATUS_STOPPED,
+                OBJECT_STATUS_INSTALLED,
+            }:
+                return (
+                    "restart",
+                    "the object should first be restarted to restore a known-good runtime baseline for follow-up checks",
+                )
+            if is_resettable_object_status(status):
+                return (
+                    "reset",
+                    "the object can be reset to rebuild its minimal runnable state before further validation",
+                )
+            return (
+                "reinstall",
+                "the object is not in a stable runtime state, so reinstall is the safer minimal fallback",
+            )
+        if is_resettable_object_status(status):
+            return (
+                "reset",
+                "the object supports reset and should be returned to a minimal baseline first",
+            )
+        return (
+            "reinstall",
+            "a minimal reinstall is the safest generic recovery action for the current object state",
+        )
+
+    def _build_workspace_baseline_summary(
+        self, record: WorkspaceBaselineRecord
+    ) -> dict[str, Any]:
+        return {
+            "baseline_id": record.baseline_id,
+            "root_path": record.root_path,
+            "summary": record.summary,
+            "created_at": record.created_at,
+            "object_count": len(record.objects)
+            if isinstance(record.objects, list)
+            else 0,
+            "capture_scope": record.metadata.get("capture_scope")
+            if isinstance(record.metadata, dict)
+            else None,
+            "object_reference_count": len(
+                record.metadata.get("object_reference_snapshots", [])
+            )
+            if isinstance(record.metadata, dict)
+            and isinstance(record.metadata.get("object_reference_snapshots"), list)
+            else 0,
+            "content_reference_count": len(
+                record.metadata.get("content_reference_snapshots", [])
+            )
+            if isinstance(record.metadata, dict)
+            and isinstance(record.metadata.get("content_reference_snapshots"), list)
+            else 0,
+            "limitations": record.metadata.get("limitations", [])
+            if isinstance(record.metadata, dict)
+            else [],
+        }
+
+    def _build_workspace_baseline_restore_summary(self) -> dict[str, Any]:
+        baselines = self.storage.list_workspace_baselines()
+        if not baselines:
+            return {
+                "available": False,
+                "scope": "workspace_minimum_baseline_restore",
+                "assessment": "no_workspace_baseline_available",
+                "recommended_action": "create_workspace_baseline_before_heavier_recovery",
+            }
+        latest = baselines[0]
+        return {
+            "available": True,
+            "scope": "workspace_minimum_baseline_restore",
+            "assessment": "workspace_baseline_available_for_restore",
+            "latest_baseline": self._build_workspace_baseline_summary(latest),
+            "recommended_action": "restore_workspace_baseline_if_minimal_recovery_is_insufficient",
+        }
+
+    def _build_workspace_baseline_object_references(
+        self, objects: dict[str, ManagedObjectRecord]
+    ) -> list[dict[str, Any]]:
+        references: list[dict[str, Any]] = []
+        for record in objects.values():
+            config = record.config if isinstance(record.config, dict) else {}
+            managed_instance = (
+                config.get("managed_instance", {})
+                if isinstance(config.get("managed_instance"), dict)
+                else {}
+            )
+            path_entries: list[dict[str, Any]] = []
+            for field in (
+                "instance_root",
+                "install_dir",
+                "data_dir",
+                "config_dir",
+                "log_dir",
+                "run_dir",
+                "dump_dir",
+            ):
+                raw_path = managed_instance.get(field)
+                if isinstance(raw_path, str) and raw_path:
+                    resolved = Path(raw_path).expanduser().resolve()
+                    path_entries.append(
+                        {
+                            "field": field,
+                            "path": str(resolved),
+                            "exists": resolved.exists(),
+                        }
+                    )
+            if path_entries:
+                references.append(
+                    {
+                        "object_name": record.name,
+                        "type_name": record.type_name,
+                        "paths": path_entries,
+                    }
+                )
+        return references
+
+    def _restore_workspace_baseline_object_references(
+        self, record: WorkspaceBaselineRecord
+    ) -> dict[str, Any]:
+        metadata = record.metadata if isinstance(record.metadata, dict) else {}
+        snapshots = (
+            metadata.get("object_reference_snapshots", [])
+            if isinstance(metadata.get("object_reference_snapshots"), list)
+            else []
+        )
+        restored_paths: list[dict[str, Any]] = []
+        skipped_paths: list[dict[str, Any]] = []
+        for item in snapshots:
+            if not isinstance(item, dict):
+                continue
+            object_name = str(item.get("object_name", ""))
+            for path_entry in item.get("paths", []):
+                if not isinstance(path_entry, dict):
+                    continue
+                raw_path = path_entry.get("path")
+                if not isinstance(raw_path, str) or not raw_path:
+                    continue
+                field = str(path_entry.get("field", ""))
+                target = Path(raw_path).expanduser().resolve()
+                try:
+                    target.mkdir(parents=True, exist_ok=True)
+                    restored_paths.append(
+                        {
+                            "object_name": object_name,
+                            "field": field,
+                            "path": str(target),
+                        }
+                    )
+                except OSError as exc:
+                    skipped_paths.append(
+                        {
+                            "object_name": object_name,
+                            "field": field,
+                            "path": str(target),
+                            "reason": str(exc),
+                        }
+                    )
+        return {
+            "scope": "workspace_object_reference_restore",
+            "restored_paths": restored_paths,
+            "skipped_paths": skipped_paths,
+            "limitations": [
+                "directory existence is restored but directory contents are not replayed",
+                "full data image restoration is not included in this stage",
+            ],
+        }
+
+    def _build_workspace_baseline_content_snapshots(
+        self,
+        baseline_id: str,
+        objects: dict[str, ManagedObjectRecord],
+    ) -> dict[str, Any]:
+        snapshots: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        workspace_root = self.root_path.resolve()
+        for record in objects.values():
+            config = record.config if isinstance(record.config, dict) else {}
+            managed_instance = (
+                config.get("managed_instance", {})
+                if isinstance(config.get("managed_instance"), dict)
+                else {}
+            )
+            for candidate in self._iter_workspace_baseline_content_candidates(
+                record,
+                managed_instance,
+            ):
+                source = candidate["path"]
+                field = candidate["field"]
+                relative_path = candidate["relative_path"]
+                if len(snapshots) >= self.WORKSPACE_BASELINE_CONTENT_MAX_FILES:
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            "maximum_content_snapshot_file_count_reached",
+                        )
+                    )
+                    continue
+                if not source.is_relative_to(workspace_root):
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            "outside_workspace_not_supported",
+                        )
+                    )
+                    continue
+                if source.is_symlink():
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            "symlink_not_supported",
+                        )
+                    )
+                    continue
+                try:
+                    size_bytes = source.stat().st_size
+                except OSError as exc:
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            str(exc),
+                        )
+                    )
+                    continue
+                if size_bytes > self.WORKSPACE_BASELINE_CONTENT_MAX_BYTES:
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            "file_too_large_for_minimum_content_snapshot",
+                        )
+                    )
+                    continue
+                stored_relative_path = (
+                    Path(baseline_id)
+                    / "content"
+                    / self._safe_workspace_baseline_path_segment(record.name)
+                    / field
+                    / relative_path
+                )
+                stored_path = self.storage.baselines_dir / stored_relative_path
+                try:
+                    stored_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, stored_path)
+                    snapshots.append(
+                        {
+                            "object_name": record.name,
+                            "type_name": record.type_name,
+                            "field": field,
+                            "path": str(source),
+                            "relative_path": relative_path.as_posix(),
+                            "stored_path": stored_relative_path.as_posix(),
+                            "size_bytes": size_bytes,
+                            "sha256": self._sha256_file(source),
+                        }
+                    )
+                except OSError as exc:
+                    skipped.append(
+                        self._build_workspace_baseline_content_skip(
+                            record,
+                            field,
+                            source,
+                            str(exc),
+                        )
+                    )
+        return {
+            "scope": "workspace_content_reference_snapshot",
+            "snapshots": snapshots,
+            "skipped": skipped,
+            "max_file_bytes": self.WORKSPACE_BASELINE_CONTENT_MAX_BYTES,
+            "max_files": self.WORKSPACE_BASELINE_CONTENT_MAX_FILES,
+        }
+
+    def _iter_workspace_baseline_content_candidates(
+        self,
+        record: ManagedObjectRecord,
+        managed_instance: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        fields = ["config_dir"]
+        if record.type_name.lower() in {"sqlite", "database"}:
+            fields.append("data_dir")
+        for field in fields:
+            raw_path = managed_instance.get(field)
+            if not isinstance(raw_path, str) or not raw_path:
+                continue
+            root = Path(raw_path).expanduser().resolve()
+            if root.is_file():
+                if self._is_supported_workspace_baseline_content_file(
+                    record,
+                    field,
+                    root,
+                ):
+                    candidates.append(
+                        {"field": field, "path": root, "relative_path": Path(root.name)}
+                    )
+                continue
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if not path.is_file():
+                    continue
+                source = path.resolve()
+                if not self._is_supported_workspace_baseline_content_file(
+                    record,
+                    field,
+                    source,
+                ):
+                    continue
+                try:
+                    relative_path = source.relative_to(root)
+                except ValueError:
+                    relative_path = Path(source.name)
+                candidates.append(
+                    {
+                        "field": field,
+                        "path": source,
+                        "relative_path": relative_path,
+                    }
+                )
+        return candidates
+
+    def _is_supported_workspace_baseline_content_file(
+        self,
+        record: ManagedObjectRecord,
+        field: str,
+        path: Path,
+    ) -> bool:
+        if field == "config_dir":
+            return True
+        if field == "data_dir" and record.type_name.lower() in {"sqlite", "database"}:
+            return path.suffix.lower() in {".db", ".sqlite", ".sqlite3"}
+        return False
+
+    def _restore_workspace_baseline_content_references(
+        self,
+        record: WorkspaceBaselineRecord,
+    ) -> dict[str, Any]:
+        metadata = record.metadata if isinstance(record.metadata, dict) else {}
+        snapshots = (
+            metadata.get("content_reference_snapshots", [])
+            if isinstance(metadata.get("content_reference_snapshots"), list)
+            else []
+        )
+        restored_contents: list[dict[str, Any]] = []
+        overwritten_contents: list[dict[str, Any]] = []
+        unchanged_contents: list[dict[str, Any]] = []
+        skipped_contents: list[dict[str, Any]] = []
+        baseline_root = self.storage.baselines_dir.resolve()
+        workspace_root = self.root_path.resolve()
+        for item in snapshots:
+            if not isinstance(item, dict):
+                continue
+            raw_stored_path = item.get("stored_path")
+            raw_target_path = item.get("path")
+            if not isinstance(raw_stored_path, str) or not isinstance(
+                raw_target_path,
+                str,
+            ):
+                continue
+            source = (self.storage.baselines_dir / raw_stored_path).resolve()
+            target = Path(raw_target_path).expanduser().resolve()
+            object_name = str(item.get("object_name", ""))
+            field = str(item.get("field", ""))
+            if not source.is_relative_to(baseline_root):
+                skipped_contents.append(
+                    {
+                        "object_name": object_name,
+                        "field": field,
+                        "path": raw_stored_path,
+                        "reason": "invalid_baseline_content_path",
+                    }
+                )
+                continue
+            if not target.is_relative_to(workspace_root):
+                skipped_contents.append(
+                    {
+                        "object_name": object_name,
+                        "field": field,
+                        "path": str(target),
+                        "reason": "target_outside_workspace_not_supported",
+                    }
+                )
+                continue
+            if not source.exists() or not source.is_file():
+                skipped_contents.append(
+                    {
+                        "object_name": object_name,
+                        "field": field,
+                        "path": str(target),
+                        "reason": "baseline_content_file_not_found",
+                    }
+                )
+                continue
+            if target.exists() and target.is_dir():
+                skipped_contents.append(
+                    {
+                        "object_name": object_name,
+                        "field": field,
+                        "path": str(target),
+                        "reason": "target_path_is_directory",
+                    }
+                )
+                continue
+            try:
+                target_exists = target.exists()
+                target_sha256 = self._sha256_file(target) if target_exists else None
+                source_sha256 = self._sha256_file(source)
+                result_entry = {
+                    "object_name": object_name,
+                    "field": field,
+                    "path": str(target),
+                    "size_bytes": item.get("size_bytes"),
+                    "sha256": item.get("sha256", source_sha256),
+                }
+                if target_sha256 == source_sha256:
+                    unchanged_contents.append(
+                        {
+                            **result_entry,
+                            "action": "already_at_baseline",
+                        }
+                    )
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                if target_exists:
+                    overwritten_contents.append(
+                        {
+                            **result_entry,
+                            "action": "overwritten_to_baseline",
+                            "previous_sha256": target_sha256,
+                        }
+                    )
+                else:
+                    restored_contents.append(
+                        {
+                            **result_entry,
+                            "action": "created_from_baseline",
+                        }
+                    )
+            except OSError as exc:
+                skipped_contents.append(
+                    {
+                        "object_name": object_name,
+                        "field": field,
+                        "path": str(target),
+                        "reason": str(exc),
+                    }
+                )
+        return {
+            "scope": "workspace_content_reference_restore",
+            "restored_contents": restored_contents,
+            "overwritten_contents": overwritten_contents,
+            "unchanged_contents": unchanged_contents,
+            "skipped_contents": skipped_contents,
+            "limitations": [
+                "only small explicitly supported content files are restored",
+                "full database image restoration is not included in this stage",
+                "container/system rollback is not included in this stage",
+            ],
+        }
+
+    def _build_workspace_baseline_content_skip(
+        self,
+        record: ManagedObjectRecord,
+        field: str,
+        path: Path,
+        reason: str,
+    ) -> dict[str, Any]:
+        return {
+            "object_name": record.name,
+            "type_name": record.type_name,
+            "field": field,
+            "path": str(path),
+            "reason": reason,
+        }
+
+    def _safe_workspace_baseline_path_segment(self, value: str) -> str:
+        safe_value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._")
+        return safe_value or "object"
+
+    def _sha256_file(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as file_obj:
+            for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _build_workspace_recovery_post_checks(
+        self,
+        *,
+        problem_type: str,
+        problem_id: str,
+        affected_objects: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        checks: list[dict[str, Any]] = []
+        if affected_objects:
+            checks.append(
+                {
+                    "priority": "high",
+                    "action": "verify_recovered_object_state",
+                    "objects": [
+                        item["object_name"]
+                        for item in affected_objects
+                        if isinstance(item.get("object_name"), str)
+                    ],
+                    "reason": "confirm the affected objects reached the expected baseline state before deeper validation",
+                }
+            )
+        follow_up_action = {
+            "api_response": "replay_problem",
+            "data_state": "rerun_problem_recover",
+            "service_runtime": "rerun_service_validation",
+            "crash_dump": "inspect_preserved_dump_and_rerun_runtime_validation",
+        }.get(problem_type, "inspect_problem_state")
+        checks.append(
+            {
+                "priority": "medium",
+                "action": follow_up_action,
+                "problem_id": problem_id,
+                "reason": "revalidate the original problem path after the minimal recovery actions are applied",
+            }
+        )
+        return checks
 
     def _build_api_recovery_plan(
         self, record: ProblemRecord, assets: ProblemAssetRecord
@@ -3415,12 +6543,21 @@ class WorkflowService:
         details = assets.details if isinstance(assets.details, dict) else {}
         data_source = details.get("data_source", {})
         operations = details.get("operations", [])
+        recommended_queries = recovery.get("recommended_queries", [])
+        suggested_repairs = recovery.get("suggested_repairs", [])
+        next_actions = recovery.get("next_actions", [])
+        limitations = recovery.get("limitations", [])
+        failure_kind = recovery.get("failure_kind", details.get("failure_kind"))
+        origin_hints = recovery.get("origin_hints", details.get("origin_hints", {}))
+        boundary = recovery.get("boundary", {})
         return {
             "problem_id": record.problem_id,
             "problem_type": record.problem_type,
             "summary": record.summary,
             "supported": bool(recovery.get("supported", False)),
             "mode": recovery.get("mode", "minimal_state_hints"),
+            "goal": "identify the minimal data/state correction needed before rerunning the preserved query",
+            "failure_kind": failure_kind,
             "steps": [
                 "Verify the target database or data source is reachable.",
                 "Recreate or inspect the minimal precondition data before rerunning the query.",
@@ -3430,8 +6567,284 @@ class WorkflowService:
             "operations": operations if isinstance(operations, list) else [],
             "expected_result": details.get("expected_result"),
             "actual_result": details.get("actual_result"),
+            "state_hints": recovery.get("state_hints", details.get("state_hints", {})),
+            "origin_hints": origin_hints if isinstance(origin_hints, dict) else {},
+            "boundary": boundary if isinstance(boundary, dict) else {},
+            "recommended_queries": (
+                recommended_queries if isinstance(recommended_queries, list) else []
+            ),
+            "suggested_repairs": (
+                suggested_repairs if isinstance(suggested_repairs, list) else []
+            ),
+            "next_actions": next_actions if isinstance(next_actions, list) else [],
+            "limitations": limitations if isinstance(limitations, list) else [],
             "hints": recovery,
         }
+
+    def _analyze_data_state_problem(
+        self,
+        *,
+        expected_result: Any,
+        actual_result: Any,
+        query: str,
+    ) -> dict[str, Any]:
+        expected_rows = expected_result if isinstance(expected_result, list) else None
+        actual_rows = actual_result if isinstance(actual_result, list) else None
+        failure_kind = "shape_mismatch"
+        state_hints: dict[str, Any] = {
+            "expected_type": self._problem_value_type_name(expected_result),
+            "actual_type": self._problem_value_type_name(actual_result),
+        }
+
+        if expected_rows is not None and actual_rows is not None:
+            state_hints["expected_row_count"] = len(expected_rows)
+            state_hints["actual_row_count"] = len(actual_rows)
+            if expected_rows and not actual_rows:
+                failure_kind = "missing_rows"
+                state_hints["missing_row_count"] = len(expected_rows)
+            elif not expected_rows and actual_rows:
+                failure_kind = "unexpected_rows"
+                state_hints["unexpected_row_count"] = len(actual_rows)
+            elif len(expected_rows) != len(actual_rows):
+                if len(actual_rows) < len(expected_rows):
+                    failure_kind = "missing_rows"
+                    state_hints["missing_row_count"] = len(expected_rows) - len(
+                        actual_rows
+                    )
+                else:
+                    failure_kind = "unexpected_rows"
+                    state_hints["unexpected_row_count"] = len(actual_rows) - len(
+                        expected_rows
+                    )
+            elif not self._compare_problem_values(expected_rows, actual_rows):
+                failure_kind = "value_mismatch"
+                state_hints["mismatched_fields"] = (
+                    self._collect_data_state_mismatch_fields(expected_rows, actual_rows)
+                )
+            else:
+                failure_kind = "unknown"
+        elif self._problem_value_type_name(
+            expected_result
+        ) != self._problem_value_type_name(actual_result):
+            failure_kind = "shape_mismatch"
+        elif not self._compare_problem_values(expected_result, actual_result):
+            failure_kind = "value_mismatch"
+
+        recommended_queries = self._build_data_state_recommended_queries(query)
+        suggested_repairs = self._build_data_state_suggested_repairs(
+            failure_kind=failure_kind,
+            state_hints=state_hints,
+        )
+        next_actions = self._build_data_state_next_actions(
+            failure_kind=failure_kind,
+            query=query,
+        )
+        limitations = [
+            "current recovery output is a plan only and does not execute data changes automatically",
+            "current data_state recovery does not reconstruct full historical database state",
+        ]
+        return {
+            "failure_kind": failure_kind,
+            "state_hints": state_hints,
+            "recommended_queries": recommended_queries,
+            "suggested_repairs": suggested_repairs,
+            "next_actions": next_actions,
+            "limitations": limitations,
+        }
+
+    def _build_data_state_origin_hints(
+        self,
+        *,
+        execution_id: str,
+        case_id: str,
+        failure_kind: str,
+        query: str,
+    ) -> dict[str, Any]:
+        dependency_hints = self._build_problem_dependency_hints(
+            execution_id=execution_id,
+            case_id=case_id,
+        )
+        classification = {
+            "missing_rows": "missing_seed_data",
+            "unexpected_rows": "unexpected_residual_data",
+            "value_mismatch": "stale_field_values",
+            "shape_mismatch": "query_scope_mismatch",
+        }.get(failure_kind, "unknown_state_origin")
+        query_context = self._classify_data_state_query_context(query)
+        signal_strength = dependency_hints.get("signal_strength", "none")
+        if failure_kind in {"missing_rows", "unexpected_rows", "value_mismatch"}:
+            signal_strength = (
+                signal_strength if signal_strength != "none" else "direct_result_only"
+            )
+        return {
+            **dependency_hints,
+            "classification": classification,
+            "query_context": query_context,
+            "signal_strength": signal_strength,
+        }
+
+    def _classify_data_state_query_context(self, query: str) -> str:
+        normalized = query.strip().lower()
+        if not normalized:
+            return "unknown"
+        if "count(" in normalized:
+            return "count_query"
+        if " where " in normalized and "status" in normalized:
+            return "status_filtered_query"
+        if " where " in normalized:
+            return "single_or_filtered_query"
+        if " limit " in normalized:
+            return "bounded_list_query"
+        if normalized.startswith("select"):
+            return "list_query"
+        return "unknown"
+
+    def _build_data_state_recovery_boundary(
+        self,
+        *,
+        failure_kind: str,
+        origin_hints: dict[str, Any],
+    ) -> dict[str, Any]:
+        signal_strength = str(origin_hints.get("signal_strength", "none"))
+        candidate_case_ids = origin_hints.get("candidate_case_ids", [])
+        has_predecessors = isinstance(candidate_case_ids, list) and bool(
+            candidate_case_ids
+        )
+        confidence = {
+            "value_mismatch": "high_for_direct_result_mismatch",
+            "missing_rows": "medium_for_missing_rows",
+            "unexpected_rows": "medium_for_unexpected_rows",
+            "shape_mismatch": "low_when_context_is_sparse",
+        }.get(failure_kind, "low_when_context_is_sparse")
+        if has_predecessors:
+            confidence = "reduced_by_recent_execution_context"
+        assessment = "query_level_plan"
+        reason = "current recovery plan summarizes query-level evidence only and does not reconstruct historical database state"
+        if has_predecessors:
+            assessment = "possible_precondition_or_sequence_dependency"
+            reason = "recent executions may have changed the data state before this preserved failure, so the current recovery plan should be treated as a query-level hint"
+        recommended_actions = origin_hints.get("recommended_actions", [])
+        if not isinstance(recommended_actions, list):
+            recommended_actions = []
+        return {
+            "scope": "query_level_plan",
+            "confidence": confidence,
+            "assessment": assessment,
+            "signal_strength": signal_strength,
+            "reason": reason,
+            "needs_historical_state": has_predecessors,
+            "does_not_cover": [
+                "historical_database_state_reconstruction",
+                "cross_table_dependency_inference",
+                "automatic_data_repair_execution",
+            ],
+            "recommended_actions": recommended_actions,
+        }
+
+    def _collect_data_state_mismatch_fields(
+        self, expected_rows: list[Any], actual_rows: list[Any]
+    ) -> list[str]:
+        if not expected_rows or not actual_rows:
+            return []
+        expected_first = expected_rows[0]
+        actual_first = actual_rows[0]
+        if isinstance(expected_first, dict) and isinstance(actual_first, dict):
+            keys = sorted(set(expected_first.keys()) | set(actual_first.keys()))
+            return [
+                str(key)
+                for key in keys
+                if not self._compare_problem_values(
+                    expected_first.get(key), actual_first.get(key)
+                )
+            ]
+        return []
+
+    def _build_data_state_recommended_queries(self, query: str) -> list[dict[str, Any]]:
+        queries: list[dict[str, Any]] = []
+        if query:
+            queries.append(
+                {
+                    "purpose": "rerun_preserved_query",
+                    "query": query,
+                }
+            )
+        queries.append(
+            {
+                "purpose": "inspect_row_count",
+                "query": "Run a lightweight count query against the same target table or view to confirm whether rows are missing or unexpectedly added.",
+            }
+        )
+        return queries
+
+    def _build_data_state_suggested_repairs(
+        self,
+        *,
+        failure_kind: str,
+        state_hints: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if failure_kind == "missing_rows":
+            return [
+                {
+                    "action": "insert_minimal_required_rows",
+                    "reason": "expected rows were not present when the preserved query ran",
+                    "missing_row_count": state_hints.get("missing_row_count"),
+                }
+            ]
+        if failure_kind == "unexpected_rows":
+            return [
+                {
+                    "action": "remove_or_filter_unexpected_rows",
+                    "reason": "the query returned more rows than expected",
+                    "unexpected_row_count": state_hints.get("unexpected_row_count"),
+                }
+            ]
+        if failure_kind == "value_mismatch":
+            return [
+                {
+                    "action": "align_key_field_values",
+                    "reason": "the returned rows exist but key values differ from the expected result",
+                    "fields": state_hints.get("mismatched_fields", []),
+                }
+            ]
+        return [
+            {
+                "action": "inspect_result_shape",
+                "reason": "the actual result shape differs from the expected result and needs manual inspection",
+            }
+        ]
+
+    def _build_data_state_next_actions(
+        self, *, failure_kind: str, query: str
+    ) -> list[dict[str, Any]]:
+        actions = [
+            {
+                "priority": "high",
+                "action": "inspect_data_source_connectivity",
+                "reason": "confirm the target database or bound data source is reachable before investigating result differences",
+            }
+        ]
+        if query:
+            actions.append(
+                {
+                    "priority": "high",
+                    "action": "rerun_preserved_query_manually",
+                    "query": query,
+                    "reason": "recheck the preserved query output before applying any data repair",
+                }
+            )
+        repair_action = {
+            "missing_rows": "restore_missing_rows",
+            "unexpected_rows": "clean_unexpected_rows",
+            "value_mismatch": "correct_mismatched_values",
+        }.get(failure_kind, "inspect_result_shape")
+        actions.append(
+            {
+                "priority": "medium",
+                "action": repair_action,
+                "reason": "apply the minimal state correction suggested by the preserved failure analysis",
+            }
+        )
+        return actions
 
     def _build_environment_dependency_recovery_plan(
         self, record: ProblemRecord, assets: ProblemAssetRecord
@@ -3465,21 +6878,74 @@ class WorkflowService:
         details = assets.details if isinstance(assets.details, dict) else {}
         service = details.get("service", {})
         runtime_result = details.get("runtime_result", {})
+        recommended_checks = recovery.get("recommended_checks", [])
+        suggested_repairs = recovery.get("suggested_repairs", [])
+        next_actions = recovery.get("next_actions", [])
+        limitations = recovery.get("limitations", [])
+        runtime_target = recovery.get("runtime_target", {})
+        runtime_hints = recovery.get("runtime_hints", details.get("runtime_hints", {}))
+        boundary = recovery.get("boundary", {})
         return {
             "problem_id": record.problem_id,
             "problem_type": record.problem_type,
             "summary": record.summary,
             "supported": bool(recovery.get("supported", False)),
-            "mode": recovery.get("mode", "basic_runtime_validation"),
+            "mode": recovery.get("mode", "runtime_level_plan"),
+            "goal": "identify the minimal runtime correction needed before rerunning the preserved service check",
+            "failure_kind": recovery.get(
+                "failure_kind", details.get("failure_kind", "healthcheck_failed")
+            ),
             "steps": [
-                "Inspect the preserved service endpoint and runtime failure message.",
-                "Verify the target service process or port is reachable.",
-                "Retry the minimal runtime validation against the same host and port.",
+                "Inspect the preserved service endpoint and runtime failure summary.",
+                "Verify the target service status, endpoint reachability and recent runtime logs.",
+                "Apply the minimal runtime correction before rerunning the preserved service validation.",
             ],
+            "runtime_target": runtime_target
+            if isinstance(runtime_target, dict)
+            else {},
             "service": service if isinstance(service, dict) else {},
             "runtime_result": runtime_result
             if isinstance(runtime_result, dict)
             else {},
+            "runtime_hints": runtime_hints if isinstance(runtime_hints, dict) else {},
+            "boundary": boundary if isinstance(boundary, dict) else {},
+            "recommended_checks": (
+                recommended_checks if isinstance(recommended_checks, list) else []
+            ),
+            "suggested_repairs": (
+                suggested_repairs if isinstance(suggested_repairs, list) else []
+            ),
+            "next_actions": next_actions if isinstance(next_actions, list) else [],
+            "limitations": limitations if isinstance(limitations, list) else [],
+            "hints": recovery,
+        }
+
+    def _build_crash_dump_recovery_plan(
+        self, record: ProblemRecord, assets: ProblemAssetRecord
+    ) -> dict[str, Any]:
+        recovery = assets.recovery if isinstance(assets.recovery, dict) else {}
+        details = assets.details if isinstance(assets.details, dict) else {}
+        crash_target = recovery.get("crash_target", details.get("crash_target", {}))
+        dump_refs = recovery.get("dump_refs", details.get("dump_refs", []))
+        boundary = recovery.get("boundary", {})
+        recommended_checks = recovery.get("recommended_checks", [])
+        next_actions = recovery.get("next_actions", [])
+        limitations = recovery.get("limitations", [])
+        return {
+            "problem_id": record.problem_id,
+            "problem_type": record.problem_type,
+            "summary": record.summary,
+            "supported": bool(recovery.get("supported", False)),
+            "mode": recovery.get("mode", "crash_dump_investigation"),
+            "goal": "preserve and inspect the minimal crash assets before deeper dump analysis",
+            "crash_target": crash_target if isinstance(crash_target, dict) else {},
+            "dump_refs": dump_refs if isinstance(dump_refs, list) else [],
+            "boundary": boundary if isinstance(boundary, dict) else {},
+            "recommended_checks": (
+                recommended_checks if isinstance(recommended_checks, list) else []
+            ),
+            "next_actions": next_actions if isinstance(next_actions, list) else [],
+            "limitations": limitations if isinstance(limitations, list) else [],
             "hints": recovery,
         }
 
@@ -3516,32 +6982,26 @@ class WorkflowService:
                 ),
             }
         )
-        problem_record = ProblemRecord(
+        problem_record = self._new_problem_record(
             problem_id=problem_id,
             problem_type=problem_type,
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id="",
             case_id="",
             environment_id=env_context["environment_id"],
             object_refs=refs,
             artifact_refs={},
             log_refs=env_context["log_refs"],
-            latest_action="preserved",
             created_at=now,
             updated_at=now,
-            metadata={
-                "source": "environment_dependency",
-                "preservation": preservation,
-            },
+            metadata={"source": "environment_dependency"},
         )
-        problem_assets = ProblemAssetRecord(
+        problem_assets = self._new_problem_assets(
             problem_id=problem_id,
             problem_type=problem_type,
             summary=summary,
-            status="open",
-            preservation_status=preservation["status"],
+            preservation=preservation,
             execution_id="",
             case_id="",
             environment_id=env_context["environment_id"],
@@ -3559,8 +7019,7 @@ class WorkflowService:
             updated_at=now,
             metadata={"source": "environment_dependency"},
         )
-        self.storage.save_problem_record(problem_record)
-        self.storage.save_problem_assets(problem_assets)
+        self._save_problem_bundle(problem_record, problem_assets)
         return problem_id
 
     def _record_problem_recovery_action(
@@ -3604,6 +7063,10 @@ class WorkflowService:
             "mode": mode,
             "success": success,
             "created_at": now,
+            "result_summary": self._build_problem_latest_recovery_summary(
+                action_type=action_type,
+                result=result,
+            ),
         }
         record.latest_action = f"{action_type}:{status}"
         record.updated_at = now
@@ -3611,9 +7074,180 @@ class WorkflowService:
         assets.metadata["latest_recovery"] = latest_recovery
         assets.updated_at = now
 
-        self.storage.save_problem_record(record)
-        self.storage.save_problem_assets(assets)
+        self._save_problem_bundle(record, assets)
         return recovery_record
+
+    def _build_problem_latest_recovery_summary(
+        self, *, action_type: str, result: dict[str, Any]
+    ) -> dict[str, Any]:
+        if action_type == "replay":
+            comparison = result.get("comparison")
+            return {
+                "reproduced": result.get("reproduced"),
+                "comparison": comparison if isinstance(comparison, dict) else None,
+            }
+        if action_type == "recover":
+            return {
+                "mode": result.get("mode"),
+                "problem_type": result.get("problem_type"),
+                "workspace_recovery": result.get("workspace_recovery"),
+            }
+        return {}
+
+    def _new_problem_record(
+        self,
+        *,
+        problem_id: str,
+        problem_type: str,
+        summary: str,
+        preservation: dict[str, Any],
+        execution_id: str,
+        case_id: str,
+        environment_id: str,
+        object_refs: list[str],
+        artifact_refs: dict[str, Any],
+        log_refs: dict[str, Any],
+        created_at: str,
+        updated_at: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ProblemRecord:
+        record_metadata = dict(metadata or {})
+        record_metadata["preservation"] = preservation
+        record_metadata["capabilities"] = self._problem_capabilities(
+            problem_type,
+            recovery=None,
+        )
+        return ProblemRecord(
+            problem_id=problem_id,
+            problem_type=problem_type,
+            summary=summary,
+            status=PROBLEM_STATUS_OPEN,
+            preservation_status=self._problem_preservation_status(preservation),
+            execution_id=execution_id,
+            case_id=case_id,
+            environment_id=environment_id,
+            object_refs=list(object_refs),
+            artifact_refs=dict(artifact_refs),
+            log_refs=dict(log_refs),
+            latest_action=PROBLEM_ACTION_PRESERVED,
+            created_at=created_at,
+            updated_at=updated_at,
+            metadata=record_metadata,
+        )
+
+    def _new_problem_assets(
+        self,
+        *,
+        problem_id: str,
+        problem_type: str,
+        summary: str,
+        preservation: dict[str, Any],
+        execution_id: str,
+        case_id: str,
+        environment_id: str,
+        object_refs: list[str],
+        artifact_refs: dict[str, Any],
+        log_refs: dict[str, Any],
+        recovery: dict[str, Any],
+        details: dict[str, Any],
+        created_at: str,
+        updated_at: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ProblemAssetRecord:
+        asset_metadata = dict(metadata or {})
+        asset_metadata["preservation"] = preservation
+        asset_metadata["capabilities"] = self._problem_capabilities(
+            problem_type,
+            recovery=recovery,
+        )
+        return ProblemAssetRecord(
+            problem_id=problem_id,
+            problem_type=problem_type,
+            summary=summary,
+            status=PROBLEM_STATUS_OPEN,
+            preservation_status=self._problem_preservation_status(preservation),
+            execution_id=execution_id,
+            case_id=case_id,
+            environment_id=environment_id,
+            object_refs=list(object_refs),
+            artifact_refs=dict(artifact_refs),
+            log_refs=dict(log_refs),
+            recovery=dict(recovery),
+            details=dict(details),
+            created_at=created_at,
+            updated_at=updated_at,
+            metadata=asset_metadata,
+        )
+
+    def _problem_preservation_status(self, preservation: dict[str, Any]) -> str:
+        status = preservation.get("status", PROBLEM_PRESERVATION_SUCCESS)
+        if status in {
+            PROBLEM_PRESERVATION_SUCCESS,
+            PROBLEM_PRESERVATION_PARTIAL,
+            PROBLEM_PRESERVATION_FAILED,
+        }:
+            return cast(str, status)
+        return PROBLEM_PRESERVATION_SUCCESS
+
+    def _save_problem_bundle(
+        self,
+        problem_record: ProblemRecord,
+        problem_assets: ProblemAssetRecord,
+    ) -> None:
+        capabilities = self._problem_capabilities(
+            problem_record.problem_type,
+            recovery=problem_assets.recovery,
+        )
+        problem_record.metadata["capabilities"] = capabilities
+        problem_assets.metadata["capabilities"] = capabilities
+        self.storage.save_problem_record(problem_record)
+        self.storage.save_problem_assets(problem_assets)
+
+    def _problem_capabilities(
+        self,
+        problem_type: str,
+        *,
+        recovery: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        replay_supported = self._supports_problem_replay_type(problem_type) and bool(
+            isinstance(recovery, dict)
+            and isinstance(recovery.get("replay"), dict)
+            and recovery["replay"].get("url")
+        )
+        recover_supported = self._supports_problem_recovery_type(problem_type)
+        raw_mode = recovery.get("mode") if isinstance(recovery, dict) else None
+        mode = raw_mode if isinstance(raw_mode, str) and raw_mode else None
+        return {
+            "can_replay": replay_supported,
+            "can_recover": recover_supported,
+            "replay_mode": mode if replay_supported else None,
+            "recover_mode": mode if recover_supported else None,
+        }
+
+    def _supports_problem_replay(self, assets: ProblemAssetRecord) -> bool:
+        if not self._supports_problem_replay_type(assets.problem_type):
+            return False
+        replay = (
+            assets.recovery.get("replay") if isinstance(assets.recovery, dict) else {}
+        )
+        return isinstance(replay, dict) and bool(replay.get("url"))
+
+    def _supports_problem_recovery(self, assets: ProblemAssetRecord) -> bool:
+        return self._supports_problem_recovery_type(assets.problem_type)
+
+    def _supports_problem_replay_type(self, problem_type: str) -> bool:
+        return problem_type == "api_response"
+
+    def _supports_problem_recovery_type(self, problem_type: str) -> bool:
+        return problem_type in {
+            "api_response",
+            "data_state",
+            "environment_init",
+            "dependency_object",
+            "dependency_configuration",
+            "service_runtime",
+            "crash_dump",
+        }
 
     def _build_preservation_summary(
         self,

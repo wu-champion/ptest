@@ -14,6 +14,7 @@ from ..models import (
     ProblemRecoveryRecord,
     ProblemRecord,
     ToolRecord,
+    WorkspaceBaselineRecord,
 )
 
 
@@ -26,6 +27,7 @@ class WorkspaceStorage:
         self.executions_dir = self.meta_dir / "executions"
         self.artifacts_dir = self.meta_dir / "artifacts"
         self.problems_dir = self.meta_dir / "problems"
+        self.baselines_dir = self.meta_dir / "baselines"
         self.environment_file = self.meta_dir / "environment.json"
         self.objects_file = self.meta_dir / "objects.json"
         self.tools_file = self.meta_dir / "tools.json"
@@ -38,6 +40,7 @@ class WorkspaceStorage:
         self.executions_dir.mkdir(parents=True, exist_ok=True)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.problems_dir.mkdir(parents=True, exist_ok=True)
+        self.baselines_dir.mkdir(parents=True, exist_ok=True)
 
     def load_environment(self) -> EnvironmentRecord | None:
         data = self._read_json(self.environment_file)
@@ -115,6 +118,34 @@ class WorkspaceStorage:
     def get_tool(self, name: str) -> ToolRecord | None:
         return self.load_tools().get(name)
 
+    def save_workspace_baseline(
+        self, record: WorkspaceBaselineRecord
+    ) -> WorkspaceBaselineRecord:
+        self.ensure_layout()
+        self._write_json(
+            self.baselines_dir / f"{record.baseline_id}.json",
+            record.to_dict(),
+        )
+        return record
+
+    def get_workspace_baseline(
+        self, baseline_id: str
+    ) -> WorkspaceBaselineRecord | None:
+        data = self._read_json(self.baselines_dir / f"{baseline_id}.json")
+        if not data:
+            return None
+        return WorkspaceBaselineRecord.from_dict(data)
+
+    def list_workspace_baselines(self) -> list[WorkspaceBaselineRecord]:
+        self.ensure_layout()
+        records: list[WorkspaceBaselineRecord] = []
+        for path in sorted(self.baselines_dir.glob("*.json")):
+            data = self._read_json(path)
+            if data:
+                records.append(WorkspaceBaselineRecord.from_dict(data))
+        records.sort(key=lambda item: item.created_at, reverse=True)
+        return records
+
     def save_execution(self, record: ExecutionRecord) -> ExecutionRecord:
         self.ensure_layout()
         self._write_json(
@@ -169,7 +200,7 @@ class WorkspaceStorage:
             if isinstance(output, str):
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(output, encoding="utf-8")
-                files["output"] = str(output_path.relative_to(self.root_path))
+                files["output"] = self._relative_workspace_path(output_path)
             else:
                 files["output"] = self._write_artifact_file(output_path, output)
 
@@ -203,14 +234,14 @@ class WorkspaceStorage:
             log_index,
         )
         indexes = {
-            "artifact_index": str(
-                (indexes_dir / "artifact_index.json").relative_to(self.root_path)
+            "artifact_index": self._relative_workspace_path(
+                indexes_dir / "artifact_index.json"
             ),
             "log_index": log_index_path,
         }
         artifact_manifest = {
             "execution_id": execution_id,
-            "directory": str(artifact_dir.relative_to(self.root_path)),
+            "directory": self._relative_workspace_path(artifact_dir),
             "files": files,
             "categories": categories,
             "indexes": indexes,
@@ -232,11 +263,11 @@ class WorkspaceStorage:
         artifact_index_path = artifact_dir / "indexes" / "artifact_index.json"
         artifact_index = self._read_json(artifact_index_path) or {
             "execution_id": record.execution_id,
-            "directory": str(artifact_dir.relative_to(self.root_path)),
+            "directory": self._relative_workspace_path(artifact_dir),
             "files": {},
             "categories": {},
             "indexes": {
-                "artifact_index": str(artifact_index_path.relative_to(self.root_path)),
+                "artifact_index": self._relative_workspace_path(artifact_index_path),
             },
         }
         files = artifact_index.setdefault("files", {})
@@ -302,6 +333,14 @@ class WorkspaceStorage:
             return ProblemRecord.from_dict(data)
         return self.load_problem_records().get(problem_id)
 
+    def get_problem_records_by_ids(self, problem_ids: list[str]) -> list[ProblemRecord]:
+        records: list[ProblemRecord] = []
+        for problem_id in problem_ids:
+            record = self.get_problem_record(problem_id)
+            if record is not None:
+                records.append(record)
+        return records
+
     def save_problem_assets(self, record: ProblemAssetRecord) -> ProblemAssetRecord:
         self.ensure_layout()
         self._write_json(
@@ -343,6 +382,16 @@ class WorkspaceStorage:
         mapping = data.get("case_to_problems", {})
         problem_ids = mapping.get(case_id, [])
         return problem_ids if isinstance(problem_ids, list) else []
+
+    def list_problem_records_for_execution(
+        self, execution_id: str
+    ) -> list[ProblemRecord]:
+        return self.get_problem_records_by_ids(
+            self.list_problem_ids_for_execution(execution_id)
+        )
+
+    def list_problem_records_for_case(self, case_id: str) -> list[ProblemRecord]:
+        return self.get_problem_records_by_ids(self.list_problem_ids_for_case(case_id))
 
     def get_execution_artifact_index(self, execution_id: str) -> dict[str, Any] | None:
         self.ensure_layout()
@@ -413,7 +462,7 @@ class WorkspaceStorage:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2, ensure_ascii=False, default=str)
-        return str(path.relative_to(self.root_path))
+        return self._relative_workspace_path(path)
 
     def _list_workspace_logs(self) -> list[dict[str, Any]]:
         logs_dir = self.root_path / "logs"
@@ -425,7 +474,7 @@ class WorkspaceStorage:
             stat = path.stat()
             entries.append(
                 {
-                    "path": str(path.relative_to(self.root_path)),
+                    "path": self._relative_workspace_path(path),
                     "size": stat.st_size,
                     "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 }
@@ -434,7 +483,7 @@ class WorkspaceStorage:
 
     def _relative_workspace_path(self, path: Path) -> str:
         try:
-            return str(path.relative_to(self.root_path))
+            return path.relative_to(self.root_path).as_posix()
         except ValueError:
             return str(path)
 

@@ -307,14 +307,23 @@ def test_workflow_service_persists_environment_and_objects(tmp_path: Path) -> No
 
     assert record.root_path == str(tmp_path.resolve())
     assert (tmp_path / ".ptest" / "environment.json").exists()
+    assert (tmp_path / "dumps").exists()
     assert record.metadata["isolation"]["env_id"].startswith("env_")
     assert record.metadata["isolation"]["isolation_level"] == "basic"
     assert record.metadata["isolation"]["recovery_strategy"] == "created_new"
     assert record.metadata["isolation"]["validated"] is True
     assert record.metadata["isolation"]["health"] is True
+    assert record.metadata["dumps_dir"] == str((tmp_path / "dumps").resolve())
+    assert record.metadata["crash_capture"]["dump_dir"] == str(
+        (tmp_path / "dumps").resolve()
+    )
+    assert record.metadata["crash_capture"]["enable_attempt"]["status"] == "pending"
 
     install_result = service.install_object("service", "demo_service")
     assert install_result["success"] is True
+    assert install_result["object"]["metadata"]["crash_capture"]["dump_dir"] == str(
+        (tmp_path / "dumps").resolve()
+    )
 
     start_result = service.start_object("demo_service")
     assert start_result["success"] is True
@@ -450,9 +459,15 @@ def test_workflow_service_builds_mysql_scenario_defaults(tmp_path: Path) -> None
     managed_instance = config["managed_instance"]
     assert managed_instance["instance_root"].startswith(str(tmp_path.resolve()))
     assert _normalized_path(managed_instance["data_dir"]).endswith("mysql_service/data")
+    assert _normalized_path(managed_instance["dump_dir"]).endswith(
+        "mysql_service/dumps"
+    )
     assert _normalized_path(managed_instance["lib_dir"]).endswith("mysql_service/lib")
     assert _normalized_path(managed_instance["files_dir"]).endswith(
         "mysql_service/mysql-files"
+    )
+    assert install_result["object"]["metadata"]["crash_capture"]["dump_dir"] == str(
+        Path(managed_instance["dump_dir"]).resolve()
     )
     assert _normalized_path(config["config_file"]).endswith(
         "mysql_service/config/my.cnf"
@@ -676,6 +691,10 @@ def test_workflow_service_starts_mysql_managed_instance(tmp_path: Path) -> None:
     assert normalized_binary.endswith("bin/mysqld") or normalized_binary.endswith(
         "bin/mysqld.cmd"
     )
+    assert (
+        status["object"]["metadata"]["crash_capture"]["enable_attempt"]["attempted"]
+        is True
+    )
 
     stop_result = service.stop_object("mysql_service")
     assert stop_result["success"] is True
@@ -685,6 +704,46 @@ def test_workflow_service_starts_mysql_managed_instance(tmp_path: Path) -> None:
     assert checks["process_cleanup"]["ok"] is True
     assert checks["port_release"]["ok"] is True
     assert checks["all_passed"] is True
+
+
+def test_workflow_service_records_crash_capture_enable_attempt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    install_result = service.install_object("service", "demo_service")
+    assert install_result["success"] is True
+
+    def fake_attempt(
+        self: WorkflowService,
+        capability: dict[str, object],
+    ) -> dict[str, object]:
+        updated = capability.copy()
+        updated["core_enabled"] = True
+        updated["enable_attempt"] = {
+            "attempted": True,
+            "status": "success",
+            "strategy": "process_rlimit_core",
+            "failure_reason": "",
+            "attempted_at": "2026-04-21T00:00:00",
+        }
+        return updated
+
+    monkeypatch.setattr(
+        WorkflowService,
+        "_attempt_object_crash_capture_enable",
+        fake_attempt,
+    )
+
+    start_result = service.start_object("demo_service")
+    assert start_result["success"] is True
+
+    status = service.get_object_status("demo_service")
+    crash_capture = status["object"]["metadata"]["crash_capture"]
+    assert crash_capture["core_enabled"] is True
+    assert crash_capture["enable_attempt"]["attempted"] is True
+    assert crash_capture["enable_attempt"]["status"] == "success"
 
 
 def test_workflow_service_reports_missing_mysql_runtime_dependencies(
@@ -1348,6 +1407,11 @@ def test_workflow_service_runs_case_and_generates_report(tmp_path: Path) -> None
     assert (artifact_dir / "indexes" / "artifact_index.json").exists()
     assert (artifact_dir / "logs" / "log_index.json").exists()
     artifacts = executions[0]["metadata"]["artifacts"]
+    assert "\\" not in artifacts["directory"]
+    assert "\\" not in artifacts["files"]["environment"]
+    assert "\\" not in artifacts["files"]["execution"]
+    assert "\\" not in artifacts["indexes"]["artifact_index"]
+    assert "\\" not in artifacts["indexes"]["log_index"]
     assert _normalized_path(artifacts["directory"]).startswith(".ptest/artifacts/")
     assert _normalized_path(artifacts["files"]["environment"]).endswith(
         "context/environment.json"
@@ -1367,6 +1431,8 @@ def test_workflow_service_runs_case_and_generates_report(tmp_path: Path) -> None
     log_index = json.loads(
         (artifact_dir / "logs" / "log_index.json").read_text(encoding="utf-8")
     )
+    assert "\\" not in artifact_index["files"]["execution"]
+    assert "\\" not in artifact_index["indexes"]["log_index"]
     assert _normalized_path(artifact_index["files"]["execution"]).endswith(
         "result/execution.json"
     )
