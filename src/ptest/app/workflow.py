@@ -1605,6 +1605,15 @@ class WorkflowService:
             payload["preservation"] = preservation
         if isinstance(capabilities, dict):
             payload["capabilities"] = capabilities
+        runtime_backend = metadata.get("runtime_backend", {})
+        if not isinstance(runtime_backend, dict) or not runtime_backend:
+            runtime_backend = self._build_problem_runtime_backend_context(
+                payload.get("object_refs", [])
+            )
+        if isinstance(runtime_backend, dict) and runtime_backend:
+            payload["runtime_backend"] = runtime_backend
+            if isinstance(metadata, dict):
+                metadata["runtime_backend"] = runtime_backend
         reproduction_summary = self._build_problem_reproduction_summary(payload)
         if reproduction_summary is not None:
             payload["reproduction_summary"] = reproduction_summary
@@ -1638,6 +1647,9 @@ class WorkflowService:
                 ),
                 "capabilities": assets_payload.get(
                     "capabilities", payload.get("capabilities", {})
+                ),
+                "runtime_backend": assets_payload.get(
+                    "runtime_backend", payload.get("runtime_backend", {})
                 ),
             }
             payload["investigation"] = self._build_problem_investigation_summary(
@@ -2862,6 +2874,59 @@ class WorkflowService:
         if last_preflight is not None:
             summary["last_preflight"] = last_preflight
         return summary
+
+    def _build_problem_runtime_backend_context(
+        self, object_refs: Any
+    ) -> dict[str, Any]:
+        if not isinstance(object_refs, list):
+            return {}
+        objects: list[dict[str, Any]] = []
+        for raw_name in object_refs:
+            if not isinstance(raw_name, str) or not raw_name:
+                continue
+            record = self.storage.get_object(raw_name)
+            if record is None:
+                objects.append(
+                    {
+                        "object_name": raw_name,
+                        "object_found": False,
+                    }
+                )
+                continue
+            metadata = record.metadata if isinstance(record.metadata, dict) else {}
+            runtime_backend = metadata.get("runtime_backend", {})
+            if not isinstance(runtime_backend, dict) or not runtime_backend:
+                runtime_backend = self._build_object_runtime_backend_summary(record)
+            objects.append(
+                {
+                    "object_name": record.name,
+                    "object_found": True,
+                    "type_name": record.type_name,
+                    "status": record.status,
+                    "runtime_backend": runtime_backend,
+                }
+            )
+        if not objects:
+            return {}
+
+        found_objects = [item for item in objects if item.get("object_found") is True]
+        if not found_objects:
+            status = "unknown"
+        elif any(
+            isinstance(item.get("runtime_backend"), dict)
+            and item["runtime_backend"].get("capability_status") == "unsatisfied"
+            for item in found_objects
+        ):
+            status = "unsatisfied"
+        elif len(found_objects) != len(objects):
+            status = "partial"
+        else:
+            status = "satisfied"
+        return {
+            "source": "object_refs",
+            "status": status,
+            "objects": objects,
+        }
 
     def _build_runtime_backend_preflight_summary(
         self,
@@ -5240,6 +5305,9 @@ class WorkflowService:
                 problem_id
             ),
         }
+        runtime_backend = payload.get("runtime_backend", {})
+        if isinstance(runtime_backend, dict) and runtime_backend:
+            investigation["runtime_backend"] = runtime_backend
         if payload.get("problem_type") == "data_state":
             data_investigation = self._build_data_state_investigation_summary(payload)
             investigation.update(data_investigation)
@@ -7272,6 +7340,9 @@ class WorkflowService:
             problem_type,
             recovery=recovery,
         )
+        runtime_backend = self._build_problem_runtime_backend_context(object_refs)
+        if runtime_backend:
+            asset_metadata["runtime_backend"] = runtime_backend
         return ProblemAssetRecord(
             problem_id=problem_id,
             problem_type=problem_type,
