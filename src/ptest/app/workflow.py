@@ -86,6 +86,9 @@ class WorkflowService:
     DEFAULT_MANAGED_MYSQL_PORT = 13306
     WORKSPACE_BASELINE_CONTENT_MAX_BYTES = 256 * 1024
     WORKSPACE_BASELINE_CONTENT_MAX_FILES = 32
+    OBJECT_ARTIFACT_MAX_SCAN_FILES = 500
+    OBJECT_ARTIFACT_MAX_SCAN_DEPTH = 4
+    OBJECT_ARTIFACT_LATEST_FILE_LIMIT = 5
 
     def __init__(
         self,
@@ -3029,23 +3032,21 @@ class WorkflowService:
                     }
                 )
                 return summary
-            files: list[tuple[Path, Any]] = []
-            total_size = 0
-            for item in resolved.rglob("*"):
-                if not item.is_file():
-                    continue
-                stat = item.stat()
-                total_size += stat.st_size
-                files.append((item, stat))
+            files, total_size, truncated = self._scan_artifact_directory(resolved)
             files.sort(key=lambda item: item[1].st_mtime, reverse=True)
             summary.update(
                 {
                     "kind": "directory",
                     "file_count": len(files),
                     "total_size": total_size,
+                    "scan_truncated": truncated,
+                    "max_scan_files": self.OBJECT_ARTIFACT_MAX_SCAN_FILES,
+                    "max_scan_depth": self.OBJECT_ARTIFACT_MAX_SCAN_DEPTH,
                     "latest_files": [
                         self._artifact_file_summary(item, stat=stat)
-                        for item, stat in files[:5]
+                        for item, stat in files[
+                            : self.OBJECT_ARTIFACT_LATEST_FILE_LIMIT
+                        ]
                     ],
                 }
             )
@@ -3061,6 +3062,38 @@ class WorkflowService:
                 }
             )
             return summary
+
+    def _scan_artifact_directory(
+        self, root: Path
+    ) -> tuple[list[tuple[Path, Any]], int, bool]:
+        files: list[tuple[Path, Any]] = []
+        total_size = 0
+        truncated = False
+        pending: list[tuple[Path, int]] = [(root, 0)]
+        while pending and len(files) < self.OBJECT_ARTIFACT_MAX_SCAN_FILES:
+            directory, depth = pending.pop()
+            try:
+                children = sorted(directory.iterdir(), key=lambda item: item.name)
+            except OSError:
+                continue
+            for child in children:
+                if child.is_symlink():
+                    continue
+                try:
+                    if child.is_file():
+                        stat = child.stat()
+                        total_size += stat.st_size
+                        files.append((child, stat))
+                        if len(files) >= self.OBJECT_ARTIFACT_MAX_SCAN_FILES:
+                            truncated = True
+                            break
+                    elif child.is_dir() and depth < self.OBJECT_ARTIFACT_MAX_SCAN_DEPTH:
+                        pending.append((child, depth + 1))
+                except OSError:
+                    continue
+        if pending:
+            truncated = True
+        return files, total_size, truncated
 
     def _artifact_file_summary(self, path: Path, *, stat: Any) -> dict[str, Any]:
         return {
@@ -3081,16 +3114,14 @@ class WorkflowService:
         before: dict[str, Any],
         after: dict[str, Any],
     ) -> dict[str, Any]:
-        before_objects = {
-            item.get("object_name"): item
-            for item in before.get("objects", [])
-            if isinstance(item, dict) and isinstance(item.get("object_name"), str)
-        }
-        after_objects = {
-            item.get("object_name"): item
-            for item in after.get("objects", [])
-            if isinstance(item, dict) and isinstance(item.get("object_name"), str)
-        }
+        before_objects: dict[str, dict[str, Any]] = {}
+        for item in before.get("objects", []):
+            if isinstance(item, dict) and isinstance(item.get("object_name"), str):
+                before_objects[item["object_name"]] = item
+        after_objects: dict[str, dict[str, Any]] = {}
+        for item in after.get("objects", []):
+            if isinstance(item, dict) and isinstance(item.get("object_name"), str):
+                after_objects[item["object_name"]] = item
         changes: list[dict[str, Any]] = []
         for object_name in sorted(set(before_objects) | set(after_objects)):
             before_item = before_objects.get(object_name, {})

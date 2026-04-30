@@ -945,6 +945,13 @@ def test_workflow_service_binds_database_case_to_mysql_object(
         },
     )
     assert install_result["success"] is True
+    monkeypatch.setattr(service, "OBJECT_ARTIFACT_MAX_SCAN_FILES", 2)
+    data_dir = Path(install_result["object"]["config"]["managed_instance"]["data_dir"])
+    for index in range(3):
+        (data_dir / f"sample_{index}.txt").write_text(
+            f"sample {index}",
+            encoding="utf-8",
+        )
 
     record = service.storage.get_object("mysql_service")
     assert record is not None
@@ -1008,6 +1015,8 @@ def test_workflow_service_binds_database_case_to_mysql_object(
     assert "runtime" in after_object
     assert after_object["artifact_sources"]["data_dir"]["exists"] is True
     assert after_object["artifact_sources"]["data_dir"]["kind"] == "directory"
+    assert after_object["artifact_sources"]["data_dir"]["scan_truncated"] is True
+    assert len(after_object["artifact_sources"]["data_dir"]["latest_files"]) == 2
     assert "mysql_service" in [
         item["object_name"] for item in object_artifacts["changes"]["objects"]
     ]
