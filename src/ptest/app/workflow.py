@@ -128,6 +128,7 @@ class WorkflowService:
                     "logs_dir": str(env_manager.log_dir),
                     "dumps_dir": str(env_manager.dump_dir),
                     "isolation": isolation_metadata,
+                    "runtime_backend": self._build_runtime_backend_capability("host"),
                     "crash_capture": self._build_environment_crash_capture_capability(
                         env_manager.dump_dir
                     ),
@@ -319,6 +320,9 @@ class WorkflowService:
             if materialized
             else {},
         )
+        record.metadata["runtime_backend"] = self._build_object_runtime_backend_summary(
+            record
+        )
         record.metadata["crash_capture"] = self._merge_object_crash_capture_capability(
             record,
             record.metadata.get("crash_capture"),
@@ -443,6 +447,9 @@ class WorkflowService:
                 "server_host": str(params.get("server_host", "127.0.0.1")),
                 "server_port": port,
                 "runtime_backend": scenario.runtime_backend,
+                "runtime_backend_requirements": self._build_runtime_backend_requirements(
+                    "mysql_managed_instance"
+                ),
                 "instance_name": name,
                 "database_name": scenario.database_name,
                 "data_dir": directories["data_dir"],
@@ -515,6 +522,7 @@ class WorkflowService:
         success = result.startswith("✓")
         metadata = record.metadata.copy()
         metadata.update(self._collect_object_metadata(obj))
+        metadata["runtime_backend"] = self._build_object_runtime_backend_summary(record)
         record.metadata = metadata
         record.updated_at = datetime.now().isoformat()
         checks = None
@@ -1597,6 +1605,15 @@ class WorkflowService:
             payload["preservation"] = preservation
         if isinstance(capabilities, dict):
             payload["capabilities"] = capabilities
+        runtime_backend = metadata.get("runtime_backend", {})
+        if not isinstance(runtime_backend, dict) or not runtime_backend:
+            runtime_backend = self._build_problem_runtime_backend_context(
+                payload.get("object_refs", [])
+            )
+        if isinstance(runtime_backend, dict) and runtime_backend:
+            payload["runtime_backend"] = runtime_backend
+            if isinstance(metadata, dict):
+                metadata["runtime_backend"] = runtime_backend
         reproduction_summary = self._build_problem_reproduction_summary(payload)
         if reproduction_summary is not None:
             payload["reproduction_summary"] = reproduction_summary
@@ -1630,6 +1647,9 @@ class WorkflowService:
                 ),
                 "capabilities": assets_payload.get(
                     "capabilities", payload.get("capabilities", {})
+                ),
+                "runtime_backend": assets_payload.get(
+                    "runtime_backend", payload.get("runtime_backend", {})
                 ),
             }
             payload["investigation"] = self._build_problem_investigation_summary(
@@ -2030,6 +2050,28 @@ class WorkflowService:
             )
         metadata = record.metadata.copy()
         metadata.update(self._collect_object_metadata(obj))
+        existing_runtime_backend = metadata.get("runtime_backend")
+        last_preflight = (
+            self._build_runtime_backend_preflight_summary(
+                success=success,
+                message=result,
+            )
+            if action in {"start", "restart"}
+            else None
+        )
+        runtime_backend_summary = self._build_object_runtime_backend_summary(
+            record,
+            last_preflight=last_preflight,
+        )
+        if (
+            action not in {"start", "restart"}
+            and isinstance(existing_runtime_backend, dict)
+            and "last_preflight" not in runtime_backend_summary
+        ):
+            existing_last_preflight = existing_runtime_backend.get("last_preflight")
+            if existing_last_preflight is not None:
+                runtime_backend_summary["last_preflight"] = existing_last_preflight
+        metadata["runtime_backend"] = runtime_backend_summary
         metadata["crash_capture"] = self._merge_object_crash_capture_capability(
             record,
             metadata.get("crash_capture"),
@@ -2775,6 +2817,154 @@ class WorkflowService:
             return {}
         return {
             "runtime": self._collect_object_runtime_snapshot(obj),
+        }
+
+    def _build_runtime_backend_capability(self, backend_name: str) -> dict[str, Any]:
+        normalized = backend_name or "host"
+        capabilities = {
+            "process_spawn": normalized == "host",
+            "tcp_bind": normalized == "host",
+            "filesystem_write": normalized == "host",
+            "environment_variables": normalized == "host",
+            "core_limit_probe": _resource is not None
+            and hasattr(_resource, "RLIMIT_CORE"),
+        }
+        limitations: list[str] = []
+        if normalized != "host":
+            limitations.append(f"runtime_backend_unsupported:{normalized}")
+        if not capabilities["core_limit_probe"]:
+            limitations.append("core_rlimit_unsupported")
+        return {
+            "name": normalized,
+            "source": "workflow_service",
+            "capabilities": capabilities,
+            "limitations": limitations,
+            "probed_at": datetime.now().isoformat(),
+        }
+
+    def _build_runtime_backend_requirements(self, profile: str) -> list[str]:
+        if profile == "mysql_managed_instance":
+            return [
+                "process_spawn",
+                "tcp_bind",
+                "filesystem_write",
+                "environment_variables",
+            ]
+        return []
+
+    def _build_object_runtime_backend_summary(
+        self,
+        record: ManagedObjectRecord,
+        *,
+        last_preflight: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        config = record.config if isinstance(record.config, dict) else {}
+        backend_name = str(config.get("runtime_backend", "host"))
+        capability = self._build_runtime_backend_capability(backend_name)
+        required = config.get("runtime_backend_requirements", [])
+        if not isinstance(required, list):
+            required = []
+        required_capabilities = [str(item) for item in required if str(item)]
+        capability_values = capability.get("capabilities", {})
+        capabilities = capability_values if isinstance(capability_values, dict) else {}
+        missing = [name for name in required_capabilities if not capabilities.get(name)]
+        limitations = capability.get("limitations", [])
+        unsupported = any(
+            isinstance(item, str) and item.startswith("runtime_backend_unsupported:")
+            for item in limitations
+            if isinstance(limitations, list)
+        )
+        summary: dict[str, Any] = {
+            "name": backend_name,
+            "required_capabilities": required_capabilities,
+            "capabilities": capabilities,
+            "capability_status": "unsatisfied"
+            if missing or unsupported
+            else "satisfied",
+            "missing_capabilities": missing,
+            "limitations": limitations,
+        }
+        if last_preflight is not None:
+            summary["last_preflight"] = last_preflight
+        return summary
+
+    def _build_problem_runtime_backend_context(
+        self, object_refs: Any
+    ) -> dict[str, Any]:
+        if not isinstance(object_refs, list):
+            return {}
+        objects: list[dict[str, Any]] = []
+        for raw_name in object_refs:
+            if not isinstance(raw_name, str) or not raw_name:
+                continue
+            record = self.storage.get_object(raw_name)
+            if record is None:
+                objects.append(
+                    {
+                        "object_name": raw_name,
+                        "object_found": False,
+                    }
+                )
+                continue
+            metadata = record.metadata if isinstance(record.metadata, dict) else {}
+            runtime_backend = metadata.get("runtime_backend", {})
+            if not isinstance(runtime_backend, dict) or not runtime_backend:
+                runtime_backend = self._build_object_runtime_backend_summary(record)
+            objects.append(
+                {
+                    "object_name": record.name,
+                    "object_found": True,
+                    "type_name": record.type_name,
+                    "status": record.status,
+                    "runtime_backend": runtime_backend,
+                }
+            )
+        if not objects:
+            return {}
+
+        found_objects = [item for item in objects if item.get("object_found") is True]
+        if not found_objects:
+            status = "unknown"
+        elif any(
+            isinstance(item.get("runtime_backend"), dict)
+            and item["runtime_backend"].get("capability_status") == "unsatisfied"
+            for item in found_objects
+        ):
+            status = "unsatisfied"
+        elif len(found_objects) != len(objects):
+            status = "partial"
+        else:
+            status = "satisfied"
+        return {
+            "source": "object_refs",
+            "status": status,
+            "objects": objects,
+        }
+
+    def _build_runtime_backend_preflight_summary(
+        self,
+        *,
+        success: bool,
+        message: str,
+    ) -> dict[str, Any] | None:
+        reason = ""
+        message_lower = message.lower()
+        if (
+            "does not permit binding" in message_lower
+            or "operation not permitted" in message_lower
+        ):
+            reason = "tcp_bind_denied"
+        elif "cannot prepare a managed mysql service" in message_lower:
+            reason = "tcp_bind_unavailable"
+        elif "runtime backend" in message_lower and "supports only" in message_lower:
+            reason = "runtime_backend_unsupported"
+        if not success and not reason:
+            return None
+        return {
+            "status": "success" if success else "failed",
+            "message": message,
+            "failure_reason": reason,
+            "checked_at": datetime.now().isoformat(),
         }
 
     def _workspace_dump_dir(self) -> Path:
@@ -5128,6 +5318,9 @@ class WorkflowService:
                 problem_id
             ),
         }
+        runtime_backend = payload.get("runtime_backend", {})
+        if isinstance(runtime_backend, dict) and runtime_backend:
+            investigation["runtime_backend"] = runtime_backend
         if payload.get("problem_type") == "data_state":
             data_investigation = self._build_data_state_investigation_summary(payload)
             investigation.update(data_investigation)
@@ -7160,6 +7353,9 @@ class WorkflowService:
             problem_type,
             recovery=recovery,
         )
+        runtime_backend = self._build_problem_runtime_backend_context(object_refs)
+        if runtime_backend:
+            asset_metadata["runtime_backend"] = runtime_backend
         return ProblemAssetRecord(
             problem_id=problem_id,
             problem_type=problem_type,

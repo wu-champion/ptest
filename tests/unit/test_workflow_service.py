@@ -314,6 +314,13 @@ def test_workflow_service_persists_environment_and_objects(tmp_path: Path) -> No
     assert record.metadata["isolation"]["validated"] is True
     assert record.metadata["isolation"]["health"] is True
     assert record.metadata["dumps_dir"] == str((tmp_path / "dumps").resolve())
+    runtime_backend = record.metadata["runtime_backend"]
+    assert runtime_backend["name"] == "host"
+    assert runtime_backend["capabilities"]["process_spawn"] is True
+    assert runtime_backend["capabilities"]["tcp_bind"] is True
+    assert runtime_backend["capabilities"]["filesystem_write"] is True
+    assert runtime_backend["capabilities"]["environment_variables"] is True
+    assert "core_limit_probe" in runtime_backend["capabilities"]
     assert record.metadata["crash_capture"]["dump_dir"] == str(
         (tmp_path / "dumps").resolve()
     )
@@ -446,6 +453,12 @@ def test_workflow_service_builds_mysql_scenario_defaults(tmp_path: Path) -> None
     assert config["server_host"] == "127.0.0.1"
     assert config["server_port"] == WorkflowService.DEFAULT_MANAGED_MYSQL_PORT
     assert config["runtime_backend"] == "host"
+    assert config["runtime_backend_requirements"] == [
+        "process_spawn",
+        "tcp_bind",
+        "filesystem_write",
+        "environment_variables",
+    ]
     assert config["mysql_package_path"] == str(package_path.resolve())
     assert config["source_asset"]["product"] == "mysql"
     assert config["source_asset"]["version"] == "8.4"
@@ -469,6 +482,16 @@ def test_workflow_service_builds_mysql_scenario_defaults(tmp_path: Path) -> None
     assert install_result["object"]["metadata"]["crash_capture"]["dump_dir"] == str(
         Path(managed_instance["dump_dir"]).resolve()
     )
+    object_backend = install_result["object"]["metadata"]["runtime_backend"]
+    assert object_backend["name"] == "host"
+    assert object_backend["capability_status"] == "satisfied"
+    assert object_backend["missing_capabilities"] == []
+    assert object_backend["required_capabilities"] == [
+        "process_spawn",
+        "tcp_bind",
+        "filesystem_write",
+        "environment_variables",
+    ]
     assert _normalized_path(config["config_file"]).endswith(
         "mysql_service/config/my.cnf"
     )
@@ -695,6 +718,8 @@ def test_workflow_service_starts_mysql_managed_instance(tmp_path: Path) -> None:
         status["object"]["metadata"]["crash_capture"]["enable_attempt"]["attempted"]
         is True
     )
+    start_preflight = status["object"]["metadata"]["runtime_backend"]["last_preflight"]
+    assert start_preflight["status"] == "success"
 
     stop_result = service.stop_object("mysql_service")
     assert stop_result["success"] is True
@@ -704,6 +729,12 @@ def test_workflow_service_starts_mysql_managed_instance(tmp_path: Path) -> None:
     assert checks["process_cleanup"]["ok"] is True
     assert checks["port_release"]["ok"] is True
     assert checks["all_passed"] is True
+    stopped_status = service.get_object_status("mysql_service")
+    assert stopped_status["success"] is True
+    assert (
+        stopped_status["object"]["metadata"]["runtime_backend"]["last_preflight"]
+        == start_preflight
+    )
 
 
 def test_workflow_service_records_crash_capture_enable_attempt(
@@ -790,6 +821,8 @@ def test_workflow_service_reports_missing_mysql_runtime_dependencies(
     assert status["object"]["linked_problems"][0]["problem_type"] == (
         "dependency_configuration"
     )
+    backend = status["object"]["metadata"]["runtime_backend"]
+    assert "last_preflight" not in backend
 
 
 def test_workflow_service_reports_mysql_runtime_backend_preflight_failure(
@@ -847,6 +880,10 @@ def test_workflow_service_reports_mysql_runtime_backend_preflight_failure(
     assert status["object"]["linked_problems"][0]["problem_type"] == (
         "dependency_configuration"
     )
+    backend = status["object"]["metadata"]["runtime_backend"]
+    assert backend["last_preflight"]["status"] == "failed"
+    assert backend["last_preflight"]["failure_reason"] == "tcp_bind_denied"
+    assert "Operation not permitted" in backend["last_preflight"]["message"]
 
 
 def test_workflow_service_uninstalls_mysql_managed_instance(tmp_path: Path) -> None:

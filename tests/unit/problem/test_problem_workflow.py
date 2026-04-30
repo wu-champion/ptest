@@ -764,6 +764,15 @@ def test_workflow_service_classifies_start_failed_service_runtime_problem(
     assets = service.get_problem_assets(problem_id)
     assert assets["success"] is True
     assert assets["assets"]["details"]["failure_kind"] == "startup_failed"
+    runtime_backend = assets["assets"]["metadata"]["runtime_backend"]
+    assert runtime_backend["status"] == "unsatisfied"
+    assert runtime_backend["objects"][0]["object_name"] == "demo_service"
+    assert runtime_backend["objects"][0]["runtime_backend"]["name"] == "managed"
+    assert (
+        "runtime_backend_unsupported:managed"
+        in runtime_backend["objects"][0]["runtime_backend"]["limitations"]
+    )
+    assert assets["assets"]["investigation"]["runtime_backend"] == runtime_backend
     assert assets["assets"]["recovery"]["failure_kind"] == "startup_failed"
     assert assets["assets"]["recovery"]["runtime_hints"]["object_status"] == (
         OBJECT_STATUS_START_FAILED_PRESERVED
