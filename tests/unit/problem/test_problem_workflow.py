@@ -684,9 +684,7 @@ def test_workflow_service_preserves_service_runtime_problem(tmp_path: Path) -> N
     assert object_artifacts["before"]["objects"][0]["object_name"] == "demo_service"
     assert object_artifacts["before"]["objects"][0]["object_found"] is False
     assert object_artifacts["after"]["objects"][0]["object_found"] is False
-    assert object_artifacts["artifact_ref"].endswith(
-        "context/object_artifacts.json"
-    )
+    assert object_artifacts["artifact_ref"].endswith("context/object_artifacts.json")
     assert assets["assets"]["recovery"]["mode"] == "runtime_level_plan"
     assert assets["assets"]["recovery"]["failure_kind"] == "port_unreachable"
     assert assets["assets"]["recovery"]["runtime_target"]["service_name"] == (
@@ -902,9 +900,7 @@ def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
     object_artifacts = assets["assets"]["details"]["object_artifacts"]
     assert object_artifacts["before"]["objects"][0]["object_name"] == "demo_service"
     assert object_artifacts["before"]["objects"][0]["object_found"] is False
-    assert object_artifacts["artifact_ref"].endswith(
-        "context/object_artifacts.json"
-    )
+    assert object_artifacts["artifact_ref"].endswith("context/object_artifacts.json")
     assert assets["assets"]["details"]["crash_capture"]["new_dump_refs"] == []
     assert assets["assets"]["details"]["log_window"]["workspace_logs_dir"] == "logs"
     assert assets["assets"]["details"]["log_window"]["file_count"] >= 1

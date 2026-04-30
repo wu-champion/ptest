@@ -957,7 +957,7 @@ def test_workflow_service_binds_database_case_to_mysql_object(
                 "db_type": "mysql",
                 "endpoint": "127.0.0.1:3307",
             },
-        }
+        },
     }
     service.storage.upsert_object(record)
 
@@ -1015,16 +1015,15 @@ def test_workflow_service_binds_database_case_to_mysql_object(
     object_artifacts_path = artifact_dir / "context" / "object_artifacts.json"
     assert object_artifacts_path.exists()
     artifact_index = json.loads(
-        (artifact_dir / "indexes" / "artifact_index.json").read_text(
-            encoding="utf-8"
-        )
+        (artifact_dir / "indexes" / "artifact_index.json").read_text(encoding="utf-8")
     )
     assert "\\" not in artifact_index["files"]["object_artifacts"]
     assert _normalized_path(artifact_index["files"]["object_artifacts"]).endswith(
         "context/object_artifacts.json"
     )
-    assert artifact_index["categories"]["context"]["object_artifacts"] == (
-        artifact_index["files"]["object_artifacts"]
+    assert (
+        artifact_index["categories"]["context"]["object_artifacts"]
+        == (artifact_index["files"]["object_artifacts"])
     )
 
 
@@ -1507,13 +1506,12 @@ def test_workflow_service_runs_case_and_generates_report(tmp_path: Path) -> None
     assert "\\" not in artifact_index["files"]["execution"]
     assert "\\" not in artifact_index["files"]["object_artifacts"]
     assert "\\" not in artifact_index["indexes"]["log_index"]
-    assert artifact_index["categories"]["context"]["object_artifacts"] == (
-        artifact_index["files"]["object_artifacts"]
+    assert (
+        artifact_index["categories"]["context"]["object_artifacts"]
+        == (artifact_index["files"]["object_artifacts"])
     )
     object_artifacts = json.loads(
-        (artifact_dir / "context" / "object_artifacts.json").read_text(
-            encoding="utf-8"
-        )
+        (artifact_dir / "context" / "object_artifacts.json").read_text(encoding="utf-8")
     )
     assert object_artifacts["selection"]["selection_reason"] == "all_objects_fallback"
     assert object_artifacts["before"]["objects"] == []

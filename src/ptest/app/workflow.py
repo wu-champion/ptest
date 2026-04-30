@@ -1395,9 +1395,11 @@ class WorkflowService:
                 ExecutionTask(
                     task_id=case_id,
                     func=(
-                        lambda case_id=case_id: self._execute_case_with_artifact_capture(
-                            case_manager,
-                            case_id,
+                        lambda case_id=case_id: (
+                            self._execute_case_with_artifact_capture(
+                                case_manager,
+                                case_id,
+                            )
                         )
                     ),
                     timeout=float(timeout or 300),
@@ -3296,7 +3298,9 @@ class WorkflowService:
             object_refs=object_refs,
         )
         artifact_refs = record.metadata.get("artifacts", {})
-        files = artifact_refs.get("files", {}) if isinstance(artifact_refs, dict) else {}
+        files = (
+            artifact_refs.get("files", {}) if isinstance(artifact_refs, dict) else {}
+        )
         if isinstance(files, dict) and isinstance(files.get("object_artifacts"), str):
             filtered["artifact_ref"] = files["object_artifacts"]
         return filtered
@@ -3601,9 +3605,7 @@ class WorkflowService:
             case_id,
             params=params,
         )
-        object_artifacts_before = self._capture_object_artifacts_before(
-            case_definition
-        )
+        object_artifacts_before = self._capture_object_artifacts_before(case_definition)
         crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
             case_definition
         )
