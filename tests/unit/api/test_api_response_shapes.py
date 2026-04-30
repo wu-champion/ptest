@@ -151,6 +151,10 @@ def test_api_supports_mysql_lifecycle_scenario_inputs(tmp_path: Path) -> None:
     assert config["server_port"] == api.workflow.DEFAULT_MANAGED_MYSQL_PORT
     assert config["scenario"]["scenario_name"] == "mysql_full_lifecycle"
     assert config["source_asset"]["product"] == "mysql"
+    status_result = api.get_object_status("mysql_service")
+    assert status_result["success"] is True
+    assert "diagnostics" in status_result["data"]
+    assert status_result["data"]["diagnostics"]["runtime_backend"]["name"] == "host"
 
 
 def test_api_runs_mysql_case_bound_to_managed_object(
