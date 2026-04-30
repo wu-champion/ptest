@@ -2050,15 +2050,28 @@ class WorkflowService:
             )
         metadata = record.metadata.copy()
         metadata.update(self._collect_object_metadata(obj))
-        metadata["runtime_backend"] = self._build_object_runtime_backend_summary(
-            record,
-            last_preflight=self._build_runtime_backend_preflight_summary(
+        existing_runtime_backend = metadata.get("runtime_backend")
+        last_preflight = (
+            self._build_runtime_backend_preflight_summary(
                 success=success,
                 message=result,
             )
             if action in {"start", "restart"}
-            else None,
+            else None
         )
+        runtime_backend_summary = self._build_object_runtime_backend_summary(
+            record,
+            last_preflight=last_preflight,
+        )
+        if (
+            action not in {"start", "restart"}
+            and isinstance(existing_runtime_backend, dict)
+            and "last_preflight" not in runtime_backend_summary
+        ):
+            existing_last_preflight = existing_runtime_backend.get("last_preflight")
+            if existing_last_preflight is not None:
+                runtime_backend_summary["last_preflight"] = existing_last_preflight
+        metadata["runtime_backend"] = runtime_backend_summary
         metadata["crash_capture"] = self._merge_object_crash_capture_capability(
             record,
             metadata.get("crash_capture"),

@@ -718,6 +718,8 @@ def test_workflow_service_starts_mysql_managed_instance(tmp_path: Path) -> None:
         status["object"]["metadata"]["crash_capture"]["enable_attempt"]["attempted"]
         is True
     )
+    start_preflight = status["object"]["metadata"]["runtime_backend"]["last_preflight"]
+    assert start_preflight["status"] == "success"
 
     stop_result = service.stop_object("mysql_service")
     assert stop_result["success"] is True
@@ -727,6 +729,12 @@ def test_workflow_service_starts_mysql_managed_instance(tmp_path: Path) -> None:
     assert checks["process_cleanup"]["ok"] is True
     assert checks["port_release"]["ok"] is True
     assert checks["all_passed"] is True
+    stopped_status = service.get_object_status("mysql_service")
+    assert stopped_status["success"] is True
+    assert (
+        stopped_status["object"]["metadata"]["runtime_backend"]["last_preflight"]
+        == start_preflight
+    )
 
 
 def test_workflow_service_records_crash_capture_enable_attempt(
