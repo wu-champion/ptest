@@ -950,6 +950,7 @@ def test_workflow_service_binds_database_case_to_mysql_object(
     assert record is not None
     record.status = "running"
     record.metadata = {
+        **record.metadata,
         "runtime": {
             "status": "running",
             "details": {
@@ -995,6 +996,36 @@ def test_workflow_service_binds_database_case_to_mysql_object(
     assert case_payload["host"] == "127.0.0.1"
     assert case_payload["port"] == 3307
     assert "database" not in case_payload
+    object_artifacts = records[0]["metadata"]["object_artifacts"]
+    assert object_artifacts["selection"]["mode"] == "explicit_refs"
+    assert object_artifacts["selection"]["object_refs"] == ["mysql_service"]
+    before_object = object_artifacts["before"]["objects"][0]
+    after_object = object_artifacts["after"]["objects"][0]
+    assert before_object["object_name"] == "mysql_service"
+    assert "status" in after_object
+    assert after_object["installed"] is True
+    assert "runtime_backend" in after_object
+    assert "runtime" in after_object
+    assert after_object["artifact_sources"]["data_dir"]["exists"] is True
+    assert after_object["artifact_sources"]["data_dir"]["kind"] == "directory"
+    assert "mysql_service" in [
+        item["object_name"] for item in object_artifacts["changes"]["objects"]
+    ]
+    artifact_dir = tmp_path / ".ptest" / "artifacts" / records[0]["execution_id"]
+    object_artifacts_path = artifact_dir / "context" / "object_artifacts.json"
+    assert object_artifacts_path.exists()
+    artifact_index = json.loads(
+        (artifact_dir / "indexes" / "artifact_index.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "\\" not in artifact_index["files"]["object_artifacts"]
+    assert _normalized_path(artifact_index["files"]["object_artifacts"]).endswith(
+        "context/object_artifacts.json"
+    )
+    assert artifact_index["categories"]["context"]["object_artifacts"] == (
+        artifact_index["files"]["object_artifacts"]
+    )
 
 
 def test_workflow_service_reports_missing_bound_database_object(
@@ -1438,6 +1469,7 @@ def test_workflow_service_runs_case_and_generates_report(tmp_path: Path) -> None
     assert artifact_dir.exists()
     assert (artifact_dir / "context" / "environment.json").exists()
     assert (artifact_dir / "context" / "objects.json").exists()
+    assert (artifact_dir / "context" / "object_artifacts.json").exists()
     assert (artifact_dir / "case" / "case.json").exists()
     assert (artifact_dir / "result" / "result.json").exists()
     assert (artifact_dir / "result" / "execution.json").exists()
@@ -1446,12 +1478,16 @@ def test_workflow_service_runs_case_and_generates_report(tmp_path: Path) -> None
     artifacts = executions[0]["metadata"]["artifacts"]
     assert "\\" not in artifacts["directory"]
     assert "\\" not in artifacts["files"]["environment"]
+    assert "\\" not in artifacts["files"]["object_artifacts"]
     assert "\\" not in artifacts["files"]["execution"]
     assert "\\" not in artifacts["indexes"]["artifact_index"]
     assert "\\" not in artifacts["indexes"]["log_index"]
     assert _normalized_path(artifacts["directory"]).startswith(".ptest/artifacts/")
     assert _normalized_path(artifacts["files"]["environment"]).endswith(
         "context/environment.json"
+    )
+    assert _normalized_path(artifacts["files"]["object_artifacts"]).endswith(
+        "context/object_artifacts.json"
     )
     assert _normalized_path(artifacts["files"]["execution"]).endswith(
         "result/execution.json"
@@ -1469,7 +1505,19 @@ def test_workflow_service_runs_case_and_generates_report(tmp_path: Path) -> None
         (artifact_dir / "logs" / "log_index.json").read_text(encoding="utf-8")
     )
     assert "\\" not in artifact_index["files"]["execution"]
+    assert "\\" not in artifact_index["files"]["object_artifacts"]
     assert "\\" not in artifact_index["indexes"]["log_index"]
+    assert artifact_index["categories"]["context"]["object_artifacts"] == (
+        artifact_index["files"]["object_artifacts"]
+    )
+    object_artifacts = json.loads(
+        (artifact_dir / "context" / "object_artifacts.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert object_artifacts["selection"]["selection_reason"] == "all_objects_fallback"
+    assert object_artifacts["before"]["objects"] == []
+    assert object_artifacts["after"]["objects"] == []
     assert _normalized_path(artifact_index["files"]["execution"]).endswith(
         "result/execution.json"
     )
