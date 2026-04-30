@@ -86,6 +86,9 @@ class WorkflowService:
     DEFAULT_MANAGED_MYSQL_PORT = 13306
     WORKSPACE_BASELINE_CONTENT_MAX_BYTES = 256 * 1024
     WORKSPACE_BASELINE_CONTENT_MAX_FILES = 32
+    OBJECT_ARTIFACT_MAX_SCAN_FILES = 500
+    OBJECT_ARTIFACT_MAX_SCAN_DEPTH = 4
+    OBJECT_ARTIFACT_LATEST_FILE_LIMIT = 5
 
     def __init__(
         self,
@@ -1337,13 +1340,15 @@ class WorkflowService:
         self, case_id: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         case_manager = CaseManager(self._bootstrap_environment())
-        result, case_definition = self._execute_case_with_bindings(
+        (
+            result,
+            case_definition,
+            crash_snapshot_before,
+            object_artifacts_before,
+        ) = self._execute_case_with_artifact_capture(
             case_manager,
             case_id,
             params=params,
-        )
-        crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
-            case_definition
         )
         self._persist_execution(
             case_id,
@@ -1351,6 +1356,7 @@ class WorkflowService:
             case_manager,
             case_definition_override=case_definition,
             crash_snapshot_before=crash_snapshot_before,
+            object_artifacts_before=object_artifacts_before,
         )
         payload = self._result_payload(result)
         payload["message"] = (
@@ -1391,9 +1397,13 @@ class WorkflowService:
             tasks = [
                 ExecutionTask(
                     task_id=case_id,
-                    func=lambda case_id=case_id: self._execute_case_with_bindings(
-                        case_manager,
-                        case_id,
+                    func=(
+                        lambda case_id=case_id: (
+                            self._execute_case_with_artifact_capture(
+                                case_manager,
+                                case_id,
+                            )
+                        )
                     ),
                     timeout=float(timeout or 300),
                 )
@@ -1405,18 +1415,23 @@ class WorkflowService:
             for execution_result in execution_results:
                 case_result = execution_result.result
                 case_definition = None
-                if isinstance(case_result, tuple) and len(case_result) == 2:
-                    case_result, case_definition = case_result
+                crash_snapshot_before = None
+                object_artifacts_before = None
+                if isinstance(case_result, tuple) and len(case_result) == 4:
+                    (
+                        case_result,
+                        case_definition,
+                        crash_snapshot_before,
+                        object_artifacts_before,
+                    ) = case_result
                 if isinstance(case_result, TestCaseResult):
-                    crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
-                        case_definition
-                    )
                     self._persist_execution(
                         case_result.case_id,
                         case_result,
                         case_manager,
                         case_definition_override=case_definition,
                         crash_snapshot_before=crash_snapshot_before,
+                        object_artifacts_before=object_artifacts_before,
                     )
                     results.append(self._result_payload(case_result))
             return self._summarize_results(results)
@@ -1428,9 +1443,11 @@ class WorkflowService:
         tasks = [
             ExecutionTask(
                 task_id=case_id,
-                func=lambda case_id=case_id: self._execute_case_with_bindings(
-                    case_manager,
-                    case_id,
+                func=(
+                    lambda case_id=case_id: self._execute_case_with_artifact_capture(
+                        case_manager,
+                        case_id,
+                    )
                 ),
             )
             for case_id in case_ids
@@ -1440,18 +1457,23 @@ class WorkflowService:
         for execution_result in execution_results:
             case_result = execution_result.result
             case_definition = None
-            if isinstance(case_result, tuple) and len(case_result) == 2:
-                case_result, case_definition = case_result
+            crash_snapshot_before = None
+            object_artifacts_before = None
+            if isinstance(case_result, tuple) and len(case_result) == 4:
+                (
+                    case_result,
+                    case_definition,
+                    crash_snapshot_before,
+                    object_artifacts_before,
+                ) = case_result
             if isinstance(case_result, TestCaseResult):
-                crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
-                    case_definition
-                )
                 self._persist_execution(
                     case_result.case_id,
                     case_result,
                     case_manager,
                     case_definition_override=case_definition,
                     crash_snapshot_before=crash_snapshot_before,
+                    object_artifacts_before=object_artifacts_before,
                 )
                 results.append(self._result_payload(case_result))
         return self._summarize_results(results)
@@ -2819,6 +2841,349 @@ class WorkflowService:
             "runtime": self._collect_object_runtime_snapshot(obj),
         }
 
+    def _capture_object_artifacts_before(
+        self,
+        case_definition: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        selection = self._build_object_artifact_selection(case_definition)
+        return {
+            "selection": selection,
+            "before": self._capture_object_artifact_snapshot(
+                selection.get("object_refs", [])
+            ),
+        }
+
+    def _build_object_artifacts_record(
+        self,
+        *,
+        execution_id: str,
+        case_definition: dict[str, Any] | None,
+        before_capture: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if isinstance(before_capture, dict):
+            selection = before_capture.get("selection", {})
+            before = before_capture.get("before", {})
+        else:
+            selection = self._build_object_artifact_selection(case_definition)
+            before = self._capture_object_artifact_snapshot(
+                selection.get("object_refs", [])
+            )
+        if not isinstance(selection, dict):
+            selection = self._build_object_artifact_selection(case_definition)
+        if not isinstance(before, dict):
+            before = self._capture_object_artifact_snapshot(
+                selection.get("object_refs", [])
+            )
+        after = self._capture_object_artifact_snapshot(selection.get("object_refs", []))
+        return {
+            "execution_id": execution_id,
+            "selection": selection,
+            "before": before,
+            "after": after,
+            "changes": self._build_object_artifact_changes(before, after),
+        }
+
+    def _build_object_artifact_selection(
+        self,
+        case_definition: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        case_payload = (
+            self._unwrap_case_definition(case_definition)
+            if isinstance(case_definition, dict)
+            else {}
+        )
+        object_refs: list[str] = []
+        for value in (
+            case_payload.get("object_name"),
+            case_payload.get("service_name"),
+        ):
+            if isinstance(value, str) and value and value not in object_refs:
+                object_refs.append(value)
+        bound_object = case_payload.get("bound_object")
+        if isinstance(bound_object, dict):
+            bound_name = bound_object.get("name")
+            if (
+                isinstance(bound_name, str)
+                and bound_name
+                and bound_name not in object_refs
+            ):
+                object_refs.append(bound_name)
+        if object_refs:
+            return {
+                "mode": "explicit_refs",
+                "selection_reason": "case_object_refs",
+                "object_refs": object_refs,
+            }
+        fallback_refs = sorted(self.storage.load_objects().keys())
+        return {
+            "mode": "all_objects_fallback",
+            "selection_reason": "all_objects_fallback",
+            "object_refs": fallback_refs,
+        }
+
+    def _capture_object_artifact_snapshot(
+        self,
+        object_refs: Any,
+    ) -> dict[str, Any]:
+        refs = object_refs if isinstance(object_refs, list) else []
+        objects = [
+            self._build_object_artifact_summary(str(name))
+            for name in refs
+            if isinstance(name, str) and name
+        ]
+        return {
+            "captured_at": datetime.now().isoformat(),
+            "objects": objects,
+        }
+
+    def _build_object_artifact_summary(self, object_name: str) -> dict[str, Any]:
+        record = self.storage.get_object(object_name)
+        if record is None:
+            return {
+                "object_name": object_name,
+                "object_found": False,
+            }
+        metadata = record.metadata if isinstance(record.metadata, dict) else {}
+        summary = {
+            "object_name": record.name,
+            "object_found": True,
+            "type_name": record.type_name,
+            "status": record.status,
+            "installed": record.installed,
+            "runtime_backend": metadata.get("runtime_backend", {}),
+            "runtime": metadata.get("runtime", {}),
+            "crash_capture": metadata.get("crash_capture", {}),
+            "artifact_sources": self._build_object_artifact_sources(record),
+        }
+        return summary
+
+    def _build_object_artifact_sources(
+        self,
+        record: ManagedObjectRecord,
+    ) -> dict[str, Any]:
+        config = record.config if isinstance(record.config, dict) else {}
+        sources: dict[str, Any] = {}
+        managed_instance = config.get("managed_instance", {})
+        if isinstance(managed_instance, dict):
+            for key, value in sorted(managed_instance.items()):
+                if not isinstance(value, str) or not value:
+                    continue
+                if key.endswith("_dir") or key in {
+                    "config_file",
+                    "data_dir",
+                    "dump_dir",
+                    "files_dir",
+                    "install_dir",
+                    "lib_dir",
+                }:
+                    sources[key] = self._summarize_artifact_path(value)
+        crash_capture = (
+            record.metadata.get("crash_capture", {})
+            if isinstance(record.metadata, dict)
+            else {}
+        )
+        if isinstance(crash_capture, dict):
+            dump_dir = crash_capture.get("dump_dir")
+            if isinstance(dump_dir, str) and dump_dir and "dump_dir" not in sources:
+                sources["dump_dir"] = self._summarize_artifact_path(dump_dir)
+        return sources
+
+    def _summarize_artifact_path(self, raw_path: str) -> dict[str, Any]:
+        path = Path(raw_path).expanduser()
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        summary: dict[str, Any] = {
+            "path": self._workspace_display_path(resolved),
+            "exists": resolved.exists(),
+        }
+        try:
+            if not resolved.exists():
+                summary.update(
+                    {
+                        "kind": "missing",
+                        "file_count": 0,
+                        "total_size": 0,
+                        "latest_files": [],
+                    }
+                )
+                return summary
+            if resolved.is_file():
+                stat = resolved.stat()
+                summary.update(
+                    {
+                        "kind": "file",
+                        "file_count": 1,
+                        "total_size": stat.st_size,
+                        "latest_files": [
+                            self._artifact_file_summary(resolved, stat=stat)
+                        ],
+                    }
+                )
+                return summary
+            if not resolved.is_dir():
+                summary.update(
+                    {
+                        "kind": "other",
+                        "file_count": 0,
+                        "total_size": 0,
+                        "latest_files": [],
+                    }
+                )
+                return summary
+            files, total_size, truncated = self._scan_artifact_directory(resolved)
+            files.sort(key=lambda item: item[1].st_mtime, reverse=True)
+            summary.update(
+                {
+                    "kind": "directory",
+                    "file_count": len(files),
+                    "total_size": total_size,
+                    "scan_truncated": truncated,
+                    "max_scan_files": self.OBJECT_ARTIFACT_MAX_SCAN_FILES,
+                    "max_scan_depth": self.OBJECT_ARTIFACT_MAX_SCAN_DEPTH,
+                    "latest_files": [
+                        self._artifact_file_summary(item, stat=stat)
+                        for item, stat in files[
+                            : self.OBJECT_ARTIFACT_LATEST_FILE_LIMIT
+                        ]
+                    ],
+                }
+            )
+            return summary
+        except OSError as exc:
+            summary.update(
+                {
+                    "kind": "error",
+                    "file_count": 0,
+                    "total_size": 0,
+                    "latest_files": [],
+                    "error": str(exc),
+                }
+            )
+            return summary
+
+    def _scan_artifact_directory(
+        self, root: Path
+    ) -> tuple[list[tuple[Path, Any]], int, bool]:
+        files: list[tuple[Path, Any]] = []
+        total_size = 0
+        truncated = False
+        pending: list[tuple[Path, int]] = [(root, 0)]
+        while pending and len(files) < self.OBJECT_ARTIFACT_MAX_SCAN_FILES:
+            directory, depth = pending.pop()
+            try:
+                children = sorted(directory.iterdir(), key=lambda item: item.name)
+            except OSError:
+                continue
+            for child in children:
+                if child.is_symlink():
+                    continue
+                try:
+                    if child.is_file():
+                        stat = child.stat()
+                        total_size += stat.st_size
+                        files.append((child, stat))
+                        if len(files) >= self.OBJECT_ARTIFACT_MAX_SCAN_FILES:
+                            truncated = True
+                            break
+                    elif child.is_dir() and depth < self.OBJECT_ARTIFACT_MAX_SCAN_DEPTH:
+                        pending.append((child, depth + 1))
+                except OSError:
+                    continue
+        if pending:
+            truncated = True
+        return files, total_size, truncated
+
+    def _artifact_file_summary(self, path: Path, *, stat: Any) -> dict[str, Any]:
+        return {
+            "path": self._workspace_display_path(path),
+            "name": path.name,
+            "size": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        }
+
+    def _workspace_display_path(self, path: Path) -> str:
+        try:
+            return path.resolve().relative_to(self.root_path.resolve()).as_posix()
+        except (OSError, ValueError):
+            return path.as_posix()
+
+    def _build_object_artifact_changes(
+        self,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> dict[str, Any]:
+        before_objects: dict[str, dict[str, Any]] = {}
+        for item in before.get("objects", []):
+            if isinstance(item, dict) and isinstance(item.get("object_name"), str):
+                before_objects[item["object_name"]] = item
+        after_objects: dict[str, dict[str, Any]] = {}
+        for item in after.get("objects", []):
+            if isinstance(item, dict) and isinstance(item.get("object_name"), str):
+                after_objects[item["object_name"]] = item
+        changes: list[dict[str, Any]] = []
+        for object_name in sorted(set(before_objects) | set(after_objects)):
+            before_item = before_objects.get(object_name, {})
+            after_item = after_objects.get(object_name, {})
+            changed_fields: list[str] = []
+            for field in ("object_found", "status", "installed"):
+                if before_item.get(field) != after_item.get(field):
+                    changed_fields.append(field)
+            source_changes = self._build_artifact_source_changes(
+                before_item.get("artifact_sources", {}),
+                after_item.get("artifact_sources", {}),
+            )
+            if source_changes:
+                changed_fields.append("artifact_sources")
+            changes.append(
+                {
+                    "object_name": object_name,
+                    "changed": bool(changed_fields),
+                    "changed_fields": changed_fields,
+                    "before_status": before_item.get("status"),
+                    "after_status": after_item.get("status"),
+                    "artifact_source_changes": source_changes,
+                }
+            )
+        return {"objects": changes}
+
+    def _build_artifact_source_changes(
+        self,
+        before_sources: Any,
+        after_sources: Any,
+    ) -> dict[str, Any]:
+        if not isinstance(before_sources, dict):
+            before_sources = {}
+        if not isinstance(after_sources, dict):
+            after_sources = {}
+        changes: dict[str, Any] = {}
+        for name in sorted(set(before_sources) | set(after_sources)):
+            before_item = before_sources.get(name, {})
+            after_item = after_sources.get(name, {})
+            if not isinstance(before_item, dict):
+                before_item = {}
+            if not isinstance(after_item, dict):
+                after_item = {}
+            file_count_delta = int(after_item.get("file_count", 0) or 0) - int(
+                before_item.get("file_count", 0) or 0
+            )
+            total_size_delta = int(after_item.get("total_size", 0) or 0) - int(
+                before_item.get("total_size", 0) or 0
+            )
+            if (
+                before_item.get("exists") != after_item.get("exists")
+                or file_count_delta
+                or total_size_delta
+            ):
+                changes[name] = {
+                    "exists_before": before_item.get("exists"),
+                    "exists_after": after_item.get("exists"),
+                    "file_count_delta": file_count_delta,
+                    "total_size_delta": total_size_delta,
+                }
+        return changes
+
     def _build_runtime_backend_capability(self, backend_name: str) -> dict[str, Any]:
         normalized = backend_name or "host"
         capabilities = {
@@ -2940,6 +3305,102 @@ class WorkflowService:
             "status": status,
             "objects": objects,
         }
+
+    def _build_problem_object_artifacts(
+        self,
+        record: ExecutionRecord,
+        *,
+        problem_type: str,
+        object_refs: list[str],
+    ) -> dict[str, Any]:
+        object_artifacts = record.metadata.get("object_artifacts", {})
+        if not isinstance(object_artifacts, dict):
+            return {}
+        selection = object_artifacts.get("selection", {})
+        if not isinstance(selection, dict):
+            selection = {}
+        if (
+            problem_type == "api_response"
+            and selection.get("mode") == "all_objects_fallback"
+        ):
+            return {}
+        filtered = self._filter_object_artifacts_for_problem(
+            object_artifacts,
+            object_refs=object_refs,
+        )
+        artifact_refs = record.metadata.get("artifacts", {})
+        files = (
+            artifact_refs.get("files", {}) if isinstance(artifact_refs, dict) else {}
+        )
+        if isinstance(files, dict) and isinstance(files.get("object_artifacts"), str):
+            filtered["artifact_ref"] = files["object_artifacts"]
+        return filtered
+
+    def _filter_object_artifacts_for_problem(
+        self,
+        object_artifacts: dict[str, Any],
+        *,
+        object_refs: list[str],
+    ) -> dict[str, Any]:
+        ref_set = {name for name in object_refs if isinstance(name, str) and name}
+        filtered = {
+            "execution_id": object_artifacts.get("execution_id"),
+            "selection": object_artifacts.get("selection", {}),
+            "before": self._filter_object_artifact_snapshot(
+                object_artifacts.get("before", {}),
+                ref_set=ref_set,
+            ),
+            "after": self._filter_object_artifact_snapshot(
+                object_artifacts.get("after", {}),
+                ref_set=ref_set,
+            ),
+            "changes": self._filter_object_artifact_changes(
+                object_artifacts.get("changes", {}),
+                ref_set=ref_set,
+            ),
+        }
+        return filtered
+
+    def _filter_object_artifact_snapshot(
+        self,
+        snapshot: Any,
+        *,
+        ref_set: set[str],
+    ) -> dict[str, Any]:
+        if not isinstance(snapshot, dict):
+            return {"captured_at": None, "objects": []}
+        objects = snapshot.get("objects", [])
+        if not isinstance(objects, list):
+            objects = []
+        if ref_set:
+            objects = [
+                item
+                for item in objects
+                if isinstance(item, dict) and item.get("object_name") in ref_set
+            ]
+        return {
+            "captured_at": snapshot.get("captured_at"),
+            "objects": objects,
+        }
+
+    def _filter_object_artifact_changes(
+        self,
+        changes: Any,
+        *,
+        ref_set: set[str],
+    ) -> dict[str, Any]:
+        if not isinstance(changes, dict):
+            return {"objects": []}
+        objects = changes.get("objects", [])
+        if not isinstance(objects, list):
+            objects = []
+        if ref_set:
+            objects = [
+                item
+                for item in objects
+                if isinstance(item, dict) and item.get("object_name") in ref_set
+            ]
+        return {"objects": objects}
 
     def _build_runtime_backend_preflight_summary(
         self,
@@ -3150,6 +3611,52 @@ class WorkflowService:
         case_id: str,
         params: dict[str, Any] | None = None,
     ) -> tuple[TestCaseResult, dict[str, Any] | None]:
+        resolved_params, case_definition, failure = self._prepare_case_execution(
+            case_manager,
+            case_id,
+            params=params,
+        )
+        if failure is not None:
+            return failure, case_definition
+        return case_manager.run_case(case_id, params=resolved_params), case_definition
+
+    def _execute_case_with_artifact_capture(
+        self,
+        case_manager: CaseManager,
+        case_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[
+        TestCaseResult,
+        dict[str, Any] | None,
+        dict[str, Any],
+        dict[str, Any],
+    ]:
+        resolved_params, case_definition, failure = self._prepare_case_execution(
+            case_manager,
+            case_id,
+            params=params,
+        )
+        object_artifacts_before = self._capture_object_artifacts_before(case_definition)
+        crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
+            case_definition
+        )
+        if failure is not None:
+            result = failure
+        else:
+            result = case_manager.run_case(case_id, params=resolved_params)
+        return (
+            result,
+            case_definition,
+            crash_snapshot_before,
+            object_artifacts_before,
+        )
+
+    def _prepare_case_execution(
+        self,
+        case_manager: CaseManager,
+        case_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, TestCaseResult | None]:
         resolved_params, failure = self._resolve_case_runtime_params(
             case_manager,
             case_id,
@@ -3161,8 +3668,8 @@ class WorkflowService:
             resolved_params,
         )
         if failure is not None:
-            return failure, case_definition
-        return case_manager.run_case(case_id, params=resolved_params), case_definition
+            return resolved_params, case_definition, failure
+        return resolved_params, case_definition, None
 
     def _resolve_case_runtime_params(
         self,
@@ -3380,6 +3887,7 @@ class WorkflowService:
         case_manager: CaseManager,
         case_definition_override: dict[str, Any] | None = None,
         crash_snapshot_before: dict[str, Any] | None = None,
+        object_artifacts_before: dict[str, Any] | None = None,
     ) -> ExecutionRecord:
         execution_id = f"{case_id}_{uuid.uuid4().hex[:12]}"
         environment = self.get_environment_status()
@@ -3387,6 +3895,11 @@ class WorkflowService:
         case_definition = case_definition_override or case_manager.get_case(case_id)
         crash_snapshot_after = self._capture_workspace_crash_dump_snapshot(
             case_definition
+        )
+        object_artifacts = self._build_object_artifacts_record(
+            execution_id=execution_id,
+            case_definition=case_definition,
+            before_capture=object_artifacts_before,
         )
         result_payload = self._result_payload(result)
         record = ExecutionRecord(
@@ -3410,6 +3923,7 @@ class WorkflowService:
                         crash_snapshot_after,
                     ),
                 },
+                "object_artifacts": object_artifacts,
             },
         )
         artifacts = self.storage.save_execution_artifacts(
@@ -3419,6 +3933,7 @@ class WorkflowService:
             case=case_definition,
             result=result_payload,
             output=result.output,
+            object_artifacts=object_artifacts,
         )
         record.metadata["artifacts"] = artifacts
         artifact_index = self.storage.save_execution_artifact_record(record)
@@ -3690,6 +4205,19 @@ class WorkflowService:
         now = datetime.now().isoformat()
         problem_artifact_refs = self._problem_artifact_refs(artifact_refs)
         observed_response = self._build_api_observed_response(record, case_payload)
+        object_artifacts = self._build_problem_object_artifacts(
+            record,
+            problem_type="api_response",
+            object_refs=object_refs,
+        )
+        details = {
+            "request": request_payload,
+            "response": observed_response,
+            "case": case_payload,
+            "preservation": {},
+        }
+        if object_artifacts:
+            details["object_artifacts"] = object_artifacts
         preservation = self._build_preservation_summary(
             {
                 "request_context": (
@@ -3748,12 +4276,7 @@ class WorkflowService:
                 "supported": True,
                 "mode": "request_replay",
             },
-            details={
-                "request": request_payload,
-                "response": observed_response,
-                "case": case_payload,
-                "preservation": preservation,
-            },
+            details={**details, "preservation": preservation},
             created_at=now,
             updated_at=now,
             metadata={
@@ -3855,6 +4378,13 @@ class WorkflowService:
             "error": record.error_message,
             "case": case_payload,
         }
+        object_artifacts = self._build_problem_object_artifacts(
+            record,
+            problem_type="data_state",
+            object_refs=object_refs,
+        )
+        if object_artifacts:
+            details["object_artifacts"] = object_artifacts
         preservation = self._build_preservation_summary(
             {
                 "data_source": (
@@ -3976,6 +4506,11 @@ class WorkflowService:
             and service_name not in runtime_object_refs
         ):
             runtime_object_refs.append(service_name)
+        object_artifacts = self._build_problem_object_artifacts(
+            record,
+            problem_type="crash_dump",
+            object_refs=runtime_object_refs,
+        )
 
         dump_refs = self._merge_crash_dump_refs(
             self._build_crash_dump_refs(case_payload),
@@ -4027,6 +4562,8 @@ class WorkflowService:
             "crash_capture": crash_capture if isinstance(crash_capture, dict) else {},
             "case": case_payload,
         }
+        if object_artifacts:
+            details["object_artifacts"] = object_artifacts
         preservation = self._build_preservation_summary(
             {
                 "crash_target": (
@@ -4365,6 +4902,11 @@ class WorkflowService:
             and service_name not in runtime_object_refs
         ):
             runtime_object_refs.append(service_name)
+        object_artifacts = self._build_problem_object_artifacts(
+            record,
+            problem_type="service_runtime",
+            object_refs=runtime_object_refs,
+        )
 
         details = {
             "service": {
@@ -4381,6 +4923,8 @@ class WorkflowService:
             },
             "case": case_payload,
         }
+        if object_artifacts:
+            details["object_artifacts"] = object_artifacts
         runtime_hints = self._build_service_runtime_hints(
             case_payload=case_payload,
             record=record,
@@ -5321,6 +5865,11 @@ class WorkflowService:
         runtime_backend = payload.get("runtime_backend", {})
         if isinstance(runtime_backend, dict) and runtime_backend:
             investigation["runtime_backend"] = runtime_backend
+        details = payload.get("details", {})
+        if isinstance(details, dict):
+            object_artifacts = details.get("object_artifacts", {})
+            if isinstance(object_artifacts, dict) and object_artifacts:
+                investigation["object_artifacts"] = object_artifacts
         if payload.get("problem_type") == "data_state":
             data_investigation = self._build_data_state_investigation_summary(payload)
             investigation.update(data_investigation)
