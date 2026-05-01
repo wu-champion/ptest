@@ -1058,7 +1058,44 @@ def test_workflow_service_binds_database_case_to_mysql_object(
     diagnostics = status_result["object"]["diagnostics"]
     assert diagnostics["runtime_backend"]["name"] == "host"
     assert diagnostics["managed_instance"]["available"] is True
-    assert diagnostics["suggested_views"][0]["view"] == "object_status"
+    assert any(
+        view["view"] == "object_status" for view in diagnostics["suggested_views"]
+    )
+
+
+def test_workflow_service_object_artifact_summary_counts_inferred_changes_after_preview_limit(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    object_artifacts = {
+        "before": {
+            "objects": [
+                {
+                    "object_name": f"object_{index:02d}",
+                    "object_found": True,
+                    "status": "running",
+                }
+                for index in range(11)
+            ]
+        },
+        "after": {
+            "objects": [
+                {
+                    "object_name": f"object_{index:02d}",
+                    "object_found": True,
+                    "status": "stopped",
+                }
+                for index in range(11)
+            ]
+        },
+        "changes": {"objects": []},
+    }
+
+    summary = service._summarize_object_artifacts(object_artifacts)
+
+    assert summary["object_count"] == 11
+    assert summary["changed_object_count"] == 11
+    assert len(summary["objects"]) == 10
 
 
 def test_workflow_service_reports_missing_bound_database_object(

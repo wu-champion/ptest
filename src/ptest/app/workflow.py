@@ -3468,13 +3468,16 @@ class WorkflowService:
             before_item = before_objects.get(object_name, {})
             after_item = after_objects.get(object_name, {})
             change_item = change_objects.get(object_name, {})
-            status_changed = bool(
-                change_item.get("changed")
-                and "status" in change_item.get("changed_fields", [])
+            status_changed = self._object_artifact_status_changed(
+                before_item,
+                after_item,
+                change_item,
             )
-            if "changed" not in change_item:
-                status_changed = before_item.get("status") != after_item.get("status")
-            changed = bool(change_item.get("changed", status_changed))
+            changed = self._object_artifact_changed(
+                before_item,
+                after_item,
+                change_item,
+            )
             if changed:
                 changed_count += 1
             object_summary: dict[str, Any] = {
@@ -3496,7 +3499,11 @@ class WorkflowService:
                 object_summary["artifact_source_changes"] = artifact_source_changes
             objects.append(object_summary)
         for object_name in object_names[10:]:
-            if change_objects.get(object_name, {}).get("changed"):
+            if self._object_artifact_changed(
+                before_objects.get(object_name, {}),
+                after_objects.get(object_name, {}),
+                change_objects.get(object_name, {}),
+            ):
                 changed_count += 1
         summary: dict[str, Any] = {
             "available": True,
@@ -3516,9 +3523,21 @@ class WorkflowService:
         self,
         snapshot: Any,
     ) -> dict[str, dict[str, Any]]:
-        if not isinstance(snapshot, dict):
+        return self._object_artifacts_by_name(snapshot)
+
+    def _object_artifact_changes_by_name(
+        self,
+        changes: Any,
+    ) -> dict[str, dict[str, Any]]:
+        return self._object_artifacts_by_name(changes)
+
+    def _object_artifacts_by_name(
+        self,
+        payload: Any,
+    ) -> dict[str, dict[str, Any]]:
+        if not isinstance(payload, dict):
             return {}
-        objects = snapshot.get("objects", [])
+        objects = payload.get("objects", [])
         if not isinstance(objects, list):
             return {}
         by_name: dict[str, dict[str, Any]] = {}
@@ -3530,23 +3549,32 @@ class WorkflowService:
                 by_name[object_name] = item
         return by_name
 
-    def _object_artifact_changes_by_name(
+    def _object_artifact_status_changed(
         self,
-        changes: Any,
-    ) -> dict[str, dict[str, Any]]:
-        if not isinstance(changes, dict):
-            return {}
-        objects = changes.get("objects", [])
-        if not isinstance(objects, list):
-            return {}
-        by_name: dict[str, dict[str, Any]] = {}
-        for item in objects:
-            if not isinstance(item, dict):
-                continue
-            object_name = item.get("object_name")
-            if isinstance(object_name, str) and object_name:
-                by_name[object_name] = item
-        return by_name
+        before_item: dict[str, Any],
+        after_item: dict[str, Any],
+        change_item: dict[str, Any],
+    ) -> bool:
+        changed_fields = change_item.get("changed_fields", [])
+        if change_item.get("changed") and isinstance(changed_fields, list):
+            return "status" in changed_fields
+        if "changed" not in change_item:
+            return before_item.get("status") != after_item.get("status")
+        return False
+
+    def _object_artifact_changed(
+        self,
+        before_item: dict[str, Any],
+        after_item: dict[str, Any],
+        change_item: dict[str, Any],
+    ) -> bool:
+        if "changed" in change_item:
+            return bool(change_item.get("changed"))
+        return self._object_artifact_status_changed(
+            before_item,
+            after_item,
+            change_item,
+        )
 
     def _build_runtime_backend_preflight_summary(
         self,
@@ -6186,15 +6214,17 @@ class WorkflowService:
         runtime = metadata.get("runtime", {})
         if not isinstance(runtime, dict):
             runtime = {}
+        managed_instance = self._build_managed_instance_diagnostics(record)
         diagnostics: dict[str, Any] = {
             "status": "complete" if runtime_backend else "partial",
             "runtime_backend": runtime_backend,
             "runtime": runtime,
-            "managed_instance": self._build_managed_instance_diagnostics(record),
+            "managed_instance": managed_instance,
             "recent_problems": linked_problems,
             "signals": self._build_object_status_diagnostic_signals(
                 record,
                 runtime_backend=runtime_backend,
+                managed_instance=managed_instance,
                 linked_problems=linked_problems,
             ),
             "suggested_views": self._build_diagnostic_next_views(
@@ -6250,6 +6280,7 @@ class WorkflowService:
         record: ManagedObjectRecord,
         *,
         runtime_backend: dict[str, Any],
+        managed_instance: dict[str, Any],
         linked_problems: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         signals = self._runtime_backend_diagnostic_signals(
@@ -6275,7 +6306,6 @@ class WorkflowService:
                     "problem_id": linked_problems[0].get("problem_id"),
                 }
             )
-        managed_instance = self._build_managed_instance_diagnostics(record)
         paths = managed_instance.get("paths", {})
         if isinstance(paths, dict):
             for key, item in paths.items():
@@ -6338,7 +6368,7 @@ class WorkflowService:
         object_name: str | None = None,
     ) -> list[dict[str, Any]]:
         signals: list[dict[str, Any]] = []
-        backend_items = self._iter_runtime_backend_items(runtime_backend)
+        backend_items = self._get_runtime_backend_items(runtime_backend)
         for backend_item in backend_items:
             current_object_name = object_name or backend_item.get("object_name")
             backend = backend_item.get("runtime_backend", backend_item)
@@ -6366,7 +6396,7 @@ class WorkflowService:
                 signals.append(signal)
         return signals
 
-    def _iter_runtime_backend_items(
+    def _get_runtime_backend_items(
         self,
         runtime_backend: dict[str, Any],
     ) -> list[dict[str, Any]]:
