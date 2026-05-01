@@ -3427,7 +3427,7 @@ class WorkflowService:
             }
         try:
             object_artifacts = self.storage.read_artifact_file(artifact_ref)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             return {
                 "available": False,
                 "artifact_ref": artifact_ref,

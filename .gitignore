@@ -11,6 +11,7 @@ wheels/
 *.cache/
 
 # 开发工具和环境
+.codex
 .opencode/
 .opencode_sessions
 oh-my-opencode

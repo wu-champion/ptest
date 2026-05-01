@@ -1045,6 +1045,13 @@ def test_workflow_service_binds_database_case_to_mysql_object(
     assert object_artifacts_summary["object_count"] == 1
     assert object_artifacts_summary["changed_object_count"] >= 0
     assert object_artifacts_summary["objects"][0]["object_name"] == "mysql_service"
+    object_artifacts_path.write_text("{", encoding="utf-8")
+    corrupted_artifacts = service.get_execution_artifacts(records[0]["execution_id"])
+    assert corrupted_artifacts["success"] is True
+    corrupted_summary = corrupted_artifacts["artifacts"]["object_artifacts_summary"]
+    assert corrupted_summary["available"] is False
+    assert corrupted_summary["artifact_ref"].endswith("context/object_artifacts.json")
+    assert "error" in corrupted_summary
 
     status_result = service.get_object_status("mysql_service")
     assert status_result["success"] is True
