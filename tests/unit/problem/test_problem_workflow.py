@@ -705,6 +705,16 @@ def test_workflow_service_preserves_service_runtime_problem(tmp_path: Path) -> N
         "runtime_level_plan"
     )
     assert assets["assets"]["investigation"]["object_artifacts"] == object_artifacts
+    diagnostics = assets["assets"]["investigation"]["diagnostics"]
+    assert diagnostics["status"] == "complete"
+    assert diagnostics["object_refs"] == ["demo_service"]
+    assert diagnostics["object_artifacts"]["artifact_ref"].endswith(
+        "context/object_artifacts.json"
+    )
+    assert any(signal["code"] == "object_missing" for signal in diagnostics["signals"])
+    assert any(
+        view["view"] == "execution_artifacts" for view in diagnostics["next_views"]
+    )
 
     recovery = service.recover_problem(problem_id)
     assert recovery["success"] is True
@@ -890,6 +900,9 @@ def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
     assert detail["problem"]["investigation"]["boundary"]["scope"] == (
         "crash_asset_preservation"
     )
+    assert detail["problem"]["investigation"]["diagnostics"]["object_refs"] == [
+        "demo_service"
+    ]
 
     assets = service.get_problem_assets(problem_id)
     assert assets["success"] is True
@@ -927,6 +940,12 @@ def test_workflow_service_preserves_crash_dump_problem(tmp_path: Path) -> None:
     assert assets["assets"]["investigation"]["object_summary"]["object_found"] is False
     assert assets["assets"]["investigation"]["log_window"]["file_count"] >= 1
     assert assets["assets"]["investigation"]["object_artifacts"] == object_artifacts
+    diagnostics = assets["assets"]["investigation"]["diagnostics"]
+    assert diagnostics["object_artifacts"]["object_count"] == 1
+    assert diagnostics["artifact_refs"]["object_artifacts"].endswith(
+        "context/object_artifacts.json"
+    )
+    assert any(signal["code"] == "object_missing" for signal in diagnostics["signals"])
 
     recovery = service.recover_problem(problem_id)
     assert recovery["success"] is True

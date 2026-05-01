@@ -1540,6 +1540,9 @@ class WorkflowService:
             str(self.storage.artifacts_dir / execution_id / "logs" / "log_index.json"),
         )
         artifact_index["log_index"] = log_index or {}
+        artifact_index["object_artifacts_summary"] = (
+            self._build_execution_object_artifacts_summary(artifact_index)
+        )
 
         if include_contents:
             contents: dict[str, Any] = {}
@@ -2530,6 +2533,10 @@ class WorkflowService:
         )
         if linked_problems:
             payload["linked_problems"] = linked_problems
+        payload["diagnostics"] = self._build_object_status_diagnostics(
+            record,
+            linked_problems=linked_problems,
+        )
         return payload
 
     def _build_object_suggested_actions(
@@ -3401,6 +3408,173 @@ class WorkflowService:
                 if isinstance(item, dict) and item.get("object_name") in ref_set
             ]
         return {"objects": objects}
+
+    def _build_execution_object_artifacts_summary(
+        self,
+        artifact_index: dict[str, Any],
+    ) -> dict[str, Any]:
+        files = artifact_index.get("files", {})
+        if not isinstance(files, dict):
+            return {
+                "available": False,
+                "reason": "artifact_files_unavailable",
+            }
+        artifact_ref = files.get("object_artifacts")
+        if not isinstance(artifact_ref, str) or not artifact_ref:
+            return {
+                "available": False,
+                "reason": "object_artifacts_not_registered",
+            }
+        try:
+            object_artifacts = self.storage.read_artifact_file(artifact_ref)
+        except (OSError, ValueError) as exc:
+            return {
+                "available": False,
+                "artifact_ref": artifact_ref,
+                "error": str(exc),
+            }
+        if not isinstance(object_artifacts, dict):
+            return {
+                "available": False,
+                "artifact_ref": artifact_ref,
+                "reason": "object_artifacts_unreadable",
+            }
+        return self._summarize_object_artifacts(
+            object_artifacts,
+            artifact_ref=artifact_ref,
+        )
+
+    def _summarize_object_artifacts(
+        self,
+        object_artifacts: dict[str, Any],
+        *,
+        artifact_ref: str | None = None,
+    ) -> dict[str, Any]:
+        before_objects = self._object_artifact_snapshot_by_name(
+            object_artifacts.get("before", {})
+        )
+        after_objects = self._object_artifact_snapshot_by_name(
+            object_artifacts.get("after", {})
+        )
+        change_objects = self._object_artifact_changes_by_name(
+            object_artifacts.get("changes", {})
+        )
+        object_names = sorted(
+            set(before_objects) | set(after_objects) | set(change_objects)
+        )
+        objects: list[dict[str, Any]] = []
+        changed_count = 0
+        for object_name in object_names[:10]:
+            before_item = before_objects.get(object_name, {})
+            after_item = after_objects.get(object_name, {})
+            change_item = change_objects.get(object_name, {})
+            status_changed = self._object_artifact_status_changed(
+                before_item,
+                after_item,
+                change_item,
+            )
+            changed = self._object_artifact_changed(
+                before_item,
+                after_item,
+                change_item,
+            )
+            if changed:
+                changed_count += 1
+            object_summary: dict[str, Any] = {
+                "object_name": object_name,
+                "object_found": after_item.get(
+                    "object_found", before_item.get("object_found")
+                ),
+                "before_status": change_item.get(
+                    "before_status", before_item.get("status")
+                ),
+                "after_status": change_item.get(
+                    "after_status", after_item.get("status")
+                ),
+                "status_changed": status_changed,
+                "changed": changed,
+            }
+            artifact_source_changes = change_item.get("artifact_source_changes", {})
+            if isinstance(artifact_source_changes, dict) and artifact_source_changes:
+                object_summary["artifact_source_changes"] = artifact_source_changes
+            objects.append(object_summary)
+        for object_name in object_names[10:]:
+            if self._object_artifact_changed(
+                before_objects.get(object_name, {}),
+                after_objects.get(object_name, {}),
+                change_objects.get(object_name, {}),
+            ):
+                changed_count += 1
+        summary: dict[str, Any] = {
+            "available": True,
+            "selection": object_artifacts.get("selection", {}),
+            "object_count": len(object_names),
+            "changed_object_count": changed_count,
+            "objects": objects,
+        }
+        if artifact_ref is not None:
+            summary["artifact_ref"] = artifact_ref
+        execution_id = object_artifacts.get("execution_id")
+        if isinstance(execution_id, str) and execution_id:
+            summary["execution_id"] = execution_id
+        return summary
+
+    def _object_artifact_snapshot_by_name(
+        self,
+        snapshot: Any,
+    ) -> dict[str, dict[str, Any]]:
+        return self._object_artifacts_by_name(snapshot)
+
+    def _object_artifact_changes_by_name(
+        self,
+        changes: Any,
+    ) -> dict[str, dict[str, Any]]:
+        return self._object_artifacts_by_name(changes)
+
+    def _object_artifacts_by_name(
+        self,
+        payload: Any,
+    ) -> dict[str, dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return {}
+        objects = payload.get("objects", [])
+        if not isinstance(objects, list):
+            return {}
+        by_name: dict[str, dict[str, Any]] = {}
+        for item in objects:
+            if not isinstance(item, dict):
+                continue
+            object_name = item.get("object_name")
+            if isinstance(object_name, str) and object_name:
+                by_name[object_name] = item
+        return by_name
+
+    def _object_artifact_status_changed(
+        self,
+        before_item: dict[str, Any],
+        after_item: dict[str, Any],
+        change_item: dict[str, Any],
+    ) -> bool:
+        changed_fields = change_item.get("changed_fields", [])
+        if change_item.get("changed") and isinstance(changed_fields, list):
+            return "status" in changed_fields
+        if "changed" not in change_item:
+            return before_item.get("status") != after_item.get("status")
+        return False
+
+    def _object_artifact_changed(
+        self,
+        before_item: dict[str, Any],
+        after_item: dict[str, Any],
+        change_item: dict[str, Any],
+    ) -> bool:
+        if "changed" in change_item:
+            return bool(change_item.get("changed"))
+        return self._object_artifact_status_changed(
+            before_item,
+            after_item,
+            change_item,
+        )
 
     def _build_runtime_backend_preflight_summary(
         self,
@@ -5958,7 +6132,315 @@ class WorkflowService:
                 )
             )
         investigation.setdefault("next_actions", [])
+        investigation["diagnostics"] = self._build_problem_diagnostics_summary(
+            payload,
+            investigation=investigation,
+        )
         return investigation
+
+    def _build_problem_diagnostics_summary(
+        self,
+        payload: dict[str, Any],
+        *,
+        investigation: dict[str, Any],
+    ) -> dict[str, Any]:
+        object_refs = [
+            str(item)
+            for item in payload.get("object_refs", [])
+            if isinstance(item, str) and item
+        ]
+        runtime_backend = payload.get("runtime_backend", {})
+        if not isinstance(runtime_backend, dict):
+            runtime_backend = {}
+        details = payload.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        object_artifacts = details.get("object_artifacts", {})
+        if not isinstance(object_artifacts, dict):
+            object_artifacts = investigation.get("object_artifacts", {})
+        object_artifacts_summary: dict[str, Any] = {}
+        artifact_refs: dict[str, Any] = {}
+        if isinstance(object_artifacts, dict) and object_artifacts:
+            artifact_ref = object_artifacts.get("artifact_ref")
+            if isinstance(artifact_ref, str) and artifact_ref:
+                artifact_refs["object_artifacts"] = artifact_ref
+            object_artifacts_summary = self._summarize_object_artifacts(
+                object_artifacts,
+                artifact_ref=artifact_ref if isinstance(artifact_ref, str) else None,
+            )
+        execution_id = payload.get("execution_id")
+        if isinstance(execution_id, str) and execution_id:
+            artifact_refs["execution"] = execution_id
+        signals = self._build_diagnostic_signals(
+            runtime_backend=runtime_backend,
+            object_artifacts_summary=object_artifacts_summary,
+        )
+        has_runtime = bool(runtime_backend)
+        has_object_artifacts = bool(object_artifacts_summary)
+        if has_runtime and (has_object_artifacts or not object_refs):
+            status = "complete"
+        elif has_runtime or has_object_artifacts or object_refs:
+            status = "partial"
+        else:
+            status = "unavailable"
+        diagnostics: dict[str, Any] = {
+            "status": status,
+            "object_refs": object_refs,
+            "signals": signals,
+            "next_views": self._build_diagnostic_next_views(
+                problem_id=str(payload.get("problem_id", "")),
+                execution_id=execution_id if isinstance(execution_id, str) else "",
+                object_refs=object_refs,
+            ),
+        }
+        if runtime_backend:
+            diagnostics["runtime_backend"] = runtime_backend
+        if object_artifacts_summary:
+            diagnostics["object_artifacts"] = object_artifacts_summary
+        if artifact_refs:
+            diagnostics["artifact_refs"] = artifact_refs
+        return diagnostics
+
+    def _build_object_status_diagnostics(
+        self,
+        record: ManagedObjectRecord,
+        *,
+        linked_problems: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        metadata = record.metadata if isinstance(record.metadata, dict) else {}
+        runtime_backend = metadata.get("runtime_backend", {})
+        if not isinstance(runtime_backend, dict) or not runtime_backend:
+            runtime_backend = self._build_object_runtime_backend_summary(record)
+        runtime = metadata.get("runtime", {})
+        if not isinstance(runtime, dict):
+            runtime = {}
+        managed_instance = self._build_managed_instance_diagnostics(record)
+        diagnostics: dict[str, Any] = {
+            "status": "complete" if runtime_backend else "partial",
+            "runtime_backend": runtime_backend,
+            "runtime": runtime,
+            "managed_instance": managed_instance,
+            "recent_problems": linked_problems,
+            "signals": self._build_object_status_diagnostic_signals(
+                record,
+                runtime_backend=runtime_backend,
+                managed_instance=managed_instance,
+                linked_problems=linked_problems,
+            ),
+            "suggested_views": self._build_diagnostic_next_views(
+                problem_id=str(linked_problems[0]["problem_id"])
+                if linked_problems
+                else "",
+                execution_id="",
+                object_refs=[record.name],
+            ),
+        }
+        return diagnostics
+
+    def _build_managed_instance_diagnostics(
+        self,
+        record: ManagedObjectRecord,
+    ) -> dict[str, Any]:
+        config = record.config if isinstance(record.config, dict) else {}
+        managed_instance = config.get("managed_instance", {})
+        if not isinstance(managed_instance, dict) or not managed_instance:
+            return {"available": False, "reason": "managed_instance_not_configured"}
+        paths: dict[str, Any] = {}
+        for key, value in sorted(managed_instance.items()):
+            if not isinstance(value, str) or not value:
+                continue
+            path = Path(value).expanduser()
+            try:
+                exists = path.exists()
+                kind = (
+                    "directory"
+                    if path.is_dir()
+                    else "file"
+                    if path.is_file()
+                    else "path"
+                )
+                paths[key] = {
+                    "path": self._workspace_display_path(path),
+                    "exists": exists,
+                    "kind": kind,
+                }
+            except OSError as exc:
+                paths[key] = {
+                    "path": self._workspace_display_path(path),
+                    "exists": False,
+                    "error": str(exc),
+                }
+        return {
+            "available": bool(paths),
+            "paths": paths,
+        }
+
+    def _build_object_status_diagnostic_signals(
+        self,
+        record: ManagedObjectRecord,
+        *,
+        runtime_backend: dict[str, Any],
+        managed_instance: dict[str, Any],
+        linked_problems: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        signals = self._runtime_backend_diagnostic_signals(
+            runtime_backend,
+            object_name=record.name,
+        )
+        if is_failure_preserved_object_status(record.status):
+            signals.append(
+                {
+                    "level": "warning",
+                    "code": "object_failure_preserved",
+                    "message": f"object is preserved in failure state '{record.status}'",
+                    "object_name": record.name,
+                }
+            )
+        if linked_problems:
+            signals.append(
+                {
+                    "level": "info",
+                    "code": "recent_problem_linked",
+                    "message": "object has recent linked problem records",
+                    "object_name": record.name,
+                    "problem_id": linked_problems[0].get("problem_id"),
+                }
+            )
+        paths = managed_instance.get("paths", {})
+        if isinstance(paths, dict):
+            for key, item in paths.items():
+                if isinstance(item, dict) and item.get("exists") is False:
+                    signals.append(
+                        {
+                            "level": "warning",
+                            "code": "managed_instance_missing",
+                            "message": f"managed instance path '{key}' is missing",
+                            "object_name": record.name,
+                        }
+                    )
+        return signals
+
+    def _build_diagnostic_signals(
+        self,
+        *,
+        runtime_backend: dict[str, Any],
+        object_artifacts_summary: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        signals = self._runtime_backend_diagnostic_signals(runtime_backend)
+        for item in object_artifacts_summary.get("objects", []):
+            if not isinstance(item, dict):
+                continue
+            object_name = item.get("object_name")
+            if item.get("object_found") is False:
+                signals.append(
+                    {
+                        "level": "warning",
+                        "code": "object_missing",
+                        "message": "object referenced by diagnostics was not found",
+                        "object_name": object_name,
+                    }
+                )
+            if item.get("status_changed") is True:
+                signals.append(
+                    {
+                        "level": "info",
+                        "code": "object_status_changed",
+                        "message": "object status changed during execution",
+                        "object_name": object_name,
+                        "before_status": item.get("before_status"),
+                        "after_status": item.get("after_status"),
+                    }
+                )
+        if object_artifacts_summary.get("available") is False:
+            signals.append(
+                {
+                    "level": "warning",
+                    "code": "object_artifacts_unavailable",
+                    "message": "object artifacts summary is unavailable",
+                }
+            )
+        return signals
+
+    def _runtime_backend_diagnostic_signals(
+        self,
+        runtime_backend: dict[str, Any],
+        *,
+        object_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        signals: list[dict[str, Any]] = []
+        backend_items = self._get_runtime_backend_items(runtime_backend)
+        for backend_item in backend_items:
+            current_object_name = object_name or backend_item.get("object_name")
+            backend = backend_item.get("runtime_backend", backend_item)
+            if not isinstance(backend, dict):
+                continue
+            if backend.get("capability_status") == "unsatisfied":
+                signal: dict[str, Any] = {
+                    "level": "error",
+                    "code": "runtime_backend_unsatisfied",
+                    "message": "runtime backend does not satisfy required capabilities",
+                }
+                if isinstance(current_object_name, str) and current_object_name:
+                    signal["object_name"] = current_object_name
+                signals.append(signal)
+            preflight = backend.get("last_preflight", {})
+            if isinstance(preflight, dict) and preflight.get("status") == "failed":
+                signal = {
+                    "level": "error",
+                    "code": "runtime_backend_preflight_failed",
+                    "message": "runtime backend preflight failed",
+                    "failure_reason": preflight.get("failure_reason"),
+                }
+                if isinstance(current_object_name, str) and current_object_name:
+                    signal["object_name"] = current_object_name
+                signals.append(signal)
+        return signals
+
+    def _get_runtime_backend_items(
+        self,
+        runtime_backend: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        objects = runtime_backend.get("objects", [])
+        if isinstance(objects, list):
+            return [item for item in objects if isinstance(item, dict)]
+        if runtime_backend:
+            return [runtime_backend]
+        return []
+
+    def _build_diagnostic_next_views(
+        self,
+        *,
+        problem_id: str,
+        execution_id: str,
+        object_refs: list[str],
+    ) -> list[dict[str, Any]]:
+        views: list[dict[str, Any]] = []
+        if problem_id:
+            views.append(
+                {
+                    "view": "problem_assets",
+                    "command": f"ptest problem assets {problem_id}",
+                    "reason": "inspect preserved problem assets",
+                }
+            )
+        if execution_id:
+            views.append(
+                {
+                    "view": "execution_artifacts",
+                    "command": f"ptest execution artifacts {execution_id}",
+                    "reason": "inspect execution artifact index and object artifacts",
+                }
+            )
+        for object_name in object_refs[:3]:
+            views.append(
+                {
+                    "view": "object_status",
+                    "command": f"ptest obj status {object_name}",
+                    "reason": "inspect current object runtime status",
+                    "object_name": object_name,
+                }
+            )
+        return views
 
     def _build_data_state_investigation_summary(
         self, payload: dict[str, Any]

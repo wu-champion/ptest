@@ -1034,6 +1034,68 @@ def test_workflow_service_binds_database_case_to_mysql_object(
         artifact_index["categories"]["context"]["object_artifacts"]
         == (artifact_index["files"]["object_artifacts"])
     )
+    artifacts = service.get_execution_artifacts(records[0]["execution_id"])
+    assert artifacts["success"] is True
+    object_artifacts_summary = artifacts["artifacts"]["object_artifacts_summary"]
+    assert object_artifacts_summary["available"] is True
+    assert object_artifacts_summary["artifact_ref"].endswith(
+        "context/object_artifacts.json"
+    )
+    assert object_artifacts_summary["selection"]["mode"] == "explicit_refs"
+    assert object_artifacts_summary["object_count"] == 1
+    assert object_artifacts_summary["changed_object_count"] >= 0
+    assert object_artifacts_summary["objects"][0]["object_name"] == "mysql_service"
+    object_artifacts_path.write_text("{", encoding="utf-8")
+    corrupted_artifacts = service.get_execution_artifacts(records[0]["execution_id"])
+    assert corrupted_artifacts["success"] is True
+    corrupted_summary = corrupted_artifacts["artifacts"]["object_artifacts_summary"]
+    assert corrupted_summary["available"] is False
+    assert corrupted_summary["artifact_ref"].endswith("context/object_artifacts.json")
+    assert "error" in corrupted_summary
+
+    status_result = service.get_object_status("mysql_service")
+    assert status_result["success"] is True
+    diagnostics = status_result["object"]["diagnostics"]
+    assert diagnostics["runtime_backend"]["name"] == "host"
+    assert diagnostics["managed_instance"]["available"] is True
+    assert any(
+        view["view"] == "object_status" for view in diagnostics["suggested_views"]
+    )
+
+
+def test_workflow_service_object_artifact_summary_counts_inferred_changes_after_preview_limit(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    object_artifacts = {
+        "before": {
+            "objects": [
+                {
+                    "object_name": f"object_{index:02d}",
+                    "object_found": True,
+                    "status": "running",
+                }
+                for index in range(11)
+            ]
+        },
+        "after": {
+            "objects": [
+                {
+                    "object_name": f"object_{index:02d}",
+                    "object_found": True,
+                    "status": "stopped",
+                }
+                for index in range(11)
+            ]
+        },
+        "changes": {"objects": []},
+    }
+
+    summary = service._summarize_object_artifacts(object_artifacts)
+
+    assert summary["object_count"] == 11
+    assert summary["changed_object_count"] == 11
+    assert len(summary["objects"]) == 10
 
 
 def test_workflow_service_reports_missing_bound_database_object(

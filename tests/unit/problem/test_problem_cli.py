@@ -253,6 +253,7 @@ def test_cli_problem_assets_outputs_reproduction_summary(
     assert exit_code == 0
     assert '"reproduction_summary"' in captured.out
     assert '"investigation"' in captured.out
+    assert '"diagnostics"' in captured.out
     assert '"url": "https://example.test/api/demo"' in captured.out
     assert f'"ptest problem replay {problem_id}"' in captured.out
 
