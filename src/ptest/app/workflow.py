@@ -1558,12 +1558,50 @@ class WorkflowService:
             artifacts=artifact_index,
         )
 
+    @staticmethod
+    def _matches_problem_filters(
+        record: ProblemRecord,
+        *,
+        object_name: str | None = None,
+        environment_id: str | None = None,
+        status: str | None = None,
+        preservation_status: str | None = None,
+        can_replay: bool | None = None,
+        can_recover: bool | None = None,
+    ) -> bool:
+        if object_name is not None and object_name not in record.object_refs:
+            return False
+        if environment_id is not None and record.environment_id != environment_id:
+            return False
+        if status is not None and record.status != status:
+            return False
+        if (
+            preservation_status is not None
+            and record.preservation_status != preservation_status
+        ):
+            return False
+        metadata = record.metadata if isinstance(record.metadata, dict) else {}
+        capabilities = metadata.get("capabilities", {})
+        if not isinstance(capabilities, dict):
+            capabilities = {}
+        if can_replay is True and capabilities.get("can_replay") is not True:
+            return False
+        if can_recover is True and capabilities.get("can_recover") is not True:
+            return False
+        return True
+
     def list_problem_records(
         self,
         *,
         problem_type: str | None = None,
         case_id: str | None = None,
         execution_id: str | None = None,
+        object_name: str | None = None,
+        environment_id: str | None = None,
+        status: str | None = None,
+        preservation_status: str | None = None,
+        can_replay: bool | None = None,
+        can_recover: bool | None = None,
     ) -> list[dict[str, Any]]:
         records = self._list_problem_record_models(
             case_id=case_id,
@@ -1576,6 +1614,16 @@ class WorkflowService:
             if case_id is not None and record.case_id != case_id:
                 continue
             if execution_id is not None and record.execution_id != execution_id:
+                continue
+            if not self._matches_problem_filters(
+                record,
+                object_name=object_name,
+                environment_id=environment_id,
+                status=status,
+                preservation_status=preservation_status,
+                can_replay=can_replay,
+                can_recover=can_recover,
+            ):
                 continue
             filtered.append(self._problem_record_payload(record))
         return sorted(filtered, key=lambda item: item["created_at"], reverse=True)

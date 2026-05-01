@@ -6,6 +6,7 @@ from typing import Any
 import requests
 
 from ptest.api import PTestAPI
+from ptest.models import ProblemRecord
 
 
 class _FakeResponse:
@@ -262,3 +263,90 @@ def test_api_problem_list_reports_empty_results_with_filters(tmp_path: Path) -> 
         "problem_type": "service_runtime",
         "case_id": "missing_case",
     }
+
+
+def test_api_list_problem_records_passes_new_filters(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="api_filter_001",
+            problem_type="api_response",
+            summary="api problem",
+            status="open",
+            environment_id="env_prod",
+            object_refs=["my_service"],
+            metadata={"capabilities": {"can_replay": True, "can_recover": True}},
+        )
+    )
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="api_filter_002",
+            problem_type="data_state",
+            summary="data problem",
+            status="resolved",
+            environment_id="env_staging",
+            object_refs=["other_service"],
+        )
+    )
+
+    result = api.list_problem_records(object_name="my_service")
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert result["problems"][0]["problem_id"] == "api_filter_001"
+    assert result["filters"]["object_name"] == "my_service"
+
+    result = api.list_problem_records(can_replay=True)
+    assert result["count"] == 1
+    assert result["problems"][0]["problem_id"] == "api_filter_001"
+    assert result["filters"]["can_replay"] is True
+
+    result = api.list_problem_records(environment_id="env_staging")
+    assert result["count"] == 1
+    assert result["problems"][0]["problem_id"] == "api_filter_002"
+
+
+def test_api_list_problem_records_filters_contain_only_non_none(
+    tmp_path: Path,
+) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+
+    result = api.list_problem_records(
+        object_name="some_service",
+        status="open",
+    )
+    assert result["filters"] == {
+        "object_name": "some_service",
+        "status": "open",
+    }
+    assert "environment_id" not in result["filters"]
+    assert "preservation_status" not in result["filters"]
+    assert "can_replay" not in result["filters"]
+    assert "can_recover" not in result["filters"]
+
+
+def test_api_list_problem_records_count_matches_problems_length(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="count_001",
+            problem_type="api_response",
+            summary="first",
+            status="open",
+            object_refs=["svc"],
+        )
+    )
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="count_002",
+            problem_type="api_response",
+            summary="second",
+            status="open",
+            object_refs=["svc"],
+        )
+    )
+
+    result = api.list_problem_records(object_name="svc")
+    assert result["count"] == len(result["problems"])

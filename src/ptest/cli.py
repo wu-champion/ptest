@@ -377,6 +377,28 @@ def setup_cli() -> argparse.ArgumentParser:
     )
     problem_list_parser.add_argument("--case-id", help="Filter by case ID")
     problem_list_parser.add_argument("--execution-id", help="Filter by execution ID")
+    problem_list_parser.add_argument(
+        "--object-name", help="Filter by object name (exact match)"
+    )
+    problem_list_parser.add_argument(
+        "--environment-id", help="Filter by environment ID"
+    )
+    problem_list_parser.add_argument("--status", help="Filter by problem status")
+    problem_list_parser.add_argument(
+        "--preservation-status", help="Filter by preservation status"
+    )
+    problem_list_parser.add_argument(
+        "--can-replay",
+        action="store_true",
+        default=False,
+        help="Only show replayable problems",
+    )
+    problem_list_parser.add_argument(
+        "--can-recover",
+        action="store_true",
+        default=False,
+        help="Only show recoverable problems",
+    )
     problem_show_parser = problem_subparsers.add_parser(
         "show",
         help="Show a single problem record with direct capabilities",
@@ -1169,10 +1191,18 @@ def _handle_problem_command(
         return False
 
     if args.problem_action == "list":
+        can_replay = True if getattr(args, "can_replay", False) else None
+        can_recover = True if getattr(args, "can_recover", False) else None
         records = service.list_problem_records(
             problem_type=getattr(args, "problem_type", None),
             case_id=getattr(args, "case_id", None),
             execution_id=getattr(args, "execution_id", None),
+            object_name=getattr(args, "object_name", None),
+            environment_id=getattr(args, "environment_id", None),
+            status=getattr(args, "status", None),
+            preservation_status=getattr(args, "preservation_status", None),
+            can_replay=can_replay,
+            can_recover=can_recover,
         )
         filters = {
             key: value
@@ -1180,6 +1210,12 @@ def _handle_problem_command(
                 "problem_type": getattr(args, "problem_type", None),
                 "case_id": getattr(args, "case_id", None),
                 "execution_id": getattr(args, "execution_id", None),
+                "object_name": getattr(args, "object_name", None),
+                "environment_id": getattr(args, "environment_id", None),
+                "status": getattr(args, "status", None),
+                "preservation_status": getattr(args, "preservation_status", None),
+                "can_replay": can_replay,
+                "can_recover": can_recover,
             }.items()
             if value is not None
         }

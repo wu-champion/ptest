@@ -9,6 +9,7 @@ import requests
 
 from ptest import cli
 from ptest.app import WorkflowService
+from ptest.models import ProblemRecord
 
 
 class _FakeResponse:
@@ -295,4 +296,187 @@ def test_cli_problem_list_reports_filters_and_empty_results(
     assert payload["filters"] == {
         "problem_type": "service_runtime",
         "case_id": "missing_case",
+    }
+
+
+def test_cli_problem_list_filters_by_object_name(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_obj_001",
+            problem_type="api_response",
+            summary="api problem",
+            status="open",
+            object_refs=["alpha_service"],
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_obj_002",
+            problem_type="data_state",
+            summary="data problem",
+            status="open",
+            object_refs=["beta_service"],
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "list",
+            "--object-name",
+            "alpha_service",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["count"] == 1
+    assert payload["problems"][0]["problem_id"] == "cli_obj_001"
+    assert payload["filters"]["object_name"] == "alpha_service"
+
+
+def test_cli_problem_list_filters_by_can_replay(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_replay_001",
+            problem_type="api_response",
+            summary="replayable",
+            status="open",
+            object_refs=["svc_a"],
+            metadata={"capabilities": {"can_replay": True, "can_recover": True}},
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_replay_002",
+            problem_type="data_state",
+            summary="not replayable",
+            status="open",
+            object_refs=["svc_b"],
+            metadata={"capabilities": {"can_replay": False, "can_recover": True}},
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "list",
+            "--can-replay",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["count"] == 1
+    assert payload["problems"][0]["problem_id"] == "cli_replay_001"
+    assert payload["filters"]["can_replay"] is True
+    assert "can_recover" not in payload["filters"]
+
+
+def test_cli_problem_list_filters_by_multiple_args(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_multi_001",
+            problem_type="api_response",
+            summary="match all",
+            status="open",
+            environment_id="env_prod",
+            object_refs=["svc"],
+            metadata={"capabilities": {"can_replay": True, "can_recover": True}},
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_multi_002",
+            problem_type="data_state",
+            summary="wrong env",
+            status="open",
+            environment_id="env_staging",
+            object_refs=["svc"],
+            metadata={"capabilities": {"can_replay": True, "can_recover": True}},
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_multi_003",
+            problem_type="api_response",
+            summary="no replay",
+            status="open",
+            environment_id="env_prod",
+            object_refs=["svc"],
+            metadata={"capabilities": {"can_replay": False, "can_recover": True}},
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "list",
+            "--object-name",
+            "svc",
+            "--environment-id",
+            "env_prod",
+            "--can-replay",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["count"] == 1
+    assert payload["problems"][0]["problem_id"] == "cli_multi_001"
+    assert payload["filters"] == {
+        "object_name": "svc",
+        "environment_id": "env_prod",
+        "can_replay": True,
     }

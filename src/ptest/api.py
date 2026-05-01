@@ -326,11 +326,23 @@ class PTestAPI:
         problem_type: str | None = None,
         case_id: str | None = None,
         execution_id: str | None = None,
+        object_name: str | None = None,
+        environment_id: str | None = None,
+        status: str | None = None,
+        preservation_status: str | None = None,
+        can_replay: bool | None = None,
+        can_recover: bool | None = None,
     ) -> dict[str, Any]:
         records = self.workflow.list_problem_records(
             problem_type=problem_type,
             case_id=case_id,
             execution_id=execution_id,
+            object_name=object_name,
+            environment_id=environment_id,
+            status=status,
+            preservation_status=preservation_status,
+            can_replay=can_replay,
+            can_recover=can_recover,
         )
         filters = {
             key: value
@@ -338,6 +350,12 @@ class PTestAPI:
                 "problem_type": problem_type,
                 "case_id": case_id,
                 "execution_id": execution_id,
+                "object_name": object_name,
+                "environment_id": environment_id,
+                "status": status,
+                "preservation_status": preservation_status,
+                "can_replay": can_replay,
+                "can_recover": can_recover,
             }.items()
             if value is not None
         }
