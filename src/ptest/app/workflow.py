@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 import shutil
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from ..cases.manager import CaseManager
 from ..cases.result import TestCaseResult
@@ -1566,8 +1566,8 @@ class WorkflowService:
         environment_id: str | None = None,
         status: str | None = None,
         preservation_status: str | None = None,
-        can_replay: bool | None = None,
-        can_recover: bool | None = None,
+        can_replay: Literal[True] | None = None,
+        can_recover: Literal[True] | None = None,
     ) -> bool:
         if object_name is not None and object_name not in record.object_refs:
             return False
@@ -1600,8 +1600,8 @@ class WorkflowService:
         environment_id: str | None = None,
         status: str | None = None,
         preservation_status: str | None = None,
-        can_replay: bool | None = None,
-        can_recover: bool | None = None,
+        can_replay: Literal[True] | None = None,
+        can_recover: Literal[True] | None = None,
     ) -> list[dict[str, Any]]:
         records = self._list_problem_record_models(
             case_id=case_id,

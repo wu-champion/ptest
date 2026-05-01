@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal
 
 from .app import WorkflowService
 from .config import DEFAULT_CONFIG
@@ -330,8 +330,8 @@ class PTestAPI:
         environment_id: str | None = None,
         status: str | None = None,
         preservation_status: str | None = None,
-        can_replay: bool | None = None,
-        can_recover: bool | None = None,
+        can_replay: Literal[True] | None = None,
+        can_recover: Literal[True] | None = None,
     ) -> dict[str, Any]:
         records = self.workflow.list_problem_records(
             problem_type=problem_type,
