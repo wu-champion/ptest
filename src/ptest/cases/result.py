@@ -6,6 +6,8 @@ from typing import Dict, Any
 class TestCaseResult:
     """测试用例结果类"""
 
+    __test__ = False
+
     def __init__(self, case_id: str):
         self.case_id = case_id
         self.status = "pending"

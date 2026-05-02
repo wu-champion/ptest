@@ -18,6 +18,7 @@ dependencies = [
     "faker>=35.0.0",
     "prance>=25.0.0",
     "openapi-spec-validator>=0.7.0",
+    "chardet<6",  # requests 2.32.x 不支持 chardet>=6；prance 拉入 chardet，需显式约束
 ]
 
 [project.scripts]
