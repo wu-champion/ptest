@@ -423,6 +423,12 @@ def setup_cli() -> argparse.ArgumentParser:
         parents=[workspace_parent],
     )
     problem_recover_parser.add_argument("problem_id", help="Problem ID")
+    problem_history_parser = problem_subparsers.add_parser(
+        "history",
+        help="Show recovery and replay action history for a problem",
+        parents=[workspace_parent],
+    )
+    problem_history_parser.add_argument("problem_id", help="Problem ID")
 
     # suite commands
     setup_suite_subparser(subparsers, parents=[workspace_parent])
@@ -1261,6 +1267,14 @@ def _handle_problem_command(
             print_colored(result["message"], 91)
             return False
         print(json.dumps(result["recovery"], indent=2, ensure_ascii=False))
+        return True
+
+    if args.problem_action == "history":
+        result = service.list_problem_recovery_history(args.problem_id)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["history"], indent=2, ensure_ascii=False))
         return True
 
     print_colored(f"✗ Unknown problem action: {args.problem_action}", 91)

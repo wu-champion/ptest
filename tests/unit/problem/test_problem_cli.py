@@ -9,7 +9,7 @@ import requests
 
 from ptest import cli
 from ptest.app import WorkflowService
-from ptest.models import ProblemRecord
+from ptest.models import ProblemRecord, ProblemRecoveryRecord
 
 
 class _FakeResponse:
@@ -480,3 +480,137 @@ def test_cli_problem_list_filters_by_multiple_args(
         "environment_id": "env_prod",
         "can_replay": True,
     }
+
+
+def test_cli_problem_history_outputs_json(tmp_path: Path, monkeypatch, capsys) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_hist_001",
+            problem_type="api_response",
+            summary="history cli test",
+            object_refs=["svc"],
+        )
+    )
+    service.storage.save_problem_recovery_history(
+        ProblemRecoveryRecord(
+            action_id="recovery_cli_001",
+            problem_id="cli_hist_001",
+            problem_type="api_response",
+            action_type="replay",
+            mode="request_replay",
+            success=True,
+            status="completed",
+            created_at="2026-05-01T10:00:00",
+        )
+    )
+    service.storage.save_problem_recovery_history(
+        ProblemRecoveryRecord(
+            action_id="recovery_cli_002",
+            problem_id="cli_hist_001",
+            problem_type="api_response",
+            action_type="recover",
+            mode="plan_only",
+            success=True,
+            status="prepared",
+            created_at="2026-05-01T11:00:00",
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "history",
+            "cli_hist_001",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["problem_id"] == "cli_hist_001"
+    assert payload["count"] == 2
+    assert len(payload["actions"]) == 2
+    assert payload["latest_action"] == "recover:prepared"
+
+
+def test_cli_problem_history_existing_problem_without_any_history(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_hist_empty",
+            problem_type="api_response",
+            summary="empty history",
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "history",
+            "cli_hist_empty",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["problem_id"] == "cli_hist_empty"
+    assert payload["count"] == 0
+    assert payload["actions"] == []
+    assert payload["latest_action"] is None
+
+
+def test_cli_problem_history_not_found(tmp_path: Path, monkeypatch, capsys) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "history",
+            "nonexistent",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+
+    assert exit_code == 1

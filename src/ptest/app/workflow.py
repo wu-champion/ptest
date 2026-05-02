@@ -1641,6 +1641,33 @@ class WorkflowService:
             assets=payload,
         )
 
+    def list_problem_recovery_history(self, problem_id: str) -> dict[str, Any]:
+        record = self.storage.get_problem_record(problem_id)
+        if record is None:
+            return self._not_found_result("problem", problem_id)
+        history_records = self.storage.list_problem_recovery_history(problem_id)
+        actions = [r.to_dict() for r in history_records]
+        if not actions:
+            fallback = self.storage.get_problem_recovery(problem_id)
+            if fallback is not None:
+                actions = [fallback.to_dict()]
+        latest_action = actions[0]["status"] if actions else None
+        latest_action_type = actions[0].get("action_type") if actions else None
+        latest = f"{latest_action_type}:{latest_action}" if latest_action_type else None
+        payload = {
+            "problem_id": problem_id,
+            "count": len(actions),
+            "latest_action": latest,
+            "actions": actions,
+        }
+        return self._operation_result(
+            success=True,
+            status="ok",
+            message=f"Recovery history for problem '{problem_id}' retrieved",
+            data=payload,
+            history=payload,
+        )
+
     def _problem_record_payload(self, record: ProblemRecord) -> dict[str, Any]:
         payload = record.to_dict()
         metadata = payload.get("metadata", {})
@@ -8326,6 +8353,7 @@ class WorkflowService:
                 "latest_problem_status": record.status,
             },
         )
+        self.storage.save_problem_recovery_history(recovery_record)
         self.storage.save_problem_recovery(recovery_record)
 
         latest_recovery = {

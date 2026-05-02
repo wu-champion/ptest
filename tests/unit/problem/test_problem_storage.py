@@ -65,3 +65,50 @@ def test_workspace_storage_persists_problem_records_and_assets(tmp_path: Path) -
     assert loaded_recovery is not None
     assert loaded_recovery.action_type == "replay"
     assert loaded_recovery.mode == "request_replay"
+
+
+def test_workspace_storage_persists_problem_recovery_history(tmp_path: Path) -> None:
+    storage = WorkspaceStorage(tmp_path)
+    record = ProblemRecord(
+        problem_id="problem_history_001",
+        problem_type="api_response",
+        summary="history test",
+    )
+    storage.save_problem_record(record)
+
+    recovery_1 = ProblemRecoveryRecord(
+        action_id="recovery_hist_001",
+        problem_id="problem_history_001",
+        problem_type="api_response",
+        action_type="replay",
+        mode="request_replay",
+        success=True,
+        status="completed",
+        created_at="2026-05-01T10:00:00",
+    )
+    recovery_2 = ProblemRecoveryRecord(
+        action_id="recovery_hist_002",
+        problem_id="problem_history_001",
+        problem_type="api_response",
+        action_type="recover",
+        mode="plan_only",
+        success=True,
+        status="prepared",
+        created_at="2026-05-01T11:00:00",
+    )
+
+    storage.save_problem_recovery_history(recovery_1)
+    storage.save_problem_recovery_history(recovery_2)
+
+    history = storage.list_problem_recovery_history("problem_history_001")
+    assert len(history) == 2
+    assert history[0].action_id == "recovery_hist_002"
+    assert history[1].action_id == "recovery_hist_001"
+
+
+def test_workspace_storage_recovery_history_empty_when_no_history(
+    tmp_path: Path,
+) -> None:
+    storage = WorkspaceStorage(tmp_path)
+    history = storage.list_problem_recovery_history("nonexistent_problem")
+    assert history == []
