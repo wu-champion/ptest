@@ -61,6 +61,13 @@ try:
 except ImportError:
     _resource = None
 
+PROBLEM_ALLOWED_STATUSES: set[str] = {
+    "open",
+    "investigating",
+    "resolved",
+    "closed",
+}
+
 
 class _ReplayResponseView:
     def __init__(self, status_code: int, headers: dict[str, Any], body: Any) -> None:
@@ -1666,6 +1673,60 @@ class WorkflowService:
             message=f"Recovery history for problem '{problem_id}' retrieved",
             data=payload,
             history=payload,
+        )
+
+    def update_problem_record(
+        self,
+        problem_id: str,
+        *,
+        status: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        if status is None and notes is None:
+            return self._operation_result(
+                success=False,
+                status="invalid",
+                message="At least one of 'status' or 'notes' must be provided",
+                error="problem_update_empty",
+                error_code="problem_update_empty",
+            )
+        if status is not None and status not in PROBLEM_ALLOWED_STATUSES:
+            return self._operation_result(
+                success=False,
+                status="invalid",
+                message=(
+                    f"Invalid problem status '{status}'. "
+                    f"Allowed: {', '.join(sorted(PROBLEM_ALLOWED_STATUSES))}"
+                ),
+                error="problem_status_invalid",
+                error_code="problem_status_invalid",
+            )
+        record = self.storage.get_problem_record(problem_id)
+        if record is None:
+            return self._not_found_result("problem", problem_id)
+        now = datetime.now().isoformat()
+        if status is not None:
+            record.status = status
+            record.latest_action = f"status:{status}"
+        if notes is not None:
+            record.notes = notes
+            if status is None:
+                record.latest_action = "note:updated"
+        record.updated_at = now
+        self.storage.save_problem_record(record)
+        assets = self.storage.get_problem_assets(problem_id)
+        if assets is not None:
+            if status is not None:
+                assets.status = status
+            assets.updated_at = now
+            self.storage.save_problem_assets(assets)
+        payload = self._problem_record_payload(record)
+        return self._operation_result(
+            success=True,
+            status="ok",
+            message=f"Problem '{problem_id}' updated",
+            data=payload,
+            problem=payload,
         )
 
     def _problem_record_payload(self, record: ProblemRecord) -> dict[str, Any]:

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from . import __version__
-from .app import WorkflowService
+from .app import PROBLEM_ALLOWED_STATUSES, WorkflowService
 from .data.cli import setup_data_subparser, handle_data_command
 from .contract.cli import setup_contract_subparser, handle_contract_command
 from .suites.cli import setup_suite_subparser, handle_suite_command
@@ -22,6 +22,8 @@ from .utils import print_colored, get_colored_text
 if TYPE_CHECKING:
     from .cases.manager import CaseManager
     from .environment import EnvironmentManager
+
+PROBLEM_ACTIONS = "list/show/assets/replay/recover/history/update"
 
 
 @dataclass(frozen=True)
@@ -429,6 +431,20 @@ def setup_cli() -> argparse.ArgumentParser:
         parents=[workspace_parent],
     )
     problem_history_parser.add_argument("problem_id", help="Problem ID")
+    problem_update_parser = problem_subparsers.add_parser(
+        "update",
+        help="Update problem status and notes",
+        parents=[workspace_parent],
+    )
+    problem_update_parser.add_argument("problem_id", help="Problem ID")
+    problem_update_parser.add_argument(
+        "--status",
+        choices=sorted(PROBLEM_ALLOWED_STATUSES),
+        help="New problem status",
+    )
+    problem_update_parser.add_argument(
+        "--notes", help="Investigation notes (replaces existing notes)"
+    )
 
     # suite commands
     setup_suite_subparser(subparsers, parents=[workspace_parent])
@@ -1193,7 +1209,7 @@ def _handle_problem_command(
         return False
 
     if not hasattr(args, "problem_action") or not args.problem_action:
-        print_colored("请指定 problem 操作: list/show/assets/replay/recover", 93)
+        print_colored(f"请指定 problem 操作: {PROBLEM_ACTIONS}", 93)
         return False
 
     if args.problem_action == "list":
@@ -1277,7 +1293,23 @@ def _handle_problem_command(
         print(json.dumps(result["history"], indent=2, ensure_ascii=False))
         return True
 
-    print_colored(f"✗ Unknown problem action: {args.problem_action}", 91)
+    if args.problem_action == "update":
+        status = getattr(args, "status", None)
+        notes = getattr(args, "notes", None)
+        result = service.update_problem_record(
+            args.problem_id, status=status, notes=notes
+        )
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["problem"], indent=2, ensure_ascii=False))
+        return True
+
+    print_colored(
+        f"✗ Unknown problem action: {args.problem_action}. "
+        f"Available: {PROBLEM_ACTIONS}",
+        91,
+    )
     return False
 
 

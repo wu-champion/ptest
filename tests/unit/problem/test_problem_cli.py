@@ -614,3 +614,118 @@ def test_cli_problem_history_not_found(tmp_path: Path, monkeypatch, capsys) -> N
     exit_code = cli.main()
 
     assert exit_code == 1
+
+
+def test_cli_problem_update_status(tmp_path: Path, monkeypatch, capsys) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_upd_001",
+            problem_type="api_response",
+            summary="cli update test",
+            status="open",
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "update",
+            "cli_upd_001",
+            "--status",
+            "resolved",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["status"] == "resolved"
+    assert payload["latest_action"] == "status:resolved"
+
+
+def test_cli_problem_update_notes(tmp_path: Path, monkeypatch, capsys) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_upd_002",
+            problem_type="api_response",
+            summary="cli notes test",
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "update",
+            "cli_upd_002",
+            "--notes",
+            "verified on main",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["notes"] == "verified on main"
+    assert payload["latest_action"] == "note:updated"
+
+
+def test_cli_problem_update_empty_fails(tmp_path: Path, monkeypatch, capsys) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_upd_003",
+            problem_type="api_response",
+            summary="cli empty",
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "update",
+            "cli_upd_003",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+
+    assert exit_code == 1

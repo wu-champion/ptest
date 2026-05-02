@@ -445,6 +445,26 @@ class PTestAPI:
             error_code=result.get("error_code"),
         )
 
+    def update_problem_record(
+        self,
+        problem_id: str,
+        *,
+        status: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        result = self.workflow.update_problem_record(
+            problem_id, status=status, notes=notes
+        )
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("problem"),
+            problem=result.get("problem"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
     def destroy_environment(self) -> dict[str, Any]:
         return self.workflow.destroy_environment()
 
