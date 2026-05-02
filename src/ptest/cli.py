@@ -429,6 +429,20 @@ def setup_cli() -> argparse.ArgumentParser:
         parents=[workspace_parent],
     )
     problem_history_parser.add_argument("problem_id", help="Problem ID")
+    problem_update_parser = problem_subparsers.add_parser(
+        "update",
+        help="Update problem status and notes",
+        parents=[workspace_parent],
+    )
+    problem_update_parser.add_argument("problem_id", help="Problem ID")
+    problem_update_parser.add_argument(
+        "--status",
+        choices=["open", "investigating", "resolved", "closed"],
+        help="New problem status",
+    )
+    problem_update_parser.add_argument(
+        "--notes", help="Investigation notes (replaces existing notes)"
+    )
 
     # suite commands
     setup_suite_subparser(subparsers, parents=[workspace_parent])
@@ -1193,7 +1207,9 @@ def _handle_problem_command(
         return False
 
     if not hasattr(args, "problem_action") or not args.problem_action:
-        print_colored("请指定 problem 操作: list/show/assets/replay/recover", 93)
+        print_colored(
+            "请指定 problem 操作: list/show/assets/replay/recover/history/update", 93
+        )
         return False
 
     if args.problem_action == "list":
@@ -1277,7 +1293,23 @@ def _handle_problem_command(
         print(json.dumps(result["history"], indent=2, ensure_ascii=False))
         return True
 
-    print_colored(f"✗ Unknown problem action: {args.problem_action}", 91)
+    if args.problem_action == "update":
+        status = getattr(args, "status", None)
+        notes = getattr(args, "notes", None)
+        result = service.update_problem_record(
+            args.problem_id, status=status, notes=notes
+        )
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["problem"], indent=2, ensure_ascii=False))
+        return True
+
+    print_colored(
+        f"✗ Unknown problem action: {args.problem_action}. "
+        "Available: list, show, assets, replay, recover, history, update",
+        91,
+    )
     return False
 
 

@@ -1757,3 +1757,177 @@ def test_workflow_service_recovery_history_not_found(tmp_path: Path) -> None:
 
     history = service.list_problem_recovery_history("nonexistent")
     assert history["success"] is False
+
+
+def test_update_problem_record_status(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="upd_001",
+            problem_type="api_response",
+            summary="to update",
+            status="open",
+        )
+    )
+
+    result = service.update_problem_record("upd_001", status="investigating")
+    assert result["success"] is True
+    assert result["problem"]["status"] == "investigating"
+    assert result["problem"]["latest_action"] == "status:investigating"
+
+    record = service.storage.get_problem_record("upd_001")
+    assert record is not None
+    assert record.status == "investigating"
+    assert record.latest_action == "status:investigating"
+
+
+def test_update_problem_record_notes(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="upd_002",
+            problem_type="api_response",
+            summary="to note",
+        )
+    )
+
+    result = service.update_problem_record("upd_002", notes="replay still fails")
+    assert result["success"] is True
+    assert result["problem"]["notes"] == "replay still fails"
+    assert result["problem"]["latest_action"] == "note:updated"
+
+
+def test_update_problem_record_status_and_notes(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="upd_003",
+            problem_type="api_response",
+            summary="both",
+        )
+    )
+
+    result = service.update_problem_record(
+        "upd_003", status="resolved", notes="fixed upstream"
+    )
+    assert result["success"] is True
+    assert result["problem"]["status"] == "resolved"
+    assert result["problem"]["notes"] == "fixed upstream"
+    assert result["problem"]["latest_action"] == "status:resolved"
+
+
+def test_update_problem_record_invalid_status(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="upd_004",
+            problem_type="api_response",
+            summary="bad status",
+            status="open",
+        )
+    )
+
+    result = service.update_problem_record("upd_004", status="bogus")
+    assert result["success"] is False
+    assert result["error_code"] == "problem_status_invalid"
+
+    record = service.storage.get_problem_record("upd_004")
+    assert record is not None
+    assert record.status == "open"
+
+
+def test_update_problem_record_empty_update(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="upd_005",
+            problem_type="api_response",
+            summary="empty",
+        )
+    )
+
+    result = service.update_problem_record("upd_005")
+    assert result["success"] is False
+    assert result["error_code"] == "problem_update_empty"
+
+
+def test_update_problem_record_not_found(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+
+    result = service.update_problem_record("nonexistent", status="resolved")
+    assert result["success"] is False
+    assert result["error_code"] == "problem_not_found"
+
+
+def test_update_problem_record_syncs_assets_status(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="upd_006",
+            problem_type="api_response",
+            summary="with assets",
+            status="open",
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="upd_006",
+            problem_type="api_response",
+            summary="with assets",
+            status="open",
+        )
+    )
+
+    result = service.update_problem_record("upd_006", status="closed")
+    assert result["success"] is True
+
+    assets = service.storage.get_problem_assets("upd_006")
+    assert assets is not None
+    assert assets.status == "closed"
+
+
+def test_update_problem_record_notes_empty_string_clears(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="upd_007",
+            problem_type="api_response",
+            summary="clear notes",
+            notes="old note",
+        )
+    )
+
+    result = service.update_problem_record("upd_007", notes="")
+    assert result["success"] is True
+    assert result["problem"]["notes"] == ""
+
+    record = service.storage.get_problem_record("upd_007")
+    assert record is not None
+    assert record.notes == ""
+
+
+def test_update_problem_record_then_list_by_status(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="upd_008",
+            problem_type="api_response",
+            summary="listable",
+            status="open",
+            object_refs=["svc"],
+        )
+    )
+
+    service.update_problem_record("upd_008", status="resolved")
+    results = service.list_problem_records(status="resolved")
+    assert len(results) == 1
+    assert results[0]["problem_id"] == "upd_008"

@@ -387,3 +387,71 @@ def test_api_list_problem_recovery_history(tmp_path: Path, monkeypatch) -> None:
     assert result["count"] >= 1
     assert result["history"]["count"] >= 1
     assert len(result["actions"]) == result["count"]
+
+
+def test_api_update_problem_record_status(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="api_upd_001",
+            problem_type="api_response",
+            summary="api update test",
+            status="open",
+            object_refs=["svc"],
+        )
+    )
+
+    result = api.update_problem_record("api_upd_001", status="investigating")
+    assert result["success"] is True
+    assert result["data"]["status"] == "investigating"
+    assert result["problem"]["latest_action"] == "status:investigating"
+
+
+def test_api_update_problem_record_notes(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="api_upd_002",
+            problem_type="api_response",
+            summary="notes test",
+        )
+    )
+
+    result = api.update_problem_record("api_upd_002", notes="still broken")
+    assert result["success"] is True
+    assert result["data"]["notes"] == "still broken"
+    assert result["problem"]["latest_action"] == "note:updated"
+
+
+def test_api_update_problem_record_invalid_status(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="api_upd_003",
+            problem_type="api_response",
+            summary="invalid",
+        )
+    )
+
+    result = api.update_problem_record("api_upd_003", status="bogus")
+    assert result["success"] is False
+    assert result["error_code"] == "problem_status_invalid"
+
+
+def test_api_update_problem_record_empty_update(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="api_upd_004",
+            problem_type="api_response",
+            summary="empty",
+        )
+    )
+
+    result = api.update_problem_record("api_upd_004")
+    assert result["success"] is False
+    assert result["error_code"] == "problem_update_empty"
