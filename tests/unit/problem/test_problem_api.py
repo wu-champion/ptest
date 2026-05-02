@@ -455,3 +455,82 @@ def test_api_update_problem_record_empty_update(tmp_path: Path) -> None:
     result = api.update_problem_record("api_upd_004")
     assert result["success"] is False
     assert result["error_code"] == "problem_update_empty"
+
+
+def test_api_get_problem_record_has_verification_summary(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="api_vs_001",
+            problem_type="api_response",
+            summary="api vs test",
+            status="open",
+        )
+    )
+
+    result = api.get_problem_record("api_vs_001")
+    assert result["success"] is True
+    assert "verification_summary" in result["data"]
+    assert result["data"]["verification_summary"]["history_count"] == 0
+    assert result["data"]["verification_summary"]["status"] == "open"
+
+
+def test_api_get_problem_assets_has_verification_summary(tmp_path: Path) -> None:
+    from ptest.models import ProblemAssetRecord
+
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="api_vs_002",
+            problem_type="api_response",
+            summary="api vs assets",
+        )
+    )
+    api.workflow.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="api_vs_002",
+            problem_type="api_response",
+            summary="api vs assets",
+        )
+    )
+
+    result = api.get_problem_assets("api_vs_002")
+    assert result["success"] is True
+    assert "verification_summary" in result["data"]
+    assert result["data"]["verification_summary"]["history_count"] == 0
+
+
+def test_api_verification_summary_fallback_from_recovery_json(
+    tmp_path: Path,
+) -> None:
+    from ptest.models import ProblemRecoveryRecord
+
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="api_vs_003",
+            problem_type="api_response",
+            summary="fallback",
+        )
+    )
+    api.workflow.storage.save_problem_recovery(
+        ProblemRecoveryRecord(
+            action_id="recovery_api_vs_003",
+            problem_id="api_vs_003",
+            problem_type="api_response",
+            action_type="replay",
+            mode="request_replay",
+            success=True,
+            status="completed",
+            created_at="2026-05-02T10:00:00",
+        )
+    )
+
+    result = api.get_problem_record("api_vs_003")
+    assert result["success"] is True
+    vs = result["data"]["verification_summary"]
+    assert vs["history_count"] == 1
+    assert vs["latest_replay"]["available"] is True

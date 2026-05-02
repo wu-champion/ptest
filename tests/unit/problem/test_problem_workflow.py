@@ -1943,3 +1943,312 @@ def test_update_problem_record_then_list_by_status(tmp_path: Path) -> None:
     results = service.list_problem_records(status="resolved")
     assert len(results) == 1
     assert results[0]["problem_id"] == "upd_008"
+
+
+def test_verification_summary_no_history(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vs_001",
+            problem_type="api_response",
+            summary="no history",
+        )
+    )
+
+    result = service.get_problem_record("vs_001")
+    assert result["success"] is True
+    vs = result["problem"]["verification_summary"]
+    assert vs["status"] == "open"
+    assert vs["history_count"] == 0
+    assert vs["has_notes"] is False
+    assert vs["last_verified_at"] is None
+    assert vs["last_action"] is None
+    assert vs["latest_replay"]["available"] is False
+    assert vs["latest_recover"]["available"] is False
+    assert vs["suggested_next_action"]["action"] == "run_replay_or_recover"
+
+
+def test_verification_summary_after_multiple_replays(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "vs_case",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/vs"},
+            "expected_status": 200,
+        },
+    )
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(404, {"message": "missing"}),
+    )
+    service.run_case("vs_case")
+    problems = service.list_problem_records(case_id="vs_case")
+    problem_id = problems[0]["problem_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(200, {"message": "ok"}),
+    )
+    service.replay_problem(problem_id)
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(200, {"message": "ok again"}),
+    )
+    service.replay_problem(problem_id)
+
+    result = service.get_problem_record(problem_id)
+    vs = result["problem"]["verification_summary"]
+    assert vs["history_count"] == 2
+    assert vs["latest_replay"]["available"] is True
+    assert vs["latest_replay"]["reproduced"] is False
+    assert vs["last_action"] is not None
+    assert vs["last_action"]["action_type"] == "replay"
+    assert vs["last_verified_at"] is not None
+    assert vs["suggested_next_action"]["action"] == "update_status"
+
+
+def test_verification_summary_resolved_gives_no_action(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vs_003",
+            problem_type="api_response",
+            summary="resolved",
+            status="resolved",
+        )
+    )
+
+    result = service.get_problem_record("vs_003")
+    vs = result["problem"]["verification_summary"]
+    assert vs["status"] == "resolved"
+    assert vs["suggested_next_action"]["action"] == "no_action"
+
+
+def test_verification_summary_closed_gives_no_action(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vs_004",
+            problem_type="api_response",
+            summary="closed",
+            status="closed",
+        )
+    )
+
+    result = service.get_problem_record("vs_004")
+    vs = result["problem"]["verification_summary"]
+    assert vs["suggested_next_action"]["action"] == "no_action"
+
+
+def test_verification_summary_fallback_from_recovery_json(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vs_005",
+            problem_type="api_response",
+            summary="fallback",
+        )
+    )
+    service.storage.save_problem_recovery(
+        ProblemRecoveryRecord(
+            action_id="recovery_vs_005",
+            problem_id="vs_005",
+            problem_type="api_response",
+            action_type="replay",
+            mode="request_replay",
+            success=True,
+            status="completed",
+            created_at="2026-05-02T10:00:00",
+        )
+    )
+
+    result = service.get_problem_record("vs_005")
+    vs = result["problem"]["verification_summary"]
+    assert vs["history_count"] == 1
+    assert vs["last_action"]["action_id"] == "recovery_vs_005"
+    assert vs["latest_replay"]["available"] is True
+    assert vs["latest_replay"]["reproduced"] is None
+    assert vs["suggested_next_action"]["action"] == "inspect_history"
+
+
+def test_verification_summary_recover_without_replay(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vs_006",
+            problem_type="data_state",
+            summary="recover only",
+        )
+    )
+    service.storage.save_problem_recovery_history(
+        ProblemRecoveryRecord(
+            action_id="recovery_vs_006",
+            problem_id="vs_006",
+            problem_type="data_state",
+            action_type="recover",
+            mode="plan_only",
+            success=True,
+            status="prepared",
+            created_at="2026-05-02T11:00:00",
+        )
+    )
+
+    result = service.get_problem_record("vs_006")
+    vs = result["problem"]["verification_summary"]
+    assert vs["history_count"] == 1
+    assert vs["latest_recover"]["available"] is True
+    assert vs["latest_recover"]["status"] == "prepared"
+    assert vs["latest_replay"]["available"] is False
+    assert vs["suggested_next_action"]["action"] == "inspect_recovery_plan"
+
+
+def test_verification_summary_in_assets(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vs_007",
+            problem_type="api_response",
+            summary="assets check",
+            status="open",
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="vs_007",
+            problem_type="api_response",
+            summary="assets check",
+            status="open",
+        )
+    )
+
+    result = service.get_problem_assets("vs_007")
+    assert result["success"] is True
+    vs = result["assets"]["verification_summary"]
+    assert vs["status"] == "open"
+    assert vs["history_count"] == 0
+    assert vs["suggested_next_action"]["action"] == "run_replay_or_recover"
+
+
+def test_verification_summary_failed_replay_suggests_inspect_history(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vs_008",
+            problem_type="api_response",
+            summary="failed replay",
+            status="open",
+        )
+    )
+    service.storage.save_problem_recovery_history(
+        ProblemRecoveryRecord(
+            action_id="recovery_vs_008",
+            problem_id="vs_008",
+            problem_type="api_response",
+            action_type="replay",
+            mode="request_replay",
+            success=False,
+            status="failed",
+            created_at="2026-05-02T12:00:00",
+        )
+    )
+
+    result = service.get_problem_record("vs_008")
+    vs = result["problem"]["verification_summary"]
+    assert vs["latest_replay"]["available"] is True
+    assert vs["latest_replay"]["reproduced"] is None
+    assert vs["suggested_next_action"]["action"] == "inspect_history"
+    assert "failed" in vs["suggested_next_action"]["reason"]
+
+
+def test_verification_summary_can_replay_from_assets_metadata(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vs_010",
+            problem_type="api_response",
+            summary="can_replay from assets",
+            status="open",
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="vs_010",
+            problem_type="api_response",
+            summary="can_replay from assets",
+            status="open",
+            metadata={"capabilities": {"can_replay": True, "can_recover": True}},
+        )
+    )
+    service.storage.save_problem_recovery_history(
+        ProblemRecoveryRecord(
+            action_id="recovery_vs_010",
+            problem_id="vs_010",
+            problem_type="api_response",
+            action_type="recover",
+            mode="plan_only",
+            success=True,
+            status="prepared",
+            created_at="2026-05-02T14:00:00",
+        )
+    )
+
+    result = service.get_problem_record("vs_010")
+    vs = result["problem"]["verification_summary"]
+    assert vs["latest_recover"]["available"] is True
+    assert vs["latest_replay"]["available"] is False
+    assert vs["suggested_next_action"]["action"] == "run_replay"
+
+
+def test_verification_summary_recover_with_can_replay_suggests_run_replay(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vs_009",
+            problem_type="api_response",
+            summary="recover with can_replay",
+            status="open",
+            metadata={"capabilities": {"can_replay": True, "can_recover": True}},
+        )
+    )
+    service.storage.save_problem_recovery_history(
+        ProblemRecoveryRecord(
+            action_id="recovery_vs_009",
+            problem_id="vs_009",
+            problem_type="api_response",
+            action_type="recover",
+            mode="request_replay",
+            success=True,
+            status="prepared",
+            created_at="2026-05-02T13:00:00",
+        )
+    )
+
+    result = service.get_problem_record("vs_009")
+    vs = result["problem"]["verification_summary"]
+    assert vs["latest_recover"]["available"] is True
+    assert vs["latest_replay"]["available"] is False
+    assert vs["suggested_next_action"]["action"] == "run_replay"

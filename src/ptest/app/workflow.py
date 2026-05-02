@@ -1640,6 +1640,11 @@ class WorkflowService:
         if assets is None:
             return self._not_found_result("problem_assets", problem_id)
         payload = self._problem_assets_payload(assets)
+        record = self.storage.get_problem_record(problem_id)
+        if record is not None:
+            payload["verification_summary"] = self._build_problem_verification_summary(
+                record, assets
+            )
         return self._operation_result(
             success=True,
             status="ok",
@@ -1791,6 +1796,148 @@ class WorkflowService:
         )
         return payload
 
+    def _problem_recovery_history_actions(
+        self, problem_id: str
+    ) -> list[dict[str, Any]]:
+        history_records = self.storage.list_problem_recovery_history(problem_id)
+        actions = [r.to_dict() for r in history_records]
+        if not actions:
+            fallback = self.storage.get_problem_recovery(problem_id)
+            if fallback is not None:
+                actions = [fallback.to_dict()]
+        return actions
+
+    @staticmethod
+    def _latest_history_action(
+        actions: list[dict[str, Any]], action_type: str | None = None
+    ) -> dict[str, Any] | None:
+        """Return the first matching action.
+
+        ``actions`` must be sorted by ``created_at`` descending, which
+        :meth:`_problem_recovery_history_actions` guarantees via
+        ``WorkspaceStorage.list_problem_recovery_history``.
+        """
+        for action in actions:
+            if action_type is None or action.get("action_type") == action_type:
+                return action
+        return None
+
+    def _build_problem_verification_summary(
+        self,
+        record: ProblemRecord,
+        assets: ProblemAssetRecord | None = None,
+    ) -> dict[str, Any]:
+        actions = self._problem_recovery_history_actions(record.problem_id)
+        last_action = self._latest_history_action(actions)
+        latest_replay = self._latest_history_action(actions, "replay")
+        latest_recover = self._latest_history_action(actions, "recover")
+        replay_section: dict[str, Any] = {"available": latest_replay is not None}
+        if latest_replay is not None:
+            replay_action_status = latest_replay.get("status", "unknown")
+            replay_succeeded = replay_action_status == "completed"
+            replay_metadata = latest_replay.get("metadata", {})
+            reproduced: bool | None = None
+            if isinstance(replay_metadata, dict):
+                result = replay_metadata.get("result", {})
+                if isinstance(result, dict):
+                    comparison = result.get("comparison", {})
+                    if isinstance(comparison, dict) and comparison:
+                        expectation = comparison.get("expectation", {})
+                        if isinstance(expectation, dict) and expectation:
+                            reproduced = bool(expectation.get("reproduced", False))
+                        replay_section["assessment"] = comparison.get(
+                            "assertion_outcome"
+                        )
+            if not replay_succeeded:
+                reproduced = None
+            replay_section["reproduced"] = reproduced
+            replay_section["action_status"] = replay_action_status
+        recover_section: dict[str, Any] = {"available": latest_recover is not None}
+        if latest_recover is not None:
+            recover_section["status"] = latest_recover.get("status")
+            recover_section["mode"] = latest_recover.get("mode")
+        can_replay = self._resolve_can_replay(record, assets)
+        suggested = self._suggest_next_action(
+            record.status, actions, replay_section, can_replay
+        )
+        last_verified_at = last_action.get("created_at") if last_action else None
+        return {
+            "status": record.status,
+            "latest_action": record.latest_action,
+            "has_notes": bool(record.notes),
+            "history_count": len(actions),
+            "last_verified_at": last_verified_at,
+            "last_action": last_action,
+            "latest_replay": replay_section,
+            "latest_recover": recover_section,
+            "suggested_next_action": suggested,
+        }
+
+    @staticmethod
+    def _resolve_can_replay(
+        record: ProblemRecord, assets: ProblemAssetRecord | None
+    ) -> bool:
+        for source in (record, assets):
+            if source is None:
+                continue
+            metadata = source.metadata
+            if isinstance(metadata, dict):
+                capabilities = metadata.get("capabilities", {})
+                if (
+                    isinstance(capabilities, dict)
+                    and capabilities.get("can_replay") is True
+                ):
+                    return True
+        return False
+
+    @staticmethod
+    def _suggest_next_action(
+        status: str,
+        actions: list[dict[str, Any]],
+        replay_section: dict[str, Any],
+        can_replay: bool = False,
+    ) -> dict[str, str]:
+        if status in ("resolved", "closed"):
+            return {"action": "no_action", "reason": f"problem is already {status}"}
+        if not actions:
+            return {
+                "action": "run_replay_or_recover",
+                "reason": "no verification history yet",
+            }
+        if replay_section.get("available"):
+            reproduced = replay_section.get("reproduced")
+            if reproduced is None:
+                replay_status = replay_section.get("action_status", "unknown")
+                return {
+                    "action": "inspect_history",
+                    "reason": f"latest replay {replay_status} without producing a comparison",
+                }
+            if reproduced:
+                return {
+                    "action": "continue_investigation",
+                    "reason": "latest replay still reproduces the problem",
+                }
+            return {
+                "action": "update_status",
+                "reason": "latest replay no longer reproduces the preserved failure",
+            }
+        latest_recover = None
+        for action in actions:
+            if action.get("action_type") == "recover":
+                latest_recover = action
+                break
+        if latest_recover is not None:
+            if can_replay:
+                return {
+                    "action": "run_replay",
+                    "reason": "recovery prepared but not yet replayed to verify",
+                }
+            return {
+                "action": "inspect_recovery_plan",
+                "reason": "recovery prepared but problem type does not support replay",
+            }
+        return {"action": "inspect_history", "reason": "unable to determine next step"}
+
     def get_problem_record(self, problem_id: str) -> dict[str, Any]:
         record = self.storage.get_problem_record(problem_id)
         if record is None:
@@ -1821,6 +1968,9 @@ class WorkflowService:
                 else None,
                 comparison=self._extract_problem_latest_comparison(payload),
             )
+        payload["verification_summary"] = self._build_problem_verification_summary(
+            record, assets
+        )
         return self._operation_result(
             success=True,
             status="ok",
