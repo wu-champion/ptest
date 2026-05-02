@@ -616,6 +616,84 @@ def test_cli_problem_history_not_found(tmp_path: Path, monkeypatch, capsys) -> N
     assert exit_code == 1
 
 
+def test_cli_problem_show_has_verification_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_vs_001",
+            problem_type="api_response",
+            summary="cli vs test",
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ptest", "problem", "show", "cli_vs_001", "--path", str(workspace)],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert "verification_summary" in payload
+    assert payload["verification_summary"]["history_count"] == 0
+    assert payload["verification_summary"]["suggested_next_action"]["action"] == (
+        "run_replay_or_recover"
+    )
+
+
+def test_cli_problem_assets_has_verification_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from ptest.models import ProblemAssetRecord
+
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_vs_002",
+            problem_type="api_response",
+            summary="cli assets vs",
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="cli_vs_002",
+            problem_type="api_response",
+            summary="cli assets vs",
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ptest", "problem", "assets", "cli_vs_002", "--path", str(workspace)],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert "verification_summary" in payload
+    assert payload["verification_summary"]["history_count"] == 0
+
+
 def test_cli_problem_update_status(tmp_path: Path, monkeypatch, capsys) -> None:
     workspace = tmp_path / "workspace"
     other_dir = tmp_path / "other"
