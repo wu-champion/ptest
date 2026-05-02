@@ -1,3 +1,29 @@
+## [1.10.0] - 2026-05-03
+
+### Added - 新增功能
+
+- 新增 runtime backend 能力摘要，关联 problem 资产并保留非启动动作的预检摘要
+- 新增对象级 artifact collector 最小闭环，支持目录扫描成本控制
+- 新增运行对象诊断摘要，增强运行态问题的可观测性
+- 增强 `problem list` 筛选能力，支持按对象名、环境、状态、保全状态、可重放/可恢复条件过滤
+- 新增 `problem history` 恢复历史追踪与查询，支持多次重放/恢复记录和 fallback 读取
+- 新增 `problem update` 状态与调查备注更新能力，支持状态流转和备注清空
+- 新增 `problem show/assets` 验证摘要与下一步建议，从恢复历史自动派生 reproduced 状态和推荐动作
+
+### Changed - 改进
+
+- 收紧 `can_replay`/`can_recover` 类型为 `Literal[True] | None`，消除歧义
+- 统一 `PROBLEM_ALLOWED_STATUSES` 和 `PROBLEM_ACTIONS` 为模块级常量，消除硬编码
+- 验证摘要中 `reproduced` 支持三态（`True`/`False`/`None`），区分"未重放"和"重放未复现"
+- 空 dict 比较安全处理，避免 `{}` truthy 导致误判
+- `_suggest_next_action` 规则引擎根据状态和历史动态派生推荐动作
+
+### Fixed - 修复
+
+- 清理测试 warning 基线：消除 `PytestCollectionWarning`、`tarfile` DeprecationWarning、`RequestsDependencyWarning`
+- 将 `chardet<6` 约束移至运行时依赖，确保发布后用户环境也不触发 warning
+- 修复 `tarfile.extractall` 添加 `filter="data"` 安全参数
+
 ## [1.9.0] - 2026-04-29
 
 ### Added - 新增功能
