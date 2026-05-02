@@ -1885,12 +1885,24 @@ def test_update_problem_record_syncs_assets_status(tmp_path: Path) -> None:
         )
     )
 
+    original_record = service.storage.get_problem_record("upd_006")
+    original_assets = service.storage.get_problem_assets("upd_006")
+    assert original_record is not None
+    assert original_assets is not None
+    original_record_updated = original_record.updated_at
+    original_assets_updated = original_assets.updated_at
+
     result = service.update_problem_record("upd_006", status="closed")
     assert result["success"] is True
 
+    record = service.storage.get_problem_record("upd_006")
     assets = service.storage.get_problem_assets("upd_006")
+    assert record is not None
     assert assets is not None
     assert assets.status == "closed"
+    assert record.updated_at != original_record_updated
+    assert assets.updated_at != original_assets_updated
+    assert record.updated_at == assets.updated_at
 
 
 def test_update_problem_record_notes_empty_string_clears(tmp_path: Path) -> None:
