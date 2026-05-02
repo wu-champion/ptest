@@ -402,7 +402,7 @@ class WorkspaceStorage:
         if not history_dir.is_dir():
             return []
         records = []
-        for path in sorted(history_dir.glob("*.json")):
+        for path in history_dir.glob("*.json"):
             data = self._read_json(path)
             if data:
                 records.append(ProblemRecoveryRecord.from_dict(data))

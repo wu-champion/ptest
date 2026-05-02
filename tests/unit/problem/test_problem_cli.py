@@ -547,6 +547,48 @@ def test_cli_problem_history_outputs_json(tmp_path: Path, monkeypatch, capsys) -
     assert payload["latest_action"] == "recover:prepared"
 
 
+def test_cli_problem_history_existing_problem_without_any_history(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_hist_empty",
+            problem_type="api_response",
+            summary="empty history",
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "history",
+            "cli_hist_empty",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["problem_id"] == "cli_hist_empty"
+    assert payload["count"] == 0
+    assert payload["actions"] == []
+    assert payload["latest_action"] is None
+
+
 def test_cli_problem_history_not_found(tmp_path: Path, monkeypatch, capsys) -> None:
     workspace = tmp_path / "workspace"
     other_dir = tmp_path / "other"

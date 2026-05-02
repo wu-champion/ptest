@@ -1730,6 +1730,26 @@ def test_workflow_service_recovery_history_fallback_from_recovery_json(
     assert history["history"]["actions"][0]["action_id"] == "recovery_fallback_001"
 
 
+def test_workflow_service_recovery_history_existing_problem_without_any_history(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="no_history_problem",
+            problem_type="api_response",
+            summary="no history yet",
+        )
+    )
+
+    history = service.list_problem_recovery_history("no_history_problem")
+    assert history["success"] is True
+    assert history["history"]["count"] == 0
+    assert history["history"]["actions"] == []
+    assert history["history"]["latest_action"] is None
+
+
 def test_workflow_service_recovery_history_not_found(tmp_path: Path) -> None:
     service = WorkflowService(tmp_path)
     service.init_environment()
