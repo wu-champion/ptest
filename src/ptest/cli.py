@@ -8,7 +8,7 @@ import json
 import os
 import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from . import __version__
 from .app import WorkflowService
@@ -1191,8 +1191,12 @@ def _handle_problem_command(
         return False
 
     if args.problem_action == "list":
-        can_replay = True if getattr(args, "can_replay", False) else None
-        can_recover = True if getattr(args, "can_recover", False) else None
+        can_replay: Literal[True] | None = (
+            True if getattr(args, "can_replay", False) else None
+        )
+        can_recover: Literal[True] | None = (
+            True if getattr(args, "can_recover", False) else None
+        )
         records = service.list_problem_records(
             problem_type=getattr(args, "problem_type", None),
             case_id=getattr(args, "case_id", None),
