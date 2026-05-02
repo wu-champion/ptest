@@ -17,6 +17,7 @@ from ptest.models import (
     OBJECT_STATUS_START_FAILED_PRESERVED,
     ProblemAssetRecord,
     ProblemRecord,
+    ProblemRecoveryRecord,
 )
 from ptest.objects.db_server import DatabaseServerComponent
 
@@ -1595,3 +1596,143 @@ def test_list_problem_records_ordered_by_created_at_desc(tmp_path: Path) -> None
     assert results[0]["problem_id"] == "problem_third"
     assert results[1]["problem_id"] == "problem_second"
     assert results[2]["problem_id"] == "problem_first"
+
+
+def test_workflow_service_recovery_history_after_multiple_replays(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "history_case",
+        {
+            "type": "api",
+            "request": {
+                "method": "GET",
+                "url": "https://example.test/api/history",
+            },
+            "expected_status": 200,
+        },
+    )
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(404, {"message": "missing"}),
+    )
+    result = service.run_case("history_case")
+    assert result["success"] is False
+
+    problems = service.list_problem_records(case_id="history_case")
+    problem_id = problems[0]["problem_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(200, {"message": "ok"}),
+    )
+    service.replay_problem(problem_id)
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(200, {"message": "ok again"}),
+    )
+    service.replay_problem(problem_id)
+
+    history = service.list_problem_recovery_history(problem_id)
+    assert history["success"] is True
+    assert history["history"]["count"] == 2
+    assert len(history["history"]["actions"]) == 2
+    assert all(a["action_type"] == "replay" for a in history["history"]["actions"])
+    assert history["history"]["latest_action"] == "replay:completed"
+
+
+def test_workflow_service_recovery_history_after_replay_and_recover(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "mixed_case",
+        {
+            "type": "api",
+            "request": {
+                "method": "GET",
+                "url": "https://example.test/api/mixed",
+            },
+            "expected_status": 200,
+        },
+    )
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(404, {"message": "missing"}),
+    )
+    result = service.run_case("mixed_case")
+    assert result["success"] is False
+
+    problems = service.list_problem_records(case_id="mixed_case")
+    problem_id = problems[0]["problem_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(200, {"message": "ok"}),
+    )
+    service.replay_problem(problem_id)
+    service.recover_problem(problem_id)
+
+    history = service.list_problem_recovery_history(problem_id)
+    assert history["success"] is True
+    assert history["history"]["count"] == 2
+    action_types = [a["action_type"] for a in history["history"]["actions"]]
+    assert "replay" in action_types
+    assert "recover" in action_types
+
+    latest = service.storage.get_problem_recovery(problem_id)
+    assert latest is not None
+    assert latest.action_type == "recover"
+
+    detail = service.get_problem_record(problem_id)
+    assert detail["problem"]["metadata"]["latest_recovery"]["action_type"] == "recover"
+
+
+def test_workflow_service_recovery_history_fallback_from_recovery_json(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="fallback_problem",
+            problem_type="api_response",
+            summary="fallback test",
+        )
+    )
+    service.storage.save_problem_recovery(
+        ProblemRecoveryRecord(
+            action_id="recovery_fallback_001",
+            problem_id="fallback_problem",
+            problem_type="api_response",
+            action_type="replay",
+            mode="request_replay",
+            success=True,
+            status="completed",
+            created_at="2026-05-01T10:00:00",
+        )
+    )
+
+    history = service.list_problem_recovery_history("fallback_problem")
+    assert history["success"] is True
+    assert history["history"]["count"] == 1
+    assert history["history"]["actions"][0]["action_id"] == "recovery_fallback_001"
+
+
+def test_workflow_service_recovery_history_not_found(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+
+    history = service.list_problem_recovery_history("nonexistent")
+    assert history["success"] is False

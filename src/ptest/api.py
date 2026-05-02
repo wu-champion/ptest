@@ -431,6 +431,20 @@ class PTestAPI:
             error_code=result.get("error_code"),
         )
 
+    def list_problem_recovery_history(self, problem_id: str) -> dict[str, Any]:
+        result = self.workflow.list_problem_recovery_history(problem_id)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("history"),
+            history=result.get("history"),
+            count=result.get("history", {}).get("count", 0),
+            actions=result.get("history", {}).get("actions", []),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+        )
+
     def destroy_environment(self) -> dict[str, Any]:
         return self.workflow.destroy_environment()
 

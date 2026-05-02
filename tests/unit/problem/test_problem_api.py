@@ -350,3 +350,40 @@ def test_api_list_problem_records_count_matches_problems_length(tmp_path: Path) 
 
     result = api.list_problem_records(object_name="svc")
     assert result["count"] == len(result["problems"])
+
+
+def test_api_list_problem_recovery_history(tmp_path: Path, monkeypatch) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    created = api.create_test_case(
+        "api",
+        "history_test",
+        content={
+            "request": {"method": "GET", "url": "https://example.test/api/history"},
+            "expected_status": 200,
+        },
+    )
+    case_id = created["data"]["case_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(404, {"message": "missing"}),
+    )
+    api.run_test_case(case_id)
+
+    problems = api.list_problem_records(case_id=case_id)
+    problem_id = problems["data"][0]["problem_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(200, {"message": "ok"}),
+    )
+    api.replay_problem(problem_id)
+
+    result = api.list_problem_recovery_history(problem_id)
+    assert result["success"] is True
+    assert result["count"] >= 1
+    assert result["history"]["count"] >= 1
+    assert len(result["actions"]) == result["count"]

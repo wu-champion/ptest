@@ -382,6 +382,33 @@ class WorkspaceStorage:
             return None
         return ProblemRecoveryRecord.from_dict(data)
 
+    def save_problem_recovery_history(
+        self, record: ProblemRecoveryRecord
+    ) -> ProblemRecoveryRecord:
+        self.ensure_layout()
+        self._write_json(
+            self.problems_dir
+            / record.problem_id
+            / "recovery_history"
+            / f"{record.action_id}.json",
+            record.to_dict(),
+        )
+        return record
+
+    def list_problem_recovery_history(
+        self, problem_id: str
+    ) -> list[ProblemRecoveryRecord]:
+        history_dir = self.problems_dir / problem_id / "recovery_history"
+        if not history_dir.is_dir():
+            return []
+        records = []
+        for path in sorted(history_dir.glob("*.json")):
+            data = self._read_json(path)
+            if data:
+                records.append(ProblemRecoveryRecord.from_dict(data))
+        records.sort(key=lambda r: r.created_at, reverse=True)
+        return records
+
     def list_problem_ids_for_execution(self, execution_id: str) -> list[str]:
         data = self._read_json(self.execution_problem_index_file) or {}
         mapping = data.get("execution_to_problems", {})
