@@ -1728,6 +1728,7 @@ def test_workflow_service_recovery_history_fallback_from_recovery_json(
     assert history["success"] is True
     assert history["history"]["count"] == 1
     assert history["history"]["actions"][0]["action_id"] == "recovery_fallback_001"
+    assert history["history"]["latest_action"] == "replay:completed"
 
 
 def test_workflow_service_recovery_history_existing_problem_without_any_history(
