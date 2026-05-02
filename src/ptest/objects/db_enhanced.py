@@ -330,7 +330,7 @@ class DatabaseServerObject(BaseManagedObject):
             )
         if tarfile.is_tarfile(staged_package):
             with tarfile.open(staged_package) as archive:
-                archive.extractall(install_dir)
+                archive.extractall(install_dir, filter="data")
             extracted_roots = sorted(
                 path
                 for path in install_dir.iterdir()
@@ -347,7 +347,7 @@ class DatabaseServerObject(BaseManagedObject):
         bundle_dir = install_dir / "_deb_bundle"
         bundle_dir.mkdir(parents=True, exist_ok=True)
         with tarfile.open(staged_package) as archive:
-            archive.extractall(bundle_dir)
+            archive.extractall(bundle_dir, filter="data")
 
         rootfs_dir = install_dir / "mysql-rootfs"
         rootfs_dir.mkdir(parents=True, exist_ok=True)
