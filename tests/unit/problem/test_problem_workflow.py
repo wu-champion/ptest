@@ -1397,3 +1397,201 @@ def test_workflow_service_runtime_recovery_exposes_side_effect_hints(
     assert recovery["recovery"]["environment_recovery"]["recommended_sequence"][0] == (
         "inspect_likely_trigger_case_effects"
     )
+
+
+def _create_filter_test_records(service: WorkflowService) -> None:
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="filter_api_001",
+            problem_type="api_response",
+            summary="api problem for alpha",
+            status="open",
+            preservation_status="success",
+            environment_id="env_prod",
+            object_refs=["alpha_service"],
+            metadata={"capabilities": {"can_replay": True, "can_recover": True}},
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="filter_data_001",
+            problem_type="data_state",
+            summary="data problem for beta",
+            status="resolved",
+            preservation_status="partial",
+            environment_id="env_staging",
+            object_refs=["beta_service", "gamma_db"],
+            metadata={"capabilities": {"can_replay": False, "can_recover": True}},
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="filter_runtime_001",
+            problem_type="service_runtime",
+            summary="runtime problem for gamma",
+            status="open",
+            preservation_status="failed",
+            environment_id="env_prod",
+            object_refs=["gamma_db"],
+            metadata={"capabilities": {"can_replay": True, "can_recover": False}},
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="filter_no_caps_001",
+            problem_type="crash_dump",
+            summary="crash problem without capabilities",
+            status="open",
+            preservation_status="success",
+            environment_id="env_dev",
+            object_refs=["delta_service"],
+        )
+    )
+
+
+def test_list_problem_records_filters_by_object_name(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    _create_filter_test_records(service)
+
+    results = service.list_problem_records(object_name="alpha_service")
+    assert len(results) == 1
+    assert results[0]["problem_id"] == "filter_api_001"
+
+    results = service.list_problem_records(object_name="gamma_db")
+    assert len(results) == 2
+    problem_ids = {r["problem_id"] for r in results}
+    assert problem_ids == {"filter_data_001", "filter_runtime_001"}
+
+    results = service.list_problem_records(object_name="nonexistent")
+    assert results == []
+
+
+def test_list_problem_records_filters_by_environment_id(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    _create_filter_test_records(service)
+
+    results = service.list_problem_records(environment_id="env_prod")
+    assert len(results) == 2
+    problem_ids = {r["problem_id"] for r in results}
+    assert problem_ids == {"filter_api_001", "filter_runtime_001"}
+
+    results = service.list_problem_records(environment_id="env_staging")
+    assert len(results) == 1
+    assert results[0]["problem_id"] == "filter_data_001"
+
+
+def test_list_problem_records_filters_by_status(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    _create_filter_test_records(service)
+
+    results = service.list_problem_records(status="open")
+    assert len(results) == 3
+    problem_ids = {r["problem_id"] for r in results}
+    assert problem_ids == {"filter_api_001", "filter_runtime_001", "filter_no_caps_001"}
+
+    results = service.list_problem_records(status="resolved")
+    assert len(results) == 1
+    assert results[0]["problem_id"] == "filter_data_001"
+
+
+def test_list_problem_records_filters_by_preservation_status(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    _create_filter_test_records(service)
+
+    results = service.list_problem_records(preservation_status="partial")
+    assert len(results) == 1
+    assert results[0]["problem_id"] == "filter_data_001"
+
+    results = service.list_problem_records(preservation_status="failed")
+    assert len(results) == 1
+    assert results[0]["problem_id"] == "filter_runtime_001"
+
+    results = service.list_problem_records(preservation_status="success")
+    assert len(results) == 2
+    problem_ids = {r["problem_id"] for r in results}
+    assert problem_ids == {"filter_api_001", "filter_no_caps_001"}
+
+
+def test_list_problem_records_filters_by_can_replay(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    _create_filter_test_records(service)
+
+    results = service.list_problem_records(can_replay=True)
+    assert len(results) == 2
+    problem_ids = {r["problem_id"] for r in results}
+    assert problem_ids == {"filter_api_001", "filter_runtime_001"}
+
+
+def test_list_problem_records_filters_by_can_recover(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    _create_filter_test_records(service)
+
+    results = service.list_problem_records(can_recover=True)
+    assert len(results) == 2
+    problem_ids = {r["problem_id"] for r in results}
+    assert problem_ids == {"filter_api_001", "filter_data_001"}
+
+
+def test_list_problem_records_filters_by_multiple_conditions(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    _create_filter_test_records(service)
+
+    results = service.list_problem_records(
+        environment_id="env_prod",
+        status="open",
+        can_replay=True,
+    )
+    assert len(results) == 2
+    problem_ids = {r["problem_id"] for r in results}
+    assert problem_ids == {"filter_api_001", "filter_runtime_001"}
+
+    results = service.list_problem_records(
+        environment_id="env_prod",
+        can_recover=True,
+    )
+    assert len(results) == 1
+    assert results[0]["problem_id"] == "filter_api_001"
+
+
+def test_list_problem_records_returns_empty_when_no_match(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    _create_filter_test_records(service)
+
+    results = service.list_problem_records(
+        object_name="alpha_service",
+        environment_id="env_staging",
+    )
+    assert results == []
+
+    results = service.list_problem_records(status="closed")
+    assert results == []
+
+
+def test_list_problem_records_ordered_by_created_at_desc(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+
+    for i, pid in enumerate(["problem_first", "problem_second", "problem_third"]):
+        service.storage.save_problem_record(
+            ProblemRecord(
+                problem_id=pid,
+                problem_type="api_response",
+                summary=f"problem {i}",
+                object_refs=["my_service"],
+                created_at=f"2026-05-01T10:00:0{i}",
+            )
+        )
+
+    results = service.list_problem_records(object_name="my_service")
+    assert len(results) == 3
+    assert results[0]["problem_id"] == "problem_third"
+    assert results[1]["problem_id"] == "problem_second"
+    assert results[2]["problem_id"] == "problem_first"
