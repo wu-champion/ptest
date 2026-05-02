@@ -1811,6 +1811,12 @@ class WorkflowService:
     def _latest_history_action(
         actions: list[dict[str, Any]], action_type: str | None = None
     ) -> dict[str, Any] | None:
+        """Return the first matching action.
+
+        ``actions`` must be sorted by ``created_at`` descending, which
+        :meth:`_problem_recovery_history_actions` guarantees via
+        ``WorkspaceStorage.list_problem_recovery_history``.
+        """
         for action in actions:
             if action_type is None or action.get("action_type") == action_type:
                 return action
@@ -1827,7 +1833,8 @@ class WorkflowService:
         latest_recover = self._latest_history_action(actions, "recover")
         replay_section: dict[str, Any] = {"available": latest_replay is not None}
         if latest_replay is not None:
-            replay_succeeded = latest_replay.get("status") == "completed"
+            replay_action_status = latest_replay.get("status", "unknown")
+            replay_succeeded = replay_action_status == "completed"
             replay_metadata = latest_replay.get("metadata", {})
             reproduced: bool | None = None
             if isinstance(replay_metadata, dict):
@@ -1844,6 +1851,7 @@ class WorkflowService:
             if not replay_succeeded:
                 reproduced = None
             replay_section["reproduced"] = reproduced
+            replay_section["action_status"] = replay_action_status
         recover_section: dict[str, Any] = {"available": latest_recover is not None}
         if latest_recover is not None:
             recover_section["status"] = latest_recover.get("status")
@@ -1899,9 +1907,10 @@ class WorkflowService:
         if replay_section.get("available"):
             reproduced = replay_section.get("reproduced")
             if reproduced is None:
+                replay_status = replay_section.get("action_status", "unknown")
                 return {
                     "action": "inspect_history",
-                    "reason": "latest replay failed without producing a comparison",
+                    "reason": f"latest replay {replay_status} without producing a comparison",
                 }
             if reproduced:
                 return {

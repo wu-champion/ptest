@@ -2175,6 +2175,49 @@ def test_verification_summary_failed_replay_suggests_inspect_history(
     assert vs["latest_replay"]["available"] is True
     assert vs["latest_replay"]["reproduced"] is None
     assert vs["suggested_next_action"]["action"] == "inspect_history"
+    assert "failed" in vs["suggested_next_action"]["reason"]
+
+
+def test_verification_summary_can_replay_from_assets_metadata(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vs_010",
+            problem_type="api_response",
+            summary="can_replay from assets",
+            status="open",
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="vs_010",
+            problem_type="api_response",
+            summary="can_replay from assets",
+            status="open",
+            metadata={"capabilities": {"can_replay": True, "can_recover": True}},
+        )
+    )
+    service.storage.save_problem_recovery_history(
+        ProblemRecoveryRecord(
+            action_id="recovery_vs_010",
+            problem_id="vs_010",
+            problem_type="api_response",
+            action_type="recover",
+            mode="plan_only",
+            success=True,
+            status="prepared",
+            created_at="2026-05-02T14:00:00",
+        )
+    )
+
+    result = service.get_problem_record("vs_010")
+    vs = result["problem"]["verification_summary"]
+    assert vs["latest_recover"]["available"] is True
+    assert vs["latest_replay"]["available"] is False
+    assert vs["suggested_next_action"]["action"] == "run_replay"
 
 
 def test_verification_summary_recover_with_can_replay_suggests_run_replay(
