@@ -966,6 +966,7 @@ name = "ptestx"
 version = "1.9.0"
 source = { editable = "." }
 dependencies = [
+    { name = "chardet" },
     { name = "colorama" },
     { name = "docker" },
     { name = "faker" },
@@ -979,7 +980,6 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "chardet" },
     { name = "pytest" },
 ]
 
@@ -1004,7 +1004,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "chardet", marker = "extra == 'dev'", specifier = "<6" },
+    { name = "chardet", specifier = "<6" },
     { name = "colorama", specifier = ">=0.4.6" },
     { name = "docker", specifier = ">=7.1.0" },
     { name = "faker", specifier = ">=35.0.0" },
