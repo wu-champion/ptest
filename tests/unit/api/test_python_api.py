@@ -13,6 +13,7 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from ptest.api import PTestAPI, create_ptest_api  # noqa: E402
+from ptest import __version__  # noqa: E402
 
 
 class TestPTestAPI(unittest.TestCase):
@@ -223,7 +224,7 @@ class TestSystemInfo(unittest.TestCase):
         self.assertTrue(info["success"])
         self.assertIn("version", info["data"])
         self.assertIn("api_version", info["data"])
-        self.assertEqual(info["data"]["version"], "1.9.0")
+        self.assertEqual(info["data"]["version"], __version__)
         self.assertIn("isolation_engines", info["data"])
 
 
