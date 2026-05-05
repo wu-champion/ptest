@@ -401,6 +401,12 @@ def setup_cli() -> argparse.ArgumentParser:
         default=False,
         help="Only show recoverable problems",
     )
+    problem_list_parser.add_argument(
+        "--include-assets-summary",
+        action="store_true",
+        default=False,
+        help="Include lightweight asset summary for each problem",
+    )
     problem_show_parser = problem_subparsers.add_parser(
         "show",
         help="Show a single problem record with direct capabilities",
@@ -1229,6 +1235,7 @@ def _handle_problem_command(
             preservation_status=getattr(args, "preservation_status", None),
             can_replay=can_replay,
             can_recover=can_recover,
+            include_assets_summary=getattr(args, "include_assets_summary", False),
         )
         filters = {
             key: value

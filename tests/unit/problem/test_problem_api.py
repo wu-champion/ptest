@@ -6,7 +6,7 @@ from typing import Any
 import requests
 
 from ptest.api import PTestAPI
-from ptest.models import ProblemRecord
+from ptest.models import ProblemAssetRecord, ProblemRecord
 
 
 class _FakeResponse:
@@ -534,3 +534,33 @@ def test_api_verification_summary_fallback_from_recovery_json(
     vs = result["data"]["verification_summary"]
     assert vs["history_count"] == 1
     assert vs["latest_replay"]["available"] is True
+
+
+def test_api_list_problem_records_with_assets_summary(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    api.workflow.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="api_as_001",
+            problem_type="api_response",
+            summary="api problem",
+        )
+    )
+    api.workflow.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="api_as_001",
+            problem_type="api_response",
+            summary="api problem",
+            recovery={"supported": True, "mode": "request_replay"},
+            details={},
+        )
+    )
+
+    result = api.list_problem_records(include_assets_summary=True)
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert "assets_summary" in result["problems"][0]
+    assert result["problems"][0]["assets_summary"]["assets_available"] is True
+
+    result_no = api.list_problem_records(include_assets_summary=False)
+    assert "assets_summary" not in result_no["problems"][0]

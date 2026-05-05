@@ -2252,3 +2252,149 @@ def test_verification_summary_recover_with_can_replay_suggests_run_replay(
     assert vs["latest_recover"]["available"] is True
     assert vs["latest_replay"]["available"] is False
     assert vs["suggested_next_action"]["action"] == "run_replay"
+
+
+def test_list_problem_records_with_assets_summary(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="as_001",
+            problem_type="api_response",
+            summary="api problem with assets",
+            status="open",
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="as_001",
+            problem_type="api_response",
+            summary="api problem with assets",
+            recovery={"supported": True, "mode": "request_replay"},
+            details={},
+        )
+    )
+
+    result = service.list_problem_records(include_assets_summary=True)
+    assert len(result) == 1
+    assert "assets_summary" in result[0]
+    summary = result[0]["assets_summary"]
+    assert summary["problem_id"] == "as_001"
+    assert summary["assets_available"] is True
+
+    result_no_summary = service.list_problem_records(include_assets_summary=False)
+    assert "assets_summary" not in result_no_summary[0]
+
+
+def test_list_problem_records_assets_missing_summary(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="as_002",
+            problem_type="crash_dump",
+            summary="crash without assets",
+            status="open",
+        )
+    )
+
+    result = service.list_problem_records(include_assets_summary=True)
+    assert len(result) == 1
+    summary = result[0]["assets_summary"]
+    assert summary["problem_id"] == "as_002"
+    assert summary["assets_available"] is False
+
+
+def test_list_problem_records_filters_with_assets_summary(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="as_003",
+            problem_type="api_response",
+            summary="api",
+            status="open",
+            object_refs=["svc_a"],
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="as_004",
+            problem_type="data_state",
+            summary="data",
+            status="open",
+            object_refs=["svc_b"],
+        )
+    )
+
+    result = service.list_problem_records(
+        object_name="svc_a", include_assets_summary=True
+    )
+    assert len(result) == 1
+    assert result[0]["problem_id"] == "as_003"
+    assert "assets_summary" in result[0]
+
+
+def test_execution_artifacts_includes_problem_summary(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    exec_id = "exec_problem_summary"
+    service.storage.save_execution(
+        ExecutionRecord(
+            execution_id=exec_id,
+            case_id="case_ps",
+            status="failed",
+            duration=0.1,
+            start_time="2026-05-03T10:00:00",
+            end_time="2026-05-03T10:00:01",
+        )
+    )
+    artifact_dir = tmp_path / ".ptest" / "artifacts" / exec_id / "indexes"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / "artifact_index.json").write_text("{}", encoding="utf-8")
+
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="ps_exec_001",
+            problem_type="api_response",
+            summary="linked to exec",
+            execution_id=exec_id,
+        )
+    )
+
+    result = service.get_execution_artifacts(exec_id)
+    assert result["success"] is True
+    problem_summary = result["artifacts"]["problem_summary"]
+    assert problem_summary["total_count"] == 1
+    assert problem_summary["recent_problems"][0]["problem_id"] == "ps_exec_001"
+
+
+def test_object_status_diagnostics_includes_problem_summary(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.upsert_object(
+        ManagedObjectRecord(
+            name="svc_diag",
+            type_name="service",
+            status=OBJECT_STATUS_RUNNING,
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="diag_001",
+            problem_type="service_runtime",
+            summary="runtime issue",
+            object_refs=["svc_diag"],
+        )
+    )
+
+    result = service.get_object_status("svc_diag")
+    assert result["success"] is True
+    diagnostics = result["object"]["diagnostics"]
+    assert "problem_summary" in diagnostics
+    assert diagnostics["problem_summary"]["total_count"] == 1
+    assert (
+        diagnostics["problem_summary"]["recent_problems"][0]["problem_id"] == "diag_001"
+    )
