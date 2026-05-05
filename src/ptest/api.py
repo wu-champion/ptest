@@ -332,6 +332,7 @@ class PTestAPI:
         preservation_status: str | None = None,
         can_replay: Literal[True] | None = None,
         can_recover: Literal[True] | None = None,
+        include_assets_summary: bool = False,
     ) -> dict[str, Any]:
         records = self.workflow.list_problem_records(
             problem_type=problem_type,
@@ -343,6 +344,7 @@ class PTestAPI:
             preservation_status=preservation_status,
             can_replay=can_replay,
             can_recover=can_recover,
+            include_assets_summary=include_assets_summary,
         )
         filters = {
             key: value

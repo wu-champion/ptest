@@ -9,7 +9,7 @@ import requests
 
 from ptest import cli
 from ptest.app import WorkflowService
-from ptest.models import ProblemRecord, ProblemRecoveryRecord
+from ptest.models import ProblemAssetRecord, ProblemRecord, ProblemRecoveryRecord
 
 
 class _FakeResponse:
@@ -807,3 +807,53 @@ def test_cli_problem_update_empty_fails(tmp_path: Path, monkeypatch, capsys) -> 
     exit_code = cli.main()
 
     assert exit_code == 1
+
+
+def test_cli_problem_list_with_assets_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_as_001",
+            problem_type="api_response",
+            summary="api problem",
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="cli_as_001",
+            problem_type="api_response",
+            summary="api problem",
+            recovery={"supported": True, "mode": "request_replay"},
+            details={},
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "list",
+            "--include-assets-summary",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["count"] == 1
+    assert "assets_summary" in payload["problems"][0]
+    assert payload["problems"][0]["assets_summary"]["assets_available"] is True

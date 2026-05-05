@@ -1550,6 +1550,9 @@ class WorkflowService:
         artifact_index["object_artifacts_summary"] = (
             self._build_execution_object_artifacts_summary(artifact_index)
         )
+        artifact_index["problem_summary"] = self._build_execution_problem_summary(
+            execution_id
+        )
 
         if include_contents:
             contents: dict[str, Any] = {}
@@ -1609,6 +1612,7 @@ class WorkflowService:
         preservation_status: str | None = None,
         can_replay: Literal[True] | None = None,
         can_recover: Literal[True] | None = None,
+        include_assets_summary: bool = False,
     ) -> list[dict[str, Any]]:
         records = self._list_problem_record_models(
             case_id=case_id,
@@ -1632,7 +1636,10 @@ class WorkflowService:
                 can_recover=can_recover,
             ):
                 continue
-            filtered.append(self._problem_record_payload(record))
+            payload = self._problem_record_payload(record)
+            if include_assets_summary:
+                payload["assets_summary"] = self._build_problem_asset_summary(record)
+            filtered.append(payload)
         return sorted(filtered, key=lambda item: item["created_at"], reverse=True)
 
     def get_problem_assets(self, problem_id: str) -> dict[str, Any]:
@@ -1752,6 +1759,148 @@ class WorkflowService:
             else None,
         )
         return payload
+
+    def _build_problem_asset_summary(
+        self,
+        record: ProblemRecord,
+        assets: ProblemAssetRecord | None = None,
+    ) -> dict[str, Any]:
+        load_error: str | None = None
+        if assets is None:
+            try:
+                assets = self.storage.get_problem_assets(record.problem_id)
+            except (json.JSONDecodeError, OSError, ValueError) as exc:
+                load_error = str(exc)
+        assets_available = assets is not None
+        available_assets: list[str] = []
+        missing_assets: list[str] = []
+        details: dict[str, Any] = {}
+        diagnostics_status: str = "unavailable"
+        if assets is not None:
+            details = assets.details if isinstance(assets.details, dict) else {}
+            preservation = details.get("preservation", {})
+            if isinstance(preservation, dict):
+                available_assets = list(preservation.get("available_assets", []))
+                missing_assets = list(preservation.get("missing_assets", []))
+            runtime_backend = (
+                assets.metadata.get("runtime_backend", {})
+                if isinstance(assets.metadata, dict)
+                else {}
+            )
+            object_artifacts = details.get("object_artifacts", {})
+            if runtime_backend and object_artifacts:
+                diagnostics_status = "complete"
+            elif runtime_backend or object_artifacts:
+                diagnostics_status = "partial"
+            else:
+                diagnostics_status = "unavailable"
+        verification_summary = self._build_problem_verification_summary(record, assets)
+        result: dict[str, Any] = {
+            "problem_id": record.problem_id,
+            "problem_type": record.problem_type,
+            "status": record.status,
+            "created_at": record.created_at,
+            "preservation_status": record.preservation_status,
+            "execution_id": record.execution_id or None,
+            "case_id": record.case_id or None,
+            "environment_id": record.environment_id or None,
+            "object_refs": list(record.object_refs),
+            "assets_available": assets_available,
+            "available_assets": available_assets,
+            "missing_assets": missing_assets,
+            "artifact_refs": list(record.artifact_refs.keys())
+            if isinstance(record.artifact_refs, dict)
+            else [],
+            "diagnostics_status": diagnostics_status,
+            "verification_summary": verification_summary,
+            "suggested_views": self._build_diagnostic_next_views(
+                problem_id=record.problem_id,
+                execution_id=record.execution_id,
+                object_refs=record.object_refs,
+            ),
+        }
+        if load_error:
+            result["error"] = load_error
+        return result
+
+    def _build_problem_collection_summary(
+        self,
+        problem_summaries: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        by_type: dict[str, int] = {}
+        by_status: dict[str, int] = {}
+        for summary in problem_summaries:
+            ptype = summary.get("problem_type", "unknown")
+            pstatus = summary.get("status", "unknown")
+            by_type[ptype] = by_type.get(ptype, 0) + 1
+            by_status[pstatus] = by_status.get(pstatus, 0) + 1
+        sorted_summaries = sorted(
+            problem_summaries,
+            key=lambda p: (p.get("created_at") is None, p.get("created_at", "")),
+            reverse=True,
+        )
+        recent = sorted_summaries[:10]
+        suggested_views: list[dict[str, str]] = []
+        if problem_summaries:
+            suggested_views.append(
+                {
+                    "view": "problem_list",
+                    "command": "ptest problem list",
+                    "reason": "list all problems with filters",
+                }
+            )
+            first_id = recent[0]["problem_id"] if recent else ""
+            if first_id:
+                suggested_views.append(
+                    {
+                        "view": "problem_assets",
+                        "command": f"ptest problem assets {first_id}",
+                        "reason": "inspect preserved problem assets for most recent problem",
+                    }
+                )
+        return {
+            "total_count": len(problem_summaries),
+            "by_type": by_type,
+            "by_status": by_status,
+            "recent_problems": recent,
+            "suggested_views": suggested_views,
+        }
+
+    def _build_execution_problem_summary(
+        self,
+        execution_id: str,
+    ) -> dict[str, Any]:
+        try:
+            records = self.storage.list_problem_records_for_execution(execution_id)
+        except (json.JSONDecodeError, OSError, ValueError):
+            return {
+                "total_count": 0,
+                "by_type": {},
+                "by_status": {},
+                "recent_problems": [],
+                "suggested_views": [],
+            }
+        summaries = [self._build_problem_asset_summary(record) for record in records]
+        return self._build_problem_collection_summary(summaries)
+
+    def _build_object_problem_summary(
+        self,
+        object_name: str,
+        *,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        matches: list[ProblemRecord] = []
+        for record in self.storage.load_problem_records().values():
+            if object_name not in record.object_refs:
+                continue
+            matches.append(record)
+        matches.sort(key=lambda r: r.created_at, reverse=True)
+        summaries = [
+            self._build_problem_asset_summary(record) for record in matches[:limit]
+        ]
+        result = self._build_problem_collection_summary(summaries)
+        result["total_count"] = len(matches)
+        return result
 
     def _problem_assets_payload(self, assets: ProblemAssetRecord) -> dict[str, Any]:
         payload = assets.to_dict()
@@ -6507,6 +6656,7 @@ class WorkflowService:
             "runtime": runtime,
             "managed_instance": managed_instance,
             "recent_problems": linked_problems,
+            "problem_summary": self._build_object_problem_summary(record.name),
             "signals": self._build_object_status_diagnostic_signals(
                 record,
                 runtime_backend=runtime_backend,
