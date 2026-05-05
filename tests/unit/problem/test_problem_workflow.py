@@ -2428,7 +2428,8 @@ def test_object_problem_summary_ordering_and_limit(tmp_path: Path) -> None:
     assert summary["total_count"] == 12
     assert len(summary["recent_problems"]) == 10
     assert summary["by_type"]["api_response"] == 12
-    assert sum(summary["by_status"].values()) == 12
+    assert summary["by_status"] == {"open": 12}
+    assert sum(summary["by_status"].values()) == summary["total_count"]
 
     recent_ids = [p["problem_id"] for p in summary["recent_problems"]]
     expected_ids = [f"multi_{i:03}" for i in range(11, 1, -1)]
@@ -2474,6 +2475,7 @@ def test_object_problem_summary_by_type_counts_all_matches(tmp_path: Path) -> No
     assert summary["by_type"]["api_response"] == 8
     assert summary["by_type"]["data_state"] == 5
     assert sum(summary["by_type"].values()) == summary["total_count"]
+    assert summary["by_status"] == {"open": 13}
 
 
 def test_list_problem_records_corrupted_assets_graceful_degradation(
