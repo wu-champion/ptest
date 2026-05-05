@@ -2398,3 +2398,110 @@ def test_object_status_diagnostics_includes_problem_summary(
     assert (
         diagnostics["problem_summary"]["recent_problems"][0]["problem_id"] == "diag_001"
     )
+
+
+def test_object_problem_summary_ordering_and_limit(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.upsert_object(
+        ManagedObjectRecord(
+            name="svc_many",
+            type_name="service",
+            status=OBJECT_STATUS_RUNNING,
+        )
+    )
+
+    for i in range(12):
+        service.storage.save_problem_record(
+            ProblemRecord(
+                problem_id=f"multi_{i:03}",
+                problem_type="api_response",
+                summary=f"problem #{i}",
+                object_refs=["svc_many"],
+                created_at=f"2026-05-01T10:00:{i:02d}",
+            )
+        )
+
+    result = service.get_object_status("svc_many")
+    assert result["success"] is True
+    summary = result["object"]["diagnostics"]["problem_summary"]
+    assert summary["total_count"] == 12
+    assert len(summary["recent_problems"]) == 10
+
+    recent_ids = [p["problem_id"] for p in summary["recent_problems"]]
+    expected_ids = [f"multi_{i:03}" for i in range(11, 1, -1)]
+    assert recent_ids == expected_ids
+
+
+def test_list_problem_records_corrupted_assets_graceful_degradation(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="corrupt_001",
+            problem_type="api_response",
+            summary="corrupted assets",
+        )
+    )
+
+    assets_dir = tmp_path / ".ptest" / "problems" / "corrupt_001"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    (assets_dir / "assets.json").write_text("{invalid json", encoding="utf-8")
+
+    result = service.list_problem_records(include_assets_summary=True)
+    assert len(result) == 1
+    summary = result[0]["assets_summary"]
+    assert summary["assets_available"] is False
+    assert summary["diagnostics_status"] == "unavailable"
+    assert "error" in summary
+
+
+def test_build_problem_asset_summary_default_diagnostics_unavailable(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="diag_default_001",
+            problem_type="api_response",
+            summary="no assets",
+        )
+    )
+
+    result = service.list_problem_records(include_assets_summary=True)
+    summary = result[0]["assets_summary"]
+    assert summary["diagnostics_status"] == "unavailable"
+
+
+def test_problem_collection_suggested_views_are_structured(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.upsert_object(
+        ManagedObjectRecord(
+            name="svc_sv",
+            type_name="service",
+            status=OBJECT_STATUS_RUNNING,
+        )
+    )
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="sv_001",
+            problem_type="api_response",
+            summary="structured views",
+            object_refs=["svc_sv"],
+        )
+    )
+
+    result = service.get_object_status("svc_sv")
+    summary = result["object"]["diagnostics"]["problem_summary"]
+    views = summary["suggested_views"]
+    assert len(views) >= 1
+    for view in views:
+        assert "view" in view
+        assert "command" in view
+        assert "reason" in view

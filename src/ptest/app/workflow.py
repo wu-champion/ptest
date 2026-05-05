@@ -1765,21 +1765,23 @@ class WorkflowService:
         record: ProblemRecord,
         assets: ProblemAssetRecord | None = None,
     ) -> dict[str, Any]:
+        load_error: str | None = None
         if assets is None:
-            assets = self.storage.get_problem_assets(record.problem_id)
+            try:
+                assets = self.storage.get_problem_assets(record.problem_id)
+            except (json.JSONDecodeError, OSError, ValueError) as exc:
+                load_error = str(exc)
         assets_available = assets is not None
         available_assets: list[str] = []
         missing_assets: list[str] = []
+        details: dict[str, Any] = {}
+        diagnostics_status: str = "unavailable"
         if assets is not None:
             details = assets.details if isinstance(assets.details, dict) else {}
             preservation = details.get("preservation", {})
             if isinstance(preservation, dict):
                 available_assets = list(preservation.get("available_assets", []))
                 missing_assets = list(preservation.get("missing_assets", []))
-        verification_summary = self._build_problem_verification_summary(record, assets)
-        diagnostics_status: str | None = None
-        if assets is not None:
-            details = assets.details if isinstance(assets.details, dict) else {}
             runtime_backend = (
                 assets.metadata.get("runtime_backend", {})
                 if isinstance(assets.metadata, dict)
@@ -1792,10 +1794,12 @@ class WorkflowService:
                 diagnostics_status = "partial"
             else:
                 diagnostics_status = "unavailable"
-        return {
+        verification_summary = self._build_problem_verification_summary(record, assets)
+        result: dict[str, Any] = {
             "problem_id": record.problem_id,
             "problem_type": record.problem_type,
             "status": record.status,
+            "created_at": record.created_at,
             "preservation_status": record.preservation_status,
             "execution_id": record.execution_id or None,
             "case_id": record.case_id or None,
@@ -1815,6 +1819,9 @@ class WorkflowService:
                 object_refs=record.object_refs,
             ),
         }
+        if load_error:
+            result["error"] = load_error
+        return result
 
     def _build_problem_collection_summary(
         self,
@@ -1827,11 +1834,30 @@ class WorkflowService:
             pstatus = summary.get("status", "unknown")
             by_type[ptype] = by_type.get(ptype, 0) + 1
             by_status[pstatus] = by_status.get(pstatus, 0) + 1
-        recent = problem_summaries[:10]
-        suggested_views: list[str] = []
+        sorted_summaries = sorted(
+            problem_summaries,
+            key=lambda p: (p.get("created_at") is None, p.get("created_at", "")),
+            reverse=True,
+        )
+        recent = sorted_summaries[:10]
+        suggested_views: list[dict[str, str]] = []
         if problem_summaries:
-            suggested_views.append("problem list")
-            suggested_views.append("problem assets")
+            suggested_views.append(
+                {
+                    "view": "problem_list",
+                    "command": "ptest problem list",
+                    "reason": "list all problems with filters",
+                }
+            )
+            first_id = recent[0]["problem_id"] if recent else ""
+            if first_id:
+                suggested_views.append(
+                    {
+                        "view": "problem_assets",
+                        "command": f"ptest problem assets {first_id}",
+                        "reason": "inspect preserved problem assets for most recent problem",
+                    }
+                )
         return {
             "total_count": len(problem_summaries),
             "by_type": by_type,
@@ -1846,7 +1872,7 @@ class WorkflowService:
     ) -> dict[str, Any]:
         try:
             records = self.storage.list_problem_records_for_execution(execution_id)
-        except Exception:
+        except (json.JSONDecodeError, OSError, ValueError):
             return {
                 "total_count": 0,
                 "by_type": {},
@@ -1872,7 +1898,9 @@ class WorkflowService:
         summaries = [
             self._build_problem_asset_summary(record) for record in matches[:limit]
         ]
-        return self._build_problem_collection_summary(summaries)
+        result = self._build_problem_collection_summary(summaries)
+        result["total_count"] = len(matches)
+        return result
 
     def _problem_assets_payload(self, assets: ProblemAssetRecord) -> dict[str, Any]:
         payload = assets.to_dict()
