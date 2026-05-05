@@ -1895,11 +1895,18 @@ class WorkflowService:
                 continue
             matches.append(record)
         matches.sort(key=lambda r: r.created_at, reverse=True)
+        by_type: dict[str, int] = {}
+        by_status: dict[str, int] = {}
+        for record in matches:
+            by_type[record.problem_type] = by_type.get(record.problem_type, 0) + 1
+            by_status[record.status] = by_status.get(record.status, 0) + 1
         summaries = [
             self._build_problem_asset_summary(record) for record in matches[:limit]
         ]
         result = self._build_problem_collection_summary(summaries)
         result["total_count"] = len(matches)
+        result["by_type"] = by_type
+        result["by_status"] = by_status
         return result
 
     def _problem_assets_payload(self, assets: ProblemAssetRecord) -> dict[str, Any]:
