@@ -2550,3 +2550,377 @@ def test_problem_collection_suggested_views_are_structured(
         assert "view" in view
         assert "command" in view
         assert "reason" in view
+
+
+def test_verification_run_from_replay_reproduced(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "vr_case_001",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+    import requests as req
+
+    from unittest.mock import patch
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.run_case("vr_case_001")
+
+    problems = service.list_problem_records(case_id="vr_case_001")
+    problem_id = problems[0]["problem_id"]
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.replay_problem(problem_id)
+
+    history = service.list_problem_recovery_history(problem_id)
+    runs = history["data"]["verification_runs"]
+    assert len(runs) == 1
+    assert runs[0]["action_type"] == "replay"
+    assert runs[0]["result_status"] == "reproduced"
+    assert runs[0]["reproduced"] is True
+    assert runs[0]["success"] is True
+
+
+def test_verification_run_from_replay_not_reproduced(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "vr_case_002",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    import requests as req
+    from unittest.mock import patch
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.run_case("vr_case_002")
+
+    problems = service.list_problem_records(case_id="vr_case_002")
+    problem_id = problems[0]["problem_id"]
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(200, {"message": "ok"}),
+    ):
+        service.replay_problem(problem_id)
+
+    history = service.list_problem_recovery_history(problem_id)
+    runs = history["data"]["verification_runs"]
+    assert len(runs) == 1
+    assert runs[0]["result_status"] == "not_reproduced"
+    assert runs[0]["reproduced"] is False
+
+
+def test_verification_run_from_replay_failed(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "vr_case_003",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    import requests as req
+    from unittest.mock import patch
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.run_case("vr_case_003")
+
+    problems = service.list_problem_records(case_id="vr_case_003")
+    problem_id = problems[0]["problem_id"]
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "connection refused"}),
+    ):
+        service.replay_problem(problem_id)
+
+    history = service.list_problem_recovery_history(problem_id)
+    runs = history["data"]["verification_runs"]
+    assert len(runs) == 1
+    assert runs[0]["action_type"] == "replay"
+
+
+def test_verification_run_from_recover_success(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vr_recover_001",
+            problem_type="crash_dump",
+            summary="crash problem",
+        )
+    )
+    from ptest.models import ProblemAssetRecord
+
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="vr_recover_001",
+            problem_type="crash_dump",
+            summary="crash problem",
+            recovery={"supported": False, "mode": "preservation_only"},
+            details={"dump_refs": ["core.001"]},
+        )
+    )
+
+    result = service.recover_problem("vr_recover_001")
+    assert result["success"] is True
+
+    history = service.list_problem_recovery_history("vr_recover_001")
+    runs = history["data"]["verification_runs"]
+    assert len(runs) == 1
+    assert runs[0]["action_type"] == "recover"
+    assert runs[0]["result_status"] == "recovered"
+
+
+def test_problem_history_includes_verification_runs_and_summary(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "vr_case_004",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    import requests as req
+    from unittest.mock import patch
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.run_case("vr_case_004")
+
+    problems = service.list_problem_records(case_id="vr_case_004")
+    problem_id = problems[0]["problem_id"]
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.replay_problem(problem_id)
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(200, {"message": "ok"}),
+    ):
+        service.replay_problem(problem_id)
+
+    history = service.list_problem_recovery_history(problem_id)
+    data = history["data"]
+    assert "verification_runs" in data
+    assert "verification_summary" in data
+    assert len(data["verification_runs"]) == 2
+    vs = data["verification_summary"]
+    assert vs["run_count"] == 2
+    assert vs["replay_count"] == 2
+    assert vs["recover_count"] == 0
+    assert vs["latest_result_status"] == "not_reproduced"
+    assert vs["ever_reproduced"] is True
+    assert vs["latest_reproduced_at"] is not None
+
+
+def test_verification_summary_trend_reproduced(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "vr_case_005",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    import requests as req
+    from unittest.mock import patch
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.run_case("vr_case_005")
+
+    problems = service.list_problem_records(case_id="vr_case_005")
+    problem_id = problems[0]["problem_id"]
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.replay_problem(problem_id)
+
+    result = service.get_problem_record(problem_id)
+    vs = result["problem"]["verification_summary"]
+    assert vs["trend"] == "reproduced"
+    assert vs["latest_result_status"] == "reproduced"
+    assert vs["ever_reproduced"] is True
+    assert vs["latest_successful_replay"] is not None
+    assert vs["verification_runs_preview"] is not None
+    assert len(vs["verification_runs_preview"]) >= 1
+
+
+def test_verification_summary_trend_not_reproduced_after_ever_reproduced(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "vr_case_006",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    import requests as req
+    from unittest.mock import patch
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.run_case("vr_case_006")
+
+    problems = service.list_problem_records(case_id="vr_case_006")
+    problem_id = problems[0]["problem_id"]
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.replay_problem(problem_id)
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(200, {"message": "ok"}),
+    ):
+        service.replay_problem(problem_id)
+
+    result = service.get_problem_record(problem_id)
+    vs = result["problem"]["verification_summary"]
+    assert vs["trend"] == "not_reproduced"
+    assert vs["ever_reproduced"] is True
+    assert vs["latest_result_status"] == "not_reproduced"
+
+
+def test_verification_summary_trend_inconclusive(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "vr_case_007",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    import requests as req
+    from unittest.mock import patch
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.run_case("vr_case_007")
+
+    problems = service.list_problem_records(case_id="vr_case_007")
+    problem_id = problems[0]["problem_id"]
+
+    with patch.object(
+        req,
+        "request",
+        side_effect=req.ConnectionError("connection refused"),
+    ):
+        service.replay_problem(problem_id)
+
+    result = service.get_problem_record(problem_id)
+    vs = result["problem"]["verification_summary"]
+    assert vs["trend"] == "inconclusive"
+    assert vs["latest_result_status"] == "failed"
+
+
+def test_verification_summary_trend_no_history(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vr_no_hist_001",
+            problem_type="api_response",
+            summary="no history",
+        )
+    )
+
+    result = service.get_problem_record("vr_no_hist_001")
+    vs = result["problem"]["verification_summary"]
+    assert vs["trend"] == "no_history"
+    assert vs["latest_result_status"] is None
+    assert vs["ever_reproduced"] is False
+    assert vs["verification_runs_preview"] == []
+
+
+def test_verification_summary_enhanced_fields_present(tmp_path: Path) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="vr_enhanced_001",
+            problem_type="api_response",
+            summary="enhanced",
+        )
+    )
+
+    result = service.get_problem_record("vr_enhanced_001")
+    vs = result["problem"]["verification_summary"]
+    assert "trend" in vs
+    assert "latest_result_status" in vs
+    assert "ever_reproduced" in vs
+    assert "latest_successful_replay" in vs
+    assert "latest_failed_replay" in vs
+    assert "latest_successful_recover" in vs
+    assert "verification_runs_preview" in vs
