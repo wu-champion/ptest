@@ -6,6 +6,7 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import time
 import uuid
 from datetime import datetime
@@ -1352,6 +1353,7 @@ class WorkflowService:
             case_definition,
             crash_snapshot_before,
             object_artifacts_before,
+            data_state_snapshot_before,
         ) = self._execute_case_with_artifact_capture(
             case_manager,
             case_id,
@@ -1364,6 +1366,7 @@ class WorkflowService:
             case_definition_override=case_definition,
             crash_snapshot_before=crash_snapshot_before,
             object_artifacts_before=object_artifacts_before,
+            data_state_snapshot_before=data_state_snapshot_before,
         )
         payload = self._result_payload(result)
         payload["message"] = (
@@ -1424,13 +1427,17 @@ class WorkflowService:
                 case_definition = None
                 crash_snapshot_before = None
                 object_artifacts_before = None
-                if isinstance(case_result, tuple) and len(case_result) == 4:
+                data_state_snapshot_before = None
+                if isinstance(case_result, tuple) and len(case_result) >= 4:
+                    raw_tuple = case_result
                     (
                         case_result,
                         case_definition,
                         crash_snapshot_before,
                         object_artifacts_before,
-                    ) = case_result
+                    ) = raw_tuple[:4]
+                    if len(raw_tuple) > 4:
+                        data_state_snapshot_before = raw_tuple[4]
                 if isinstance(case_result, TestCaseResult):
                     self._persist_execution(
                         case_result.case_id,
@@ -1439,6 +1446,7 @@ class WorkflowService:
                         case_definition_override=case_definition,
                         crash_snapshot_before=crash_snapshot_before,
                         object_artifacts_before=object_artifacts_before,
+                        data_state_snapshot_before=data_state_snapshot_before,
                     )
                     results.append(self._result_payload(case_result))
             return self._summarize_results(results)
@@ -1466,13 +1474,17 @@ class WorkflowService:
             case_definition = None
             crash_snapshot_before = None
             object_artifacts_before = None
-            if isinstance(case_result, tuple) and len(case_result) == 4:
+            data_state_snapshot_before = None
+            if isinstance(case_result, tuple) and len(case_result) >= 4:
+                raw_tuple = case_result
                 (
                     case_result,
                     case_definition,
                     crash_snapshot_before,
                     object_artifacts_before,
-                ) = case_result
+                ) = raw_tuple[:4]
+                if len(raw_tuple) > 4:
+                    data_state_snapshot_before = raw_tuple[4]
             if isinstance(case_result, TestCaseResult):
                 self._persist_execution(
                     case_result.case_id,
@@ -1481,6 +1493,7 @@ class WorkflowService:
                     case_definition_override=case_definition,
                     crash_snapshot_before=crash_snapshot_before,
                     object_artifacts_before=object_artifacts_before,
+                    data_state_snapshot_before=data_state_snapshot_before,
                 )
                 results.append(self._result_payload(case_result))
         return self._summarize_results(results)
@@ -3554,6 +3567,276 @@ class WorkflowService:
             "changes": self._build_object_artifact_changes(before, after),
         }
 
+    def _capture_data_state_snapshot(
+        self,
+        case_definition: dict[str, Any] | None,
+        *,
+        phase: str,
+    ) -> dict[str, Any] | None:
+        if not isinstance(case_definition, dict):
+            return None
+        case_payload = self._unwrap_case_definition(case_definition)
+        if case_payload.get("type") != "database":
+            return None
+        db_type = str(case_payload.get("db_type", "")).lower()
+        database_path = case_payload.get("database", "")
+        if db_type == "sqlite":
+            if not database_path:
+                return {
+                    "phase": phase,
+                    "capture_status": "unavailable",
+                    "reason": "database path not specified",
+                }
+            return self._capture_sqlite_state_snapshot(database_path, phase=phase)
+        if db_type == "mysql":
+            return {
+                "phase": phase,
+                "capture_status": "unsupported",
+                "reason": "mysql snapshot not yet supported",
+            }
+        return {
+            "phase": phase,
+            "capture_status": "unsupported",
+            "reason": f"unsupported db_type: {db_type}",
+        }
+
+    def _capture_sqlite_state_snapshot(
+        self,
+        database_path: str,
+        *,
+        phase: str,
+    ) -> dict[str, Any]:
+        from datetime import datetime as _dt
+
+        now = _dt.now().isoformat()
+        db_file = Path(database_path)
+        if not db_file.exists():
+            return {
+                "phase": phase,
+                "capture_status": "unavailable",
+                "captured_at": now,
+                "reason": "database file does not exist",
+            }
+        try:
+            file_stat = db_file.stat()
+            file_info = {
+                "exists": True,
+                "size": file_stat.st_size,
+                "mtime": _dt.fromtimestamp(file_stat.st_mtime).isoformat(),
+            }
+        except OSError as e:
+            return {
+                "phase": phase,
+                "capture_status": "unavailable",
+                "captured_at": now,
+                "reason": f"failed to stat database file: {e}",
+            }
+        max_tables = 20
+        max_columns = 30
+        try:
+            conn = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT name, type FROM sqlite_master "
+                    "WHERE type IN ('table', 'view') ORDER BY type, name"
+                )
+                raw_objects = cursor.fetchall()
+                tables = []
+                table_count = 0
+                view_count = 0
+                for obj_name, obj_type in raw_objects:
+                    if obj_type == "table":
+                        table_count += 1
+                    else:
+                        view_count += 1
+                    if len(tables) >= max_tables:
+                        continue
+                    try:
+                        cursor.execute(f'PRAGMA table_info("{obj_name}")')
+                        raw_columns = cursor.fetchall()
+                        columns = [
+                            {"name": col[1], "type": col[2]}
+                            for col in raw_columns[:max_columns]
+                        ]
+                    except sqlite3.Error:
+                        columns = []
+                    row_count = 0
+                    if obj_type == "table":
+                        try:
+                            cursor.execute(f'SELECT COUNT(*) FROM "{obj_name}"')
+                            row_count = cursor.fetchone()[0]
+                        except sqlite3.Error:
+                            row_count = -1
+                    tables.append(
+                        {
+                            "name": obj_name,
+                            "type": obj_type,
+                            "columns": columns,
+                            "row_count": row_count,
+                        }
+                    )
+                schema = {
+                    "table_count": table_count,
+                    "view_count": view_count,
+                    "tables": tables,
+                }
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            return {
+                "phase": phase,
+                "capture_status": "unavailable",
+                "captured_at": now,
+                "data_source": {"db_type": "sqlite", "database": database_path},
+                "file": file_info,
+                "reason": f"sqlite query failed: {e}",
+            }
+        return {
+            "phase": phase,
+            "capture_status": "available",
+            "captured_at": now,
+            "data_source": {"db_type": "sqlite", "database": database_path},
+            "file": file_info,
+            "schema": schema,
+            "limits": {
+                "max_tables": max_tables,
+                "max_columns_per_table": max_columns,
+                "row_values_captured": False,
+            },
+        }
+
+    def _build_data_state_artifacts_record(
+        self,
+        *,
+        execution_id: str,
+        case_definition: dict[str, Any] | None,
+        before_capture: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not isinstance(case_definition, dict):
+            return None
+        case_payload = self._unwrap_case_definition(case_definition)
+        if case_payload.get("type") != "database":
+            return None
+        after = self._capture_data_state_snapshot(case_definition, phase="after")
+        diff = self._diff_data_state_snapshots(before_capture, after)
+        db_type = str(case_payload.get("db_type", "")).lower()
+        database_path = case_payload.get("database", "")
+        capture_status = "unavailable"
+        if after and isinstance(after, dict):
+            capture_status = after.get("capture_status", "unavailable")
+        return {
+            "execution_id": execution_id,
+            "capture_status": capture_status,
+            "data_source": {
+                "db_type": db_type,
+                "database": database_path,
+                "object_name": case_payload.get("object_name"),
+            },
+            "before": before_capture,
+            "after": after,
+            "diff": diff,
+            "limits": {
+                "max_tables": 20,
+                "max_columns_per_table": 30,
+                "row_values_captured": False,
+            },
+        }
+
+    def _diff_data_state_snapshots(
+        self,
+        before: dict[str, Any] | None,
+        after: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            missing = []
+            if not isinstance(before, dict):
+                missing.append("before")
+            if not isinstance(after, dict):
+                missing.append("after")
+            return {
+                "capture_complete": False,
+                "reason": f"snapshot not available: {', '.join(missing)}",
+                "file_changed": False,
+                "schema_changed": False,
+                "added_tables": [],
+                "removed_tables": [],
+                "row_count_changes": [],
+            }
+        before_status = before.get("capture_status")
+        after_status = after.get("capture_status")
+        if before_status != "available" or after_status != "available":
+            return {
+                "capture_complete": False,
+                "reason": "snapshot capture not available",
+                "file_changed": False,
+                "schema_changed": False,
+                "added_tables": [],
+                "removed_tables": [],
+                "row_count_changes": [],
+            }
+        before_file = before.get("file", {})
+        after_file = after.get("file", {})
+        file_changed = before_file.get("size") != after_file.get(
+            "size"
+        ) or before_file.get("mtime") != after_file.get("mtime")
+        before_schema = before.get("schema", {})
+        after_schema = after.get("schema", {})
+        before_tables = {
+            t["name"]: t
+            for t in before_schema.get("tables", [])
+            if isinstance(t, dict) and "name" in t
+        }
+        after_tables = {
+            t["name"]: t
+            for t in after_schema.get("tables", [])
+            if isinstance(t, dict) and "name" in t
+        }
+        before_names = set(before_tables.keys())
+        after_names = set(after_tables.keys())
+        added_tables = sorted(after_names - before_names)
+        removed_tables = sorted(before_names - after_names)
+        schema_changed = bool(added_tables or removed_tables)
+        row_count_changes = []
+        for table_name in sorted(before_names & after_names):
+            before_count = before_tables[table_name].get("row_count", 0)
+            after_count = after_tables[table_name].get("row_count", 0)
+            if before_count != after_count:
+                row_count_changes.append(
+                    {
+                        "table": table_name,
+                        "before": before_count,
+                        "after": after_count,
+                        "delta": after_count - before_count,
+                    }
+                )
+        return {
+            "capture_complete": True,
+            "file_changed": file_changed,
+            "schema_changed": schema_changed,
+            "added_tables": added_tables,
+            "removed_tables": removed_tables,
+            "row_count_changes": row_count_changes,
+        }
+
+    def _summarize_data_state_artifacts(
+        self,
+        data_state_artifacts: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not isinstance(data_state_artifacts, dict):
+            return {"available": False, "capture_status": "unavailable"}
+        capture_status = data_state_artifacts.get("capture_status", "unavailable")
+        diff = data_state_artifacts.get("diff", {})
+        if not isinstance(diff, dict):
+            diff = {}
+        return {
+            "available": capture_status == "available",
+            "capture_status": capture_status,
+            "schema_changed": diff.get("schema_changed", False),
+            "row_count_changes": diff.get("row_count_changes", []),
+            "reason": data_state_artifacts.get("reason"),
+        }
+
     def _build_object_artifact_selection(
         self,
         case_definition: dict[str, Any] | None,
@@ -4468,6 +4751,7 @@ class WorkflowService:
         dict[str, Any] | None,
         dict[str, Any],
         dict[str, Any],
+        dict[str, Any] | None,
     ]:
         resolved_params, case_definition, failure = self._prepare_case_execution(
             case_manager,
@@ -4478,6 +4762,9 @@ class WorkflowService:
         crash_snapshot_before = self._capture_workspace_crash_dump_snapshot(
             case_definition
         )
+        data_state_snapshot_before = self._capture_data_state_snapshot(
+            case_definition, phase="before"
+        )
         if failure is not None:
             result = failure
         else:
@@ -4487,6 +4774,7 @@ class WorkflowService:
             case_definition,
             crash_snapshot_before,
             object_artifacts_before,
+            data_state_snapshot_before,
         )
 
     def _prepare_case_execution(
@@ -4726,6 +5014,7 @@ class WorkflowService:
         case_definition_override: dict[str, Any] | None = None,
         crash_snapshot_before: dict[str, Any] | None = None,
         object_artifacts_before: dict[str, Any] | None = None,
+        data_state_snapshot_before: dict[str, Any] | None = None,
     ) -> ExecutionRecord:
         execution_id = f"{case_id}_{uuid.uuid4().hex[:12]}"
         environment = self.get_environment_status()
@@ -4738,6 +5027,11 @@ class WorkflowService:
             execution_id=execution_id,
             case_definition=case_definition,
             before_capture=object_artifacts_before,
+        )
+        data_state_artifacts = self._build_data_state_artifacts_record(
+            execution_id=execution_id,
+            case_definition=case_definition,
+            before_capture=data_state_snapshot_before,
         )
         result_payload = self._result_payload(result)
         record = ExecutionRecord(
@@ -4762,6 +5056,7 @@ class WorkflowService:
                     ),
                 },
                 "object_artifacts": object_artifacts,
+                "data_state_artifacts": data_state_artifacts,
             },
         )
         artifacts = self.storage.save_execution_artifacts(
@@ -4772,6 +5067,7 @@ class WorkflowService:
             result=result_payload,
             output=result.output,
             object_artifacts=object_artifacts,
+            data_state_artifacts=data_state_artifacts,
         )
         record.metadata["artifacts"] = artifacts
         artifact_index = self.storage.save_execution_artifact_record(record)
@@ -5216,6 +5512,14 @@ class WorkflowService:
             "error": record.error_message,
             "case": case_payload,
         }
+        data_state_artifacts = None
+        if isinstance(record.metadata, dict):
+            data_state_artifacts = record.metadata.get("data_state_artifacts")
+        if isinstance(data_state_artifacts, dict) and data_state_artifacts:
+            details["data_state_artifacts"] = data_state_artifacts
+            recovery_hints["state_snapshot"] = self._summarize_data_state_artifacts(
+                data_state_artifacts
+            )
         object_artifacts = self._build_problem_object_artifacts(
             record,
             problem_type="data_state",
@@ -5257,6 +5561,11 @@ class WorkflowService:
                 "log_index": (
                     bool(log_refs.get("workspace_logs_dir")),
                     "log index is not available",
+                ),
+                "data_state_snapshot": (
+                    isinstance(data_state_artifacts, dict)
+                    and data_state_artifacts.get("capture_status") == "available",
+                    "data state snapshot is not available",
                 ),
             }
         )
@@ -7153,6 +7462,10 @@ class WorkflowService:
             }
         if isinstance(next_actions, list):
             summary["next_actions"] = next_actions
+        data_state_artifacts = details.get("data_state_artifacts")
+        summary["state_snapshot"] = self._summarize_data_state_artifacts(
+            data_state_artifacts
+        )
         return summary
 
     def _build_crash_dump_object_summary(self, service_name: Any) -> dict[str, Any]:
@@ -8439,6 +8752,8 @@ class WorkflowService:
         failure_kind = recovery.get("failure_kind", details.get("failure_kind"))
         origin_hints = recovery.get("origin_hints", details.get("origin_hints", {}))
         boundary = recovery.get("boundary", {})
+        data_state_artifacts = details.get("data_state_artifacts")
+        state_snapshot = self._summarize_data_state_artifacts(data_state_artifacts)
         return {
             "problem_id": record.problem_id,
             "problem_type": record.problem_type,
@@ -8467,6 +8782,7 @@ class WorkflowService:
             ),
             "next_actions": next_actions if isinstance(next_actions, list) else [],
             "limitations": limitations if isinstance(limitations, list) else [],
+            "state_snapshot": state_snapshot,
             "hints": recovery,
         }
 
