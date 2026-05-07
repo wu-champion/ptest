@@ -564,3 +564,79 @@ def test_api_list_problem_records_with_assets_summary(tmp_path: Path) -> None:
 
     result_no = api.list_problem_records(include_assets_summary=False)
     assert "assets_summary" not in result_no["problems"][0]
+
+
+def test_api_problem_history_includes_verification_runs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    created = api.create_test_case(
+        "api",
+        "demo",
+        content={
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+    case_id = created["data"]["case_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(500, {"error": "boom"}),
+    )
+    api.run_test_case(case_id)
+
+    problems = api.list_problem_records(case_id=case_id)
+    problem_id = problems["data"][0]["problem_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(500, {"error": "boom"}),
+    )
+    api.replay_problem(problem_id)
+
+    history = api.list_problem_recovery_history(problem_id)
+    assert history["success"] is True
+    data = history["data"]
+    assert "verification_runs" in data
+    assert "verification_summary" in data
+    assert len(data["verification_runs"]) == 1
+    assert data["verification_runs"][0]["result_status"] == "reproduced"
+    assert data["verification_summary"]["run_count"] == 1
+    assert data["verification_summary"]["ever_reproduced"] is True
+
+
+def test_api_problem_record_enhanced_verification_summary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    api = PTestAPI(work_path=tmp_path)
+    api.init_environment()
+    created = api.create_test_case(
+        "api",
+        "demo",
+        content={
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+    case_id = created["data"]["case_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(500, {"error": "boom"}),
+    )
+    api.run_test_case(case_id)
+
+    problems = api.list_problem_records(case_id=case_id)
+    problem_id = problems["data"][0]["problem_id"]
+
+    result = api.get_problem_record(problem_id)
+    vs = result["data"]["verification_summary"]
+    assert "trend" in vs
+    assert "latest_result_status" in vs
+    assert "ever_reproduced" in vs
+    assert "verification_runs_preview" in vs

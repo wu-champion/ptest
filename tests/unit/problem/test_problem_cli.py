@@ -857,3 +857,105 @@ def test_cli_problem_list_with_assets_summary(
     assert payload["count"] == 1
     assert "assets_summary" in payload["problems"][0]
     assert payload["problems"][0]["assets_summary"]["assets_available"] is True
+
+
+def test_cli_problem_history_includes_verification_runs(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.add_case(
+        "cli_vr_case",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(500, {"error": "boom"}),
+    )
+    service.run_case("cli_vr_case")
+    problem_id = service.list_problem_records(case_id="cli_vr_case")[0]["problem_id"]
+
+    monkeypatch.setattr(
+        requests,
+        "request",
+        lambda **kwargs: _FakeResponse(500, {"error": "boom"}),
+    )
+    service.replay_problem(problem_id)
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "history",
+            problem_id,
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert "verification_runs" in payload
+    assert "verification_summary" in payload
+    assert len(payload["verification_runs"]) == 1
+    assert payload["verification_runs"][0]["result_status"] == "reproduced"
+    assert payload["verification_summary"]["ever_reproduced"] is True
+
+
+def test_cli_problem_show_enhanced_verification_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+
+    service = WorkflowService(workspace)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="cli_vs_enhanced_001",
+            problem_type="api_response",
+            summary="enhanced vs",
+        )
+    )
+
+    monkeypatch.chdir(other_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ptest",
+            "problem",
+            "show",
+            "cli_vs_enhanced_001",
+            "--path",
+            str(workspace),
+        ],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    vs = payload["verification_summary"]
+    assert "trend" in vs
+    assert "latest_result_status" in vs
+    assert "ever_reproduced" in vs
+    assert "verification_runs_preview" in vs

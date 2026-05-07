@@ -1673,11 +1673,19 @@ class WorkflowService:
         latest_action = actions[0]["status"] if actions else None
         latest_action_type = actions[0].get("action_type") if actions else None
         latest = f"{latest_action_type}:{latest_action}" if latest_action_type else None
+        verification_runs = [
+            self._build_verification_run_from_action(a) for a in actions
+        ]
+        verification_summary = self._build_history_verification_summary(
+            verification_runs
+        )
         payload = {
             "problem_id": problem_id,
             "count": len(actions),
             "latest_action": latest,
             "actions": actions,
+            "verification_runs": verification_runs,
+            "verification_summary": verification_summary,
         }
         return self._operation_result(
             success=True,
@@ -1909,6 +1917,129 @@ class WorkflowService:
         result["by_status"] = by_status
         return result
 
+    @staticmethod
+    def _build_verification_run_from_action(action: dict[str, Any]) -> dict[str, Any]:
+        action_type = action.get("action_type", "unknown")
+        action_status = action.get("status", "unknown")
+        success = action.get("success", False)
+        mode = action.get("mode", "")
+        metadata = action.get("metadata", {})
+        result_meta: dict[str, Any] = {}
+        if isinstance(metadata, dict):
+            raw_result = metadata.get("result", {})
+            if isinstance(raw_result, dict):
+                result_meta = raw_result
+
+        comparison = result_meta.get("comparison", {})
+        reproduced: bool | None = None
+        comparison_summary: dict[str, Any] = {}
+        if isinstance(comparison, dict) and comparison:
+            expectation = comparison.get("expectation", {})
+            if isinstance(expectation, dict) and expectation:
+                raw_reproduced = expectation.get("reproduced")
+                if isinstance(raw_reproduced, bool):
+                    reproduced = raw_reproduced
+            assertion_outcome = comparison.get("assertion_outcome")
+            if assertion_outcome:
+                comparison_summary["assertion_outcome"] = assertion_outcome
+            summary = comparison.get("summary", {})
+            if isinstance(summary, dict):
+                comparison_summary["summary"] = summary
+
+        if action_type == "replay":
+            if success and action_status == "completed":
+                if reproduced is True:
+                    result_status = "reproduced"
+                elif reproduced is False:
+                    result_status = "not_reproduced"
+                else:
+                    result_status = "inconclusive"
+            else:
+                result_status = "failed"
+        elif action_type == "recover":
+            if success and action_status in ("completed", "prepared"):
+                result_status = "recovered" if mode != "plan_only" else "inconclusive"
+            else:
+                result_status = "failed"
+        else:
+            result_status = "inconclusive"
+
+        reason = ""
+        if action_type == "replay":
+            if result_status == "reproduced":
+                reason = "replay confirms the problem is still reproducible"
+            elif result_status == "not_reproduced":
+                reason = "replay shows the problem no longer reproduces"
+            elif result_status == "failed":
+                reason = "replay execution failed"
+        elif action_type == "recover":
+            if result_status == "recovered":
+                reason = (
+                    "recovery plan prepared"
+                    if action_status == "prepared"
+                    else "recovery completed successfully"
+                )
+            elif result_status == "inconclusive":
+                reason = "recovery plan prepared but not executed"
+            elif result_status == "failed":
+                reason = "recovery execution failed"
+
+        return {
+            "action_id": action.get("action_id", ""),
+            "action_type": action_type,
+            "status": action_status,
+            "success": success,
+            "created_at": action.get("created_at", ""),
+            "mode": mode,
+            "result_status": result_status,
+            "reproduced": reproduced,
+            "comparison_summary": comparison_summary,
+            "reason": reason,
+        }
+
+    def _build_problem_verification_runs(self, problem_id: str) -> list[dict[str, Any]]:
+        try:
+            actions = self._problem_recovery_history_actions(problem_id)
+        except (json.JSONDecodeError, OSError, ValueError):
+            return []
+        return [self._build_verification_run_from_action(a) for a in actions]
+
+    @staticmethod
+    def _build_history_verification_summary(
+        runs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        replay_count = sum(1 for r in runs if r["action_type"] == "replay")
+        recover_count = sum(1 for r in runs if r["action_type"] == "recover")
+        ever_reproduced = any(r["result_status"] == "reproduced" for r in runs)
+        inconclusive_count = sum(
+            1 for r in runs if r["result_status"] == "inconclusive"
+        )
+        latest_result_status = runs[0]["result_status"] if runs else None
+
+        latest_reproduced_at: str | None = None
+        latest_successful_recover_at: str | None = None
+        for run in runs:
+            if run["result_status"] == "reproduced" and latest_reproduced_at is None:
+                latest_reproduced_at = run["created_at"]
+            if (
+                run["result_status"] == "recovered"
+                and latest_successful_recover_at is None
+            ):
+                latest_successful_recover_at = run["created_at"]
+            if latest_reproduced_at and latest_successful_recover_at:
+                break
+
+        return {
+            "run_count": len(runs),
+            "replay_count": replay_count,
+            "recover_count": recover_count,
+            "latest_result_status": latest_result_status,
+            "ever_reproduced": ever_reproduced,
+            "latest_reproduced_at": latest_reproduced_at,
+            "latest_successful_recover_at": latest_successful_recover_at,
+            "inconclusive_count": inconclusive_count,
+        }
+
     def _problem_assets_payload(self, assets: ProblemAssetRecord) -> dict[str, Any]:
         payload = assets.to_dict()
         metadata = payload.get("metadata", {})
@@ -2000,7 +2131,9 @@ class WorkflowService:
                     if isinstance(comparison, dict) and comparison:
                         expectation = comparison.get("expectation", {})
                         if isinstance(expectation, dict) and expectation:
-                            reproduced = bool(expectation.get("reproduced", False))
+                            raw_reproduced = expectation.get("reproduced")
+                            if isinstance(raw_reproduced, bool):
+                                reproduced = raw_reproduced
                         replay_section["assessment"] = comparison.get(
                             "assertion_outcome"
                         )
@@ -2012,11 +2145,69 @@ class WorkflowService:
         if latest_recover is not None:
             recover_section["status"] = latest_recover.get("status")
             recover_section["mode"] = latest_recover.get("mode")
+
+        verification_runs = [
+            self._build_verification_run_from_action(a) for a in actions
+        ]
+        ever_reproduced = any(
+            r["result_status"] == "reproduced" for r in verification_runs
+        )
+        latest_result_status = (
+            verification_runs[0]["result_status"] if verification_runs else None
+        )
+
         can_replay = self._resolve_can_replay(record, assets)
         suggested = self._suggest_next_action(
-            record.status, actions, replay_section, can_replay
+            record.status,
+            actions,
+            replay_section,
+            can_replay,
+            ever_reproduced=ever_reproduced,
+            latest_result_status=latest_result_status,
         )
         last_verified_at = last_action.get("created_at") if last_action else None
+
+        latest_successful_replay: dict[str, Any] | None = None
+        latest_failed_replay: dict[str, Any] | None = None
+        latest_successful_recover: dict[str, Any] | None = None
+        for run in verification_runs:
+            if run["action_type"] == "replay":
+                if (
+                    run["result_status"] == "reproduced"
+                    and latest_successful_replay is None
+                ):
+                    latest_successful_replay = run
+                if (
+                    run["result_status"] == "not_reproduced"
+                    and latest_successful_replay is None
+                ):
+                    latest_successful_replay = run
+                if run["result_status"] == "failed" and latest_failed_replay is None:
+                    latest_failed_replay = run
+            if run["action_type"] == "recover" and run["result_status"] == "recovered":
+                if latest_successful_recover is None:
+                    latest_successful_recover = run
+            if (
+                latest_successful_replay
+                and latest_failed_replay
+                and latest_successful_recover
+            ):
+                break
+
+        _TREND_MAP = {
+            "reproduced": "reproduced",
+            "not_reproduced": "not_reproduced",
+            "recovered": "recovered",
+            "inconclusive": "inconclusive",
+            "failed": "inconclusive",
+        }
+        if not verification_runs:
+            trend = "no_history"
+        else:
+            trend = _TREND_MAP.get(latest_result_status or "", "no_history")
+
+        runs_preview = verification_runs[:5]
+
         return {
             "status": record.status,
             "latest_action": record.latest_action,
@@ -2027,6 +2218,13 @@ class WorkflowService:
             "latest_replay": replay_section,
             "latest_recover": recover_section,
             "suggested_next_action": suggested,
+            "trend": trend,
+            "latest_result_status": latest_result_status,
+            "ever_reproduced": ever_reproduced,
+            "latest_successful_replay": latest_successful_replay,
+            "latest_failed_replay": latest_failed_replay,
+            "latest_successful_recover": latest_successful_recover,
+            "verification_runs_preview": runs_preview,
         }
 
     @staticmethod
@@ -2052,6 +2250,9 @@ class WorkflowService:
         actions: list[dict[str, Any]],
         replay_section: dict[str, Any],
         can_replay: bool = False,
+        *,
+        ever_reproduced: bool = False,
+        latest_result_status: str | None = None,
     ) -> dict[str, str]:
         if status in ("resolved", "closed"):
             return {"action": "no_action", "reason": f"problem is already {status}"}
@@ -2060,37 +2261,58 @@ class WorkflowService:
                 "action": "run_replay_or_recover",
                 "reason": "no verification history yet",
             }
-        if replay_section.get("available"):
-            reproduced = replay_section.get("reproduced")
-            if reproduced is None:
-                replay_status = replay_section.get("action_status", "unknown")
+
+        if latest_result_status == "reproduced":
+            return {
+                "action": "continue_investigation",
+                "reason": "latest replay still reproduces the problem",
+            }
+        if latest_result_status == "not_reproduced":
+            if ever_reproduced:
                 return {
-                    "action": "inspect_history",
-                    "reason": f"latest replay {replay_status} without producing a comparison",
-                }
-            if reproduced:
-                return {
-                    "action": "continue_investigation",
-                    "reason": "latest replay still reproduces the problem",
+                    "action": "compare_runs",
+                    "reason": "latest replay no longer reproduces but was previously reproduced",
                 }
             return {
                 "action": "update_status",
                 "reason": "latest replay no longer reproduces the preserved failure",
             }
-        latest_recover = None
-        for action in actions:
-            if action.get("action_type") == "recover":
-                latest_recover = action
-                break
-        if latest_recover is not None:
+        if latest_result_status == "recovered":
             if can_replay:
                 return {
                     "action": "run_replay",
-                    "reason": "recovery prepared but not yet replayed to verify",
+                    "reason": "recovery plan prepared, replay after applying recovery to verify",
                 }
             return {
                 "action": "inspect_recovery_plan",
-                "reason": "recovery prepared but problem type does not support replay",
+                "reason": "recovery plan prepared but problem type does not support replay",
+            }
+        if latest_result_status == "inconclusive":
+            if can_replay:
+                return {
+                    "action": "run_replay",
+                    "reason": "latest verification inconclusive, replay available to clarify",
+                }
+            has_recover = any(a.get("action_type") == "recover" for a in actions)
+            if has_recover:
+                return {
+                    "action": "inspect_recovery_plan",
+                    "reason": "latest verification inconclusive, recovery plan available",
+                }
+            return {
+                "action": "inspect_history",
+                "reason": "latest verification produced inconclusive result",
+            }
+        if latest_result_status == "failed":
+            return {
+                "action": "inspect_history",
+                "reason": "latest verification execution failed",
+            }
+
+        if replay_section.get("available"):
+            return {
+                "action": "inspect_history",
+                "reason": "replay exists but result could not be determined",
             }
         return {"action": "inspect_history", "reason": "unable to determine next step"}
 
