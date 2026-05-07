@@ -2148,6 +2148,9 @@ class WorkflowService:
         ever_reproduced = any(
             r["result_status"] == "reproduced" for r in verification_runs
         )
+        latest_result_status = (
+            verification_runs[0]["result_status"] if verification_runs else None
+        )
 
         can_replay = self._resolve_can_replay(record, assets)
         suggested = self._suggest_next_action(
@@ -2156,11 +2159,9 @@ class WorkflowService:
             replay_section,
             can_replay,
             ever_reproduced=ever_reproduced,
+            latest_result_status=latest_result_status,
         )
         last_verified_at = last_action.get("created_at") if last_action else None
-        latest_result_status = (
-            verification_runs[0]["result_status"] if verification_runs else None
-        )
 
         latest_successful_replay: dict[str, Any] | None = None
         latest_failed_replay: dict[str, Any] | None = None
@@ -2247,6 +2248,7 @@ class WorkflowService:
         can_replay: bool = False,
         *,
         ever_reproduced: bool = False,
+        latest_result_status: str | None = None,
     ) -> dict[str, str]:
         if status in ("resolved", "closed"):
             return {"action": "no_action", "reason": f"problem is already {status}"}
@@ -2255,19 +2257,13 @@ class WorkflowService:
                 "action": "run_replay_or_recover",
                 "reason": "no verification history yet",
             }
-        if replay_section.get("available"):
-            reproduced = replay_section.get("reproduced")
-            if reproduced is None:
-                replay_status = replay_section.get("action_status", "unknown")
-                return {
-                    "action": "inspect_history",
-                    "reason": f"latest replay {replay_status} without producing a comparison",
-                }
-            if reproduced:
-                return {
-                    "action": "continue_investigation",
-                    "reason": "latest replay still reproduces the problem",
-                }
+
+        if latest_result_status == "reproduced":
+            return {
+                "action": "continue_investigation",
+                "reason": "latest replay still reproduces the problem",
+            }
+        if latest_result_status == "not_reproduced":
             if ever_reproduced:
                 return {
                     "action": "compare_runs",
@@ -2277,20 +2273,42 @@ class WorkflowService:
                 "action": "update_status",
                 "reason": "latest replay no longer reproduces the preserved failure",
             }
-        latest_recover = None
-        for action in actions:
-            if action.get("action_type") == "recover":
-                latest_recover = action
-                break
-        if latest_recover is not None:
+        if latest_result_status == "recovered":
             if can_replay:
                 return {
                     "action": "run_replay",
-                    "reason": "recovery prepared but not yet replayed to verify",
+                    "reason": "recovery completed, replay to verify the fix",
                 }
             return {
                 "action": "inspect_recovery_plan",
-                "reason": "recovery prepared but problem type does not support replay",
+                "reason": "recovery completed but problem type does not support replay",
+            }
+        if latest_result_status == "inconclusive":
+            if can_replay:
+                return {
+                    "action": "run_replay",
+                    "reason": "latest verification inconclusive, replay available to clarify",
+                }
+            has_recover = any(a.get("action_type") == "recover" for a in actions)
+            if has_recover:
+                return {
+                    "action": "inspect_recovery_plan",
+                    "reason": "latest verification inconclusive, recovery plan available",
+                }
+            return {
+                "action": "inspect_history",
+                "reason": "latest verification produced inconclusive result",
+            }
+        if latest_result_status == "failed":
+            return {
+                "action": "inspect_history",
+                "reason": "latest verification execution failed",
+            }
+
+        if replay_section.get("available"):
+            return {
+                "action": "inspect_history",
+                "reason": "replay exists but result could not be determined",
             }
         return {"action": "inspect_history", "reason": "unable to determine next step"}
 

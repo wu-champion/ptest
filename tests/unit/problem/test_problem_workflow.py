@@ -2632,7 +2632,7 @@ def test_verification_run_from_replay_not_reproduced(tmp_path: Path) -> None:
     assert runs[0]["reproduced"] is False
 
 
-def test_verification_run_from_replay_failed(tmp_path: Path) -> None:
+def test_verification_run_from_replay_connection_error(tmp_path: Path) -> None:
     service = WorkflowService(tmp_path)
     service.init_environment()
     service.add_case(
@@ -2660,7 +2660,7 @@ def test_verification_run_from_replay_failed(tmp_path: Path) -> None:
     with patch.object(
         req,
         "request",
-        return_value=_FakeResponse(500, {"error": "connection refused"}),
+        side_effect=req.ConnectionError("connection refused"),
     ):
         service.replay_problem(problem_id)
 
@@ -2668,7 +2668,7 @@ def test_verification_run_from_replay_failed(tmp_path: Path) -> None:
     runs = history["data"]["verification_runs"]
     assert len(runs) == 1
     assert runs[0]["action_type"] == "replay"
-    assert runs[0]["result_status"] == "reproduced"
+    assert runs[0]["result_status"] == "failed"
 
 
 def test_verification_run_from_recover_success(tmp_path: Path) -> None:
@@ -3044,3 +3044,4 @@ def test_trend_derived_from_latest_run_not_latest_replay(
     vs = result["problem"]["verification_summary"]
     assert vs["latest_result_status"] == "recovered"
     assert vs["trend"] == "recovered"
+    assert vs["suggested_next_action"]["action"] == "run_replay"
