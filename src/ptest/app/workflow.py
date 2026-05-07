@@ -3642,7 +3642,7 @@ class WorkflowService:
                     "WHERE type IN ('table', 'view') ORDER BY type, name"
                 )
                 raw_objects = cursor.fetchall()
-                tables = []
+                tables: list[dict[str, Any]] = []
                 table_count = 0
                 view_count = 0
                 for obj_name, obj_type in raw_objects:
@@ -3652,8 +3652,9 @@ class WorkflowService:
                         view_count += 1
                     if len(tables) >= max_tables:
                         continue
+                    safe_name = obj_name.replace('"', '""')
                     try:
-                        cursor.execute(f'PRAGMA table_info("{obj_name}")')
+                        cursor.execute(f'PRAGMA table_info("{safe_name}")')
                         raw_columns = cursor.fetchall()
                         columns = [
                             {"name": col[1], "type": col[2]}
@@ -3664,7 +3665,7 @@ class WorkflowService:
                     row_count = 0
                     if obj_type == "table":
                         try:
-                            cursor.execute(f'SELECT COUNT(*) FROM "{obj_name}"')
+                            cursor.execute(f'SELECT COUNT(*) FROM "{safe_name}"')
                             row_count = cursor.fetchone()[0]
                         except sqlite3.Error:
                             row_count = -1
@@ -3829,12 +3830,21 @@ class WorkflowService:
         diff = data_state_artifacts.get("diff", {})
         if not isinstance(diff, dict):
             diff = {}
+        reason = data_state_artifacts.get("reason")
+        if not reason:
+            reason = diff.get("reason")
+        if not reason:
+            for phase_key in ("before", "after"):
+                phase = data_state_artifacts.get(phase_key)
+                if isinstance(phase, dict) and phase.get("reason"):
+                    reason = phase["reason"]
+                    break
         return {
             "available": capture_status == "available",
             "capture_status": capture_status,
             "schema_changed": diff.get("schema_changed", False),
             "row_count_changes": diff.get("row_count_changes", []),
-            "reason": data_state_artifacts.get("reason"),
+            "reason": reason,
         }
 
     def _build_object_artifact_selection(
