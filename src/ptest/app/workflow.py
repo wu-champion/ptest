@@ -1318,16 +1318,16 @@ class WorkflowService:
         env_manager = self._bootstrap_environment()
         case_manager = CaseManager(env_manager)
         suite_manager = self._get_suite_manager()
-        suite = suite_manager.load_suite(name)
         before_snapshots: dict[str, dict[str, Any] | None] = {}
-        if suite:
-            for case_ref in suite.cases:
-                case_def = case_manager.get_case(case_ref.case_id)
-                before_snapshots[case_ref.case_id] = (
-                    self._capture_data_state_snapshot(case_def, phase="before")
-                    if case_def
-                    else None
-                )
+
+        def _capture_before_snapshot(case_id: str) -> None:
+            case_def = case_manager.get_case(case_id)
+            before_snapshots[case_id] = (
+                self._capture_data_state_snapshot(case_def, phase="before")
+                if case_def
+                else None
+            )
+
         result = suite_manager.execute_suite(
             suite_name=name,
             case_manager=case_manager,
@@ -1336,6 +1336,7 @@ class WorkflowService:
             stop_on_failure=stop_on_failure,
             timeout=timeout,
             retry_count=retry_count,
+            before_case_callback=_capture_before_snapshot,
         )
         for case_id, case_result in case_manager.results.items():
             self._persist_execution(
