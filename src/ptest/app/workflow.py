@@ -3603,7 +3603,14 @@ class WorkflowService:
                     "capture_status": "unavailable",
                     "reason": "database path not specified",
                 }
-            return self._capture_sqlite_state_snapshot(database_path, phase=phase)
+            try:
+                return self._capture_sqlite_state_snapshot(database_path, phase=phase)
+            except Exception as exc:
+                return {
+                    "phase": phase,
+                    "capture_status": "unavailable",
+                    "reason": f"snapshot capture failed: {exc}",
+                }
         if db_type == "mysql":
             return {
                 "phase": phase,

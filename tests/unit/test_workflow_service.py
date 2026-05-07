@@ -2007,3 +2007,29 @@ def test_suite_sqlite_data_state_snapshot_regression(tmp_path: Path) -> None:
 
     artifact_dir = tmp_path / ".ptest" / "artifacts" / executions[0]["execution_id"]
     assert (artifact_dir / "context" / "data_state.json").exists()
+
+
+def test_data_state_capture_degrades_for_malformed_database_path(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "malformed_db_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": 12345,
+            "query": "SELECT 1 as value",
+            "expected_result": [{"value": 1}],
+        },
+    )
+    result = service.run_case("malformed_db_case")
+    assert result["success"] is False
+    executions = service.list_execution_records("malformed_db_case")
+    assert len(executions) == 1
+    dsa = executions[0]["metadata"].get("data_state_artifacts")
+    assert isinstance(dsa, dict)
+    assert dsa["capture_status"] == "unavailable"
+    assert dsa["before"]["capture_status"] == "unavailable"
+    assert "snapshot capture failed" in dsa["before"]["reason"]
