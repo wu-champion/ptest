@@ -1946,7 +1946,12 @@ class WorkflowService:
 
         if action_type == "replay":
             if success and action_status == "completed":
-                result_status = "reproduced" if reproduced else "not_reproduced"
+                if reproduced is True:
+                    result_status = "reproduced"
+                elif reproduced is False:
+                    result_status = "not_reproduced"
+                else:
+                    result_status = "inconclusive"
             else:
                 result_status = "failed"
         elif action_type == "recover":
@@ -2136,11 +2141,6 @@ class WorkflowService:
         if latest_recover is not None:
             recover_section["status"] = latest_recover.get("status")
             recover_section["mode"] = latest_recover.get("mode")
-        can_replay = self._resolve_can_replay(record, assets)
-        suggested = self._suggest_next_action(
-            record.status, actions, replay_section, can_replay
-        )
-        last_verified_at = last_action.get("created_at") if last_action else None
 
         verification_runs = [
             self._build_verification_run_from_action(a) for a in actions
@@ -2148,6 +2148,16 @@ class WorkflowService:
         ever_reproduced = any(
             r["result_status"] == "reproduced" for r in verification_runs
         )
+
+        can_replay = self._resolve_can_replay(record, assets)
+        suggested = self._suggest_next_action(
+            record.status,
+            actions,
+            replay_section,
+            can_replay,
+            ever_reproduced=ever_reproduced,
+        )
+        last_verified_at = last_action.get("created_at") if last_action else None
         latest_result_status = (
             verification_runs[0]["result_status"] if verification_runs else None
         )
@@ -2179,19 +2189,17 @@ class WorkflowService:
             ):
                 break
 
-        if not actions:
+        _TREND_MAP = {
+            "reproduced": "reproduced",
+            "not_reproduced": "not_reproduced",
+            "recovered": "recovered",
+            "inconclusive": "inconclusive",
+            "failed": "inconclusive",
+        }
+        if not verification_runs:
             trend = "no_history"
-        elif latest_replay is not None:
-            if replay_section.get("reproduced") is True:
-                trend = "reproduced"
-            elif replay_section.get("reproduced") is False:
-                trend = "not_reproduced" if ever_reproduced else "not_reproduced"
-            else:
-                trend = "inconclusive"
-        elif latest_recover is not None:
-            trend = "recovered"
         else:
-            trend = "no_history"
+            trend = _TREND_MAP.get(latest_result_status or "", "no_history")
 
         runs_preview = verification_runs[:5]
 
@@ -2237,6 +2245,8 @@ class WorkflowService:
         actions: list[dict[str, Any]],
         replay_section: dict[str, Any],
         can_replay: bool = False,
+        *,
+        ever_reproduced: bool = False,
     ) -> dict[str, str]:
         if status in ("resolved", "closed"):
             return {"action": "no_action", "reason": f"problem is already {status}"}
@@ -2257,6 +2267,11 @@ class WorkflowService:
                 return {
                     "action": "continue_investigation",
                     "reason": "latest replay still reproduces the problem",
+                }
+            if ever_reproduced:
+                return {
+                    "action": "compare_runs",
+                    "reason": "latest replay no longer reproduces but was previously reproduced",
                 }
             return {
                 "action": "update_status",

@@ -2668,6 +2668,7 @@ def test_verification_run_from_replay_failed(tmp_path: Path) -> None:
     runs = history["data"]["verification_runs"]
     assert len(runs) == 1
     assert runs[0]["action_type"] == "replay"
+    assert runs[0]["result_status"] == "reproduced"
 
 
 def test_verification_run_from_recover_success(tmp_path: Path) -> None:
@@ -2924,3 +2925,122 @@ def test_verification_summary_enhanced_fields_present(tmp_path: Path) -> None:
     assert "latest_failed_replay" in vs
     assert "latest_successful_recover" in vs
     assert "verification_runs_preview" in vs
+
+
+def test_verification_run_completed_replay_without_comparison_is_inconclusive(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    action = {
+        "action_id": "test_no_comp",
+        "action_type": "replay",
+        "status": "completed",
+        "success": True,
+        "mode": "request_replay",
+        "metadata": {},
+    }
+    run = service._build_verification_run_from_action(action)
+    assert run["result_status"] == "inconclusive"
+    assert run["reproduced"] is None
+
+
+def test_suggest_compare_runs_when_ever_reproduced_but_latest_not(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "vr_compare_case",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    import requests as req
+    from unittest.mock import patch
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.run_case("vr_compare_case")
+
+    problems = service.list_problem_records(case_id="vr_compare_case")
+    problem_id = problems[0]["problem_id"]
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.replay_problem(problem_id)
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(200, {"message": "ok"}),
+    ):
+        service.replay_problem(problem_id)
+
+    result = service.get_problem_record(problem_id)
+    vs = result["problem"]["verification_summary"]
+    assert vs["trend"] == "not_reproduced"
+    assert vs["ever_reproduced"] is True
+    assert vs["suggested_next_action"]["action"] == "compare_runs"
+
+
+def test_trend_derived_from_latest_run_not_latest_replay(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "vr_trend_case",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api/demo"},
+            "expected_status": 200,
+        },
+    )
+
+    import requests as req
+    from unittest.mock import patch
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.run_case("vr_trend_case")
+
+    problems = service.list_problem_records(case_id="vr_trend_case")
+    problem_id = problems[0]["problem_id"]
+
+    with patch.object(
+        req,
+        "request",
+        return_value=_FakeResponse(500, {"error": "boom"}),
+    ):
+        service.replay_problem(problem_id)
+
+    service.storage.save_problem_recovery_history(
+        ProblemRecoveryRecord(
+            action_id="recovery_after_replay",
+            problem_id=problem_id,
+            problem_type="api_response",
+            action_type="recover",
+            mode="preservation_only",
+            success=True,
+            status="prepared",
+            created_at="2099-12-31T23:59:59",
+        )
+    )
+
+    result = service.get_problem_record(problem_id)
+    vs = result["problem"]["verification_summary"]
+    assert vs["latest_result_status"] == "recovered"
+    assert vs["trend"] == "recovered"
