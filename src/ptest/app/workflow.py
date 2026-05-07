@@ -1936,7 +1936,9 @@ class WorkflowService:
         if isinstance(comparison, dict) and comparison:
             expectation = comparison.get("expectation", {})
             if isinstance(expectation, dict) and expectation:
-                reproduced = bool(expectation.get("reproduced", False))
+                raw_reproduced = expectation.get("reproduced")
+                if isinstance(raw_reproduced, bool):
+                    reproduced = raw_reproduced
             assertion_outcome = comparison.get("assertion_outcome")
             if assertion_outcome:
                 comparison_summary["assertion_outcome"] = assertion_outcome
@@ -2129,7 +2131,9 @@ class WorkflowService:
                     if isinstance(comparison, dict) and comparison:
                         expectation = comparison.get("expectation", {})
                         if isinstance(expectation, dict) and expectation:
-                            reproduced = bool(expectation.get("reproduced", False))
+                            raw_reproduced = expectation.get("reproduced")
+                            if isinstance(raw_reproduced, bool):
+                                reproduced = raw_reproduced
                         replay_section["assessment"] = comparison.get(
                             "assertion_outcome"
                         )
@@ -2277,11 +2281,11 @@ class WorkflowService:
             if can_replay:
                 return {
                     "action": "run_replay",
-                    "reason": "recovery completed, replay to verify the fix",
+                    "reason": "recovery plan prepared, replay after applying recovery to verify",
                 }
             return {
                 "action": "inspect_recovery_plan",
-                "reason": "recovery completed but problem type does not support replay",
+                "reason": "recovery plan prepared but problem type does not support replay",
             }
         if latest_result_status == "inconclusive":
             if can_replay:

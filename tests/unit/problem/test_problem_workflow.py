@@ -2945,6 +2945,31 @@ def test_verification_run_completed_replay_without_comparison_is_inconclusive(
     assert run["reproduced"] is None
 
 
+def test_verification_run_expectation_without_reproduced_key_is_inconclusive(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    action = {
+        "action_id": "test_expect_no_repr",
+        "action_type": "replay",
+        "status": "completed",
+        "success": True,
+        "mode": "request_replay",
+        "metadata": {
+            "result": {
+                "comparison": {
+                    "expectation": {"matched": True},
+                    "summary": {"detail": "partial"},
+                }
+            }
+        },
+    }
+    run = service._build_verification_run_from_action(action)
+    assert run["result_status"] == "inconclusive"
+    assert run["reproduced"] is None
+
+
 def test_suggest_compare_runs_when_ever_reproduced_but_latest_not(
     tmp_path: Path,
 ) -> None:
