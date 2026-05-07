@@ -529,7 +529,8 @@ class TestExecutor:
             expected_result = operation.get("expected_result")
             step_name = str(operation.get("name", f"step_{index}"))
 
-            with connection.cursor() as cursor:
+            cursor = connection.cursor()
+            try:
                 cursor.execute(query)
                 result: Any
                 if query.upper().startswith("SELECT"):
@@ -542,6 +543,8 @@ class TestExecutor:
                     result = {
                         "rowcount": getattr(cursor, "rowcount", 0),
                     }
+            finally:
+                cursor.close()
 
             valid, validation_message = self._validate_database_result(
                 expected_result,

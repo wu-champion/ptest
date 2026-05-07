@@ -271,6 +271,9 @@ class _FakeMySQLCursor:
     def fetchall(self) -> list[tuple[object, ...]]:
         return self._rows
 
+    def close(self) -> None:
+        return None
+
 
 class _FakeMySQLConnection:
     def __init__(
@@ -1846,8 +1849,14 @@ def test_data_state_diff_captures_row_count_changes(
             "type": "database",
             "db_type": "sqlite",
             "database": str(db_path),
-            "query": "SELECT COUNT(*) as cnt FROM items",
-            "expected_result": [{"cnt": 1}],
+            "operations": [
+                {
+                    "query": "INSERT INTO items (name) VALUES ('added')",
+                    "type": "execute",
+                },
+                {"query": "SELECT COUNT(*) as cnt FROM items", "type": "query"},
+            ],
+            "expected_result": [{"cnt": 2}],
         },
     )
     result = service.run_case("diff_case")
@@ -1856,7 +1865,11 @@ def test_data_state_diff_captures_row_count_changes(
     dsa = executions[0]["metadata"]["data_state_artifacts"]
     diff = dsa["diff"]
     assert diff["capture_complete"] is True
-    assert diff["file_changed"] is False
+    changes = diff["row_count_changes"]
+    items_change = next(c for c in changes if c["table"] == "items")
+    assert items_change["before"] == 1
+    assert items_change["after"] == 2
+    assert items_change["delta"] == 1
     assert diff["schema_changed"] is False
 
 

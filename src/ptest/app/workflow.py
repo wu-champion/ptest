@@ -1318,6 +1318,16 @@ class WorkflowService:
         env_manager = self._bootstrap_environment()
         case_manager = CaseManager(env_manager)
         suite_manager = self._get_suite_manager()
+        suite = suite_manager.load_suite(name)
+        before_snapshots: dict[str, dict[str, Any] | None] = {}
+        if suite:
+            for case_ref in suite.cases:
+                case_def = case_manager.get_case(case_ref.case_id)
+                before_snapshots[case_ref.case_id] = (
+                    self._capture_data_state_snapshot(case_def, phase="before")
+                    if case_def
+                    else None
+                )
         result = suite_manager.execute_suite(
             suite_name=name,
             case_manager=case_manager,
@@ -1328,7 +1338,12 @@ class WorkflowService:
             retry_count=retry_count,
         )
         for case_id, case_result in case_manager.results.items():
-            self._persist_execution(case_id, case_result, case_manager)
+            self._persist_execution(
+                case_id,
+                case_result,
+                case_manager,
+                data_state_snapshot_before=before_snapshots.get(case_id),
+            )
         if "results" in result:
             result["results"] = [
                 self._normalize_suite_result(item) for item in result["results"]
