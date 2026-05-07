@@ -1950,3 +1950,60 @@ def test_non_database_case_no_data_state_artifacts(
     executions = service.list_execution_records("api_case")
     dsa = executions[0]["metadata"].get("data_state_artifacts")
     assert dsa is None
+
+
+def test_suite_sqlite_data_state_snapshot_regression(tmp_path: Path) -> None:
+    import sqlite3
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+
+    db_path = tmp_path / "suite_test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
+    conn.execute("INSERT INTO items (name) VALUES ('initial')")
+    conn.commit()
+    conn.close()
+
+    service.add_case(
+        "suite_ds_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "operations": [
+                {
+                    "query": "INSERT INTO items (name) VALUES ('from_suite')",
+                    "type": "execute",
+                },
+                {"query": "SELECT COUNT(*) as cnt FROM items", "type": "query"},
+            ],
+            "expected_result": [{"cnt": 2}],
+        },
+    )
+    service.create_suite(
+        {
+            "name": "ds_suite",
+            "cases": [{"case_id": "suite_ds_case", "order": 1}],
+        }
+    )
+
+    suite_run = service.run_suite("ds_suite")
+    assert suite_run["success"] is True
+
+    executions = service.list_execution_records("suite_ds_case")
+    assert len(executions) == 1
+    dsa = executions[0]["metadata"].get("data_state_artifacts")
+    assert isinstance(dsa, dict)
+    assert dsa["capture_status"] == "available"
+    assert dsa["before"] is not None
+    assert dsa["after"] is not None
+    assert dsa["diff"]["capture_complete"] is True
+    changes = dsa["diff"]["row_count_changes"]
+    items_change = next(c for c in changes if c["table"] == "items")
+    assert items_change["before"] == 1
+    assert items_change["after"] == 2
+    assert items_change["delta"] == 1
+
+    artifact_dir = tmp_path / ".ptest" / "artifacts" / executions[0]["execution_id"]
+    assert (artifact_dir / "context" / "data_state.json").exists()
