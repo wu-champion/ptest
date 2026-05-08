@@ -4784,7 +4784,15 @@ class WorkflowService:
     _PREFLIGHT_SUPPORTED_TYPES = {"database_server"}
 
     def _supports_runtime_preflight(self, record: ManagedObjectRecord) -> bool:
-        return record.type_name in self._PREFLIGHT_SUPPORTED_TYPES
+        if record.type_name not in self._PREFLIGHT_SUPPORTED_TYPES:
+            return False
+        config = record.config if isinstance(record.config, dict) else {}
+        if str(config.get("db_type", "")).lower() != "mysql":
+            return False
+        managed_instance = config.get("managed_instance", {})
+        if not isinstance(managed_instance, dict) or not managed_instance:
+            return False
+        return True
 
     def _build_object_runtime_preflight(
         self,
@@ -5107,17 +5115,18 @@ class WorkflowService:
                 "message": "port is missing or invalid",
                 "details": {"port": port},
             }
-        try:
-            reachable = self._is_host_port_reachable(host, port)
-        except Exception as exc:
-            return {
-                "code": "port_bind",
-                "status": "warning",
-                "required": False,
-                "message": f"port check could not be completed: {exc}",
-                "details": {"host": host, "port": port},
-            }
+        # running 对象用 TCP connect 验证端口可达性
         if record.status == OBJECT_STATUS_RUNNING:
+            try:
+                reachable = self._is_host_port_reachable(host, port)
+            except Exception as exc:
+                return {
+                    "code": "port_bind",
+                    "status": "warning",
+                    "required": False,
+                    "message": f"port reachability check failed: {exc}",
+                    "details": {"host": host, "port": port},
+                }
             if reachable:
                 return {
                     "code": "port_bind",
@@ -5133,19 +5142,34 @@ class WorkflowService:
                 "message": f"port {host}:{port} is not reachable but object status is running",
                 "details": {"host": host, "port": port},
             }
-        if reachable:
+        # 非 running 对象用 bind probe 检测端口是否可被当前进程绑定
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind((host, port))
+        except PermissionError as exc:
             return {
                 "code": "port_bind",
                 "status": "failed",
                 "required": True,
-                "message": f"port {host}:{port} is already in use",
+                "reason": "bind_denied",
+                "message": f"runtime backend does not permit binding {host}:{port}: {exc}",
+                "details": {"host": host, "port": port},
+            }
+        except OSError as exc:
+            return {
+                "code": "port_bind",
+                "status": "failed",
+                "required": True,
+                "reason": "bind_unavailable",
+                "message": f"port {host}:{port} bind failed: {exc}",
                 "details": {"host": host, "port": port},
             }
         return {
             "code": "port_bind",
             "status": "passed",
             "required": True,
-            "message": f"port {host}:{port} is available",
+            "message": f"port {host}:{port} is available for binding",
             "details": {"host": host, "port": port},
         }
 
@@ -5252,11 +5276,13 @@ class WorkflowService:
         checks: list[dict[str, Any]],
     ) -> str:
         for check in checks:
-            if (
-                check.get("status") == "failed"
-                and check.get("required", False)
-                and check.get("code") in self._DEPENDENCY_CONFIGURATION_CHECKS
-            ):
+            if not (check.get("status") == "failed" and check.get("required", False)):
+                continue
+            code = check.get("code")
+            if code in self._DEPENDENCY_CONFIGURATION_CHECKS:
+                return "dependency_configuration"
+            # port_bind PermissionError 属于 backend capability 问题
+            if code == "port_bind" and check.get("reason") == "bind_denied":
                 return "dependency_configuration"
         return "dependency_object"
 

@@ -868,25 +868,21 @@ def test_workflow_service_reports_mysql_runtime_backend_preflight_failure(
     start_result = service.start_object("mysql_service")
     assert start_result["success"] is False
     assert start_result["status"] == "error"
-    assert "does not permit binding" in start_result["message"]
-    assert "Operation not permitted" in start_result["message"]
+    # preflight bind probe 捕获 PermissionError 后阻断 start
+    assert start_result["error_code"] == "object_start_preflight_failed"
+    preflight = start_result["runtime_preflight"]
+    assert preflight["status"] == "failed"
+    port_check = next(c for c in preflight["checks"] if c["code"] == "port_bind")
+    assert port_check["status"] == "failed"
+    assert "does not permit binding" in port_check["message"]
+    assert "Operation not permitted" in port_check["message"]
+    # 对象保持 installed 状态（未进入 start_failed_preserved）
     status = service.get_object_status("mysql_service")
     assert status["success"] is True
-    assert status["object"]["status"] == OBJECT_STATUS_START_FAILED_PRESERVED
-    assert status["object"]["failure_state"]["phase"] == "start"
-    assert status["object"]["available_actions"] == {
-        "clear": True,
-        "reset": True,
-    }
-    assert "clear" in status["object"]["suggested_actions"]
-    assert "reset" in status["object"]["suggested_actions"]
+    assert status["object"]["status"] == "installed"
     assert status["object"]["linked_problems"][0]["problem_type"] == (
         "dependency_configuration"
     )
-    backend = status["object"]["metadata"]["runtime_backend"]
-    assert backend["last_preflight"]["status"] == "failed"
-    assert backend["last_preflight"]["failure_reason"] == "tcp_bind_denied"
-    assert "Operation not permitted" in backend["last_preflight"]["message"]
 
 
 def test_workflow_service_uninstalls_mysql_managed_instance(tmp_path: Path) -> None:
@@ -2032,6 +2028,7 @@ def test_data_state_capture_degrades_for_malformed_database_path(
     assert isinstance(dsa, dict)
     assert dsa["capture_status"] == "unavailable"
     assert dsa["before"]["capture_status"] == "unavailable"
+    assert "snapshot capture failed" in dsa["before"]["reason"]
 
 
 # ── runtime preflight tests ────────────────────────────────────────────
@@ -2176,10 +2173,23 @@ def test_start_preflight_records_problem(tmp_path: Path) -> None:
         service.start_object("mysql_svc")
 
     problems = list(service.storage.load_problem_records().values())
-    assert any(
-        p.object_refs == ["mysql_svc"] and p.problem_type == "dependency_object"
-        for p in problems
-    )
+    matching = [p for p in problems if p.object_refs == ["mysql_svc"]]
+    assert len(matching) >= 1
+    problem = matching[0]
+    assert problem.problem_type == "dependency_object"
+    # 检查 problem assets 中的 details 和 recovery
+    assets = service.storage.get_problem_assets(problem.problem_id)
+    assert assets is not None
+    details = assets.details
+    assert details["phase"] == "preflight"
+    assert details["action"] == "start"
+    assert "runtime_preflight" in details
+    assert details["runtime_preflight"]["status"] == "failed"
+    recovery = assets.recovery
+    assert recovery["action"] == "fix_runtime_preflight"
+    assert recovery["object_name"] == "mysql_svc"
+    assert isinstance(recovery["failed_checks"], list)
+    assert "port_bind" in recovery["failed_checks"]
 
 
 def test_object_status_includes_runtime_preflight_diagnostics(
