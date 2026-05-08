@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import socket
 import tarfile
 import textwrap
 from pathlib import Path
 
 import ptest.cases.executor as case_executor_module
 from ptest.api import PTestAPI
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 def _normalized_path(path: str) -> str:
@@ -206,3 +213,59 @@ def test_api_runs_mysql_case_bound_to_managed_object(
         "database": None,
         "charset": "utf8mb4",
     }
+
+
+def test_api_check_object_readiness_shape(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=str(tmp_path))
+    api.init_environment()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    mysql_port = _find_free_port()
+    api.create_object(
+        "mysql",
+        "mysql_svc",
+        mysql_package_path=str(package_path),
+        workspace_path=str(tmp_path),
+        port=mysql_port,
+        mysql_config={"health_check_mode": "tcp"},
+    )
+
+    result = api.check_object_readiness("mysql_svc")
+    assert "success" in result
+    assert "status" in result
+    assert "message" in result
+    assert "runtime_preflight" in result
+    assert result["success"] is True
+    preflight = result["runtime_preflight"]
+    assert "object_name" in preflight
+    assert "checks" in preflight
+    assert "summary" in preflight
+
+
+def test_api_check_object_readiness_unsupported_type_shape(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=str(tmp_path))
+    api.init_environment()
+    api.create_object("service", "redis_svc")
+
+    result = api.check_object_readiness("redis_svc")
+    assert result["success"] is False
+    assert result["status"] == "unavailable"
+
+
+def test_api_get_object_status_includes_runtime_preflight(tmp_path: Path) -> None:
+    api = PTestAPI(work_path=str(tmp_path))
+    api.init_environment()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    mysql_port = _find_free_port()
+    api.create_object(
+        "mysql",
+        "mysql_svc",
+        mysql_package_path=str(package_path),
+        workspace_path=str(tmp_path),
+        port=mysql_port,
+        mysql_config={"health_check_mode": "tcp"},
+    )
+
+    status = api.get_object_status("mysql_svc")
+    assert status["success"] is True
+    diagnostics = status["data"]["diagnostics"]
+    assert "runtime_preflight" in diagnostics

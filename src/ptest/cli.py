@@ -206,6 +206,16 @@ def setup_cli() -> argparse.ArgumentParser:
     )
     status_obj_parser.add_argument("name", help="Object name")
 
+    check_obj_parser = obj_subparsers.add_parser(
+        "check", help="Run runtime preflight check", parents=[workspace_parent]
+    )
+    check_obj_parser.add_argument("name", help="Object name")
+    check_obj_parser.add_argument(
+        "--scope",
+        default="start",
+        help="Preflight scope (default: start)",
+    )
+
     tool_parser = subparsers.add_parser(
         "tool",
         help=get_colored_text("Manage test tools", 92),
@@ -929,7 +939,7 @@ def _handle_object_command(
 
     if not hasattr(args, "obj_action") or not args.obj_action:
         print_colored(
-            "请指定操作: install/start/stop/clear/reset/restart/uninstall/list/status",
+            "请指定操作: install/start/stop/clear/reset/restart/uninstall/list/status/check",
             93,
         )
         return False
@@ -963,6 +973,16 @@ def _handle_object_command(
     if args.obj_action == "list":
         print(json.dumps(service.list_objects(), indent=2, ensure_ascii=False))
         return True
+
+    if args.obj_action == "check":
+        scope = getattr(args, "scope", "start") or "start"
+        result = service.check_object_readiness(args.name, scope=scope)
+        color = 92 if result["success"] else 91
+        print_colored(result["message"], color)
+        preflight = result.get("runtime_preflight")
+        if preflight is not None:
+            print(json.dumps(preflight, indent=2, ensure_ascii=False))
+        return result["success"]
 
     action_handlers = {
         "start": service.start_object,
