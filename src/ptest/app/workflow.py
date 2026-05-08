@@ -3623,6 +3623,9 @@ class WorkflowService:
             "reason": f"unsupported db_type: {db_type}",
         }
 
+    _SQLITE_SNAPSHOT_MAX_TABLES = 20
+    _SQLITE_SNAPSHOT_MAX_COLUMNS = 30
+
     def _capture_sqlite_state_snapshot(
         self,
         database_path: str,
@@ -3654,8 +3657,8 @@ class WorkflowService:
                 "captured_at": now,
                 "reason": f"failed to stat database file: {e}",
             }
-        max_tables = 20
-        max_columns = 30
+        max_tables = self._SQLITE_SNAPSHOT_MAX_TABLES
+        max_columns = self._SQLITE_SNAPSHOT_MAX_COLUMNS
         try:
             conn = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
             try:
@@ -3675,9 +3678,10 @@ class WorkflowService:
                         view_count += 1
                     if len(tables) >= max_tables:
                         continue
+                    # safe quoting: table names from sqlite_master, not user input
                     safe_name = obj_name.replace('"', '""')
                     try:
-                        cursor.execute(f'PRAGMA table_info("{safe_name}")')
+                        cursor.execute('PRAGMA table_info("' + safe_name + '")')
                         raw_columns = cursor.fetchall()
                         columns = [
                             {"name": col[1], "type": col[2]}
@@ -3688,7 +3692,7 @@ class WorkflowService:
                     row_count = 0
                     if obj_type == "table":
                         try:
-                            cursor.execute(f'SELECT COUNT(*) FROM "{safe_name}"')
+                            cursor.execute('SELECT COUNT(*) FROM "' + safe_name + '"')
                             row_count = cursor.fetchone()[0]
                         except sqlite3.Error:
                             row_count = -1
@@ -3761,8 +3765,8 @@ class WorkflowService:
             "after": after,
             "diff": diff,
             "limits": {
-                "max_tables": 20,
-                "max_columns_per_table": 30,
+                "max_tables": self._SQLITE_SNAPSHOT_MAX_TABLES,
+                "max_columns_per_table": self._SQLITE_SNAPSHOT_MAX_COLUMNS,
                 "row_values_captured": False,
             },
         }

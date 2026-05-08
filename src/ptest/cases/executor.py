@@ -544,7 +544,8 @@ class TestExecutor:
                         "rowcount": getattr(cursor, "rowcount", 0),
                     }
             finally:
-                cursor.close()
+                if cursor is not None and hasattr(cursor, "close"):
+                    cursor.close()
 
             valid, validation_message = self._validate_database_result(
                 expected_result,
