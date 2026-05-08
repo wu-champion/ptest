@@ -2237,3 +2237,121 @@ def test_object_status_preflight_from_metadata(tmp_path: Path) -> None:
     status = service.get_object_status("mysql_svc")
     diagnostics = status["object"]["diagnostics"]
     assert diagnostics["runtime_preflight"]["checked_at"] is not None
+
+
+def test_preflight_workspace_boundary_degrades_for_malformed_path(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    # 安装后注入不可解析的 workspace_path
+    record = service.storage.get_object("mysql_svc")
+    record.config["workspace_path"] = "\x00invalid"
+    service.storage.upsert_object(record)
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    wb_check = next(c for c in preflight["checks"] if c["code"] == "workspace_boundary")
+    assert wb_check["status"] == "failed"
+    assert wb_check["required"] is True
+    assert "could not be resolved" in wb_check["message"]
+
+
+def test_preflight_dependency_requirements_schema_warning(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    # 安装后注入非法 schema
+    record = service.storage.get_object("mysql_svc")
+    record.config["dependency_requirements"] = "not_a_dict"
+    service.storage.upsert_object(record)
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    da_check = next(c for c in preflight["checks"] if c["code"] == "dependency_assets")
+    assert da_check["status"] == "warning"
+    assert "schema_warnings" in da_check["details"]
+    assert "str" in da_check["details"]["schema_warnings"][0]
+
+
+def test_preflight_dependency_requirements_valid_dict(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    # 安装后注入有效 dict
+    record = service.storage.get_object("mysql_svc")
+    record.config["dependency_requirements"] = {"libaio": ">=0.3"}
+    service.storage.upsert_object(record)
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    da_check = next(c for c in preflight["checks"] if c["code"] == "dependency_assets")
+    assert da_check["status"] == "passed"
+    assert da_check["details"]["dependency_requirements_keys"] == ["libaio"]
+
+
+def test_start_preflight_blocking_includes_checks_field(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    occupied_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": occupied_port,
+        },
+    )
+    assert install_result["success"] is True
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
+        blocker.bind(("127.0.0.1", occupied_port))
+        blocker.listen(1)
+        start_result = service.start_object("mysql_svc")
+
+    assert start_result["success"] is False
+    assert "checks" in start_result
+    assert start_result["checks"]["status"] == "failed"
+    assert start_result["checks"] == start_result["runtime_preflight"]

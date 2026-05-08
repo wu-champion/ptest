@@ -2795,6 +2795,7 @@ class WorkflowService:
                     message=f"Object '{name}' failed runtime preflight for '{action}'",
                     data=record.to_dict(),
                     object=record.to_dict(),
+                    checks=preflight,
                     runtime_preflight=preflight,
                     error_code=f"object_{action}_preflight_failed",
                 )
@@ -4917,11 +4918,22 @@ class WorkflowService:
         record: ManagedObjectRecord,
     ) -> dict[str, Any]:
         config = record.config if isinstance(record.config, dict) else {}
-        workspace_path = (
-            Path(str(config.get("workspace_path", self.root_path)))
-            .expanduser()
-            .resolve()
-        )
+        try:
+            workspace_path = (
+                Path(str(config.get("workspace_path", self.root_path)))
+                .expanduser()
+                .resolve()
+            )
+        except (OSError, ValueError) as exc:
+            return {
+                "code": "workspace_boundary",
+                "status": "failed",
+                "required": True,
+                "message": f"workspace path could not be resolved: {exc}",
+                "details": {
+                    "workspace_path": str(config.get("workspace_path", "")),
+                },
+            }
         managed_instance = config.get("managed_instance", {})
         if not isinstance(managed_instance, dict):
             managed_instance = {}
@@ -5180,6 +5192,7 @@ class WorkflowService:
         config = record.config if isinstance(record.config, dict) else {}
         missing_required: list[str] = []
         missing_optional: list[str] = []
+        schema_warnings: list[str] = []
         dependency_assets = config.get("dependency_assets", [])
         if isinstance(dependency_assets, list):
             for asset in dependency_assets:
@@ -5210,31 +5223,49 @@ class WorkflowService:
                         missing_required.append(lib_path)
                 except (OSError, ValueError):
                     missing_required.append(f"{lib_path}:unresolvable")
+        dependency_requirements = config.get("dependency_requirements")
+        if dependency_requirements is not None and not isinstance(
+            dependency_requirements, dict
+        ):
+            schema_warnings.append(
+                f"dependency_requirements is {type(dependency_requirements).__name__}, expected dict"
+            )
+        details: dict[str, Any] = {}
+        if missing_required:
+            details["missing_required"] = missing_required
+        if missing_optional:
+            details["missing_optional"] = missing_optional
+        if schema_warnings:
+            details["schema_warnings"] = schema_warnings
+        if isinstance(dependency_requirements, dict) and dependency_requirements:
+            details["dependency_requirements_keys"] = sorted(
+                str(k) for k in dependency_requirements
+            )
         if missing_required:
             return {
                 "code": "dependency_assets",
                 "status": "failed",
                 "required": True,
                 "message": f"required dependency assets missing: {', '.join(missing_required)}",
-                "details": {
-                    "missing_required": missing_required,
-                    "missing_optional": missing_optional,
-                },
+                "details": details,
             }
-        if missing_optional:
+        if schema_warnings or missing_optional:
+            warnings_combined = schema_warnings + [
+                f"optional asset missing: {p}" for p in missing_optional
+            ]
             return {
                 "code": "dependency_assets",
                 "status": "warning",
                 "required": False,
-                "message": f"optional dependency assets missing: {', '.join(missing_optional)}",
-                "details": {"missing_optional": missing_optional},
+                "message": "; ".join(warnings_combined),
+                "details": details,
             }
         return {
             "code": "dependency_assets",
             "status": "passed",
             "required": True,
             "message": "all dependency assets are available",
-            "details": {},
+            "details": details,
         }
 
     def _summarize_runtime_preflight_checks(
