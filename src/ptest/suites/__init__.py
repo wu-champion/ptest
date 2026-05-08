@@ -34,6 +34,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from ..core import get_logger
@@ -248,6 +249,7 @@ class SuiteManager:
         stop_on_failure: bool = False,
         timeout: int = 0,
         retry_count: int = 0,
+        before_case_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """
         执行测试套件 / Execute test suite
@@ -308,6 +310,8 @@ class SuiteManager:
                 continue
 
             def execute_case(case_id=case.case_id):
+                if before_case_callback:
+                    before_case_callback(case_id)
                 if case_manager:
                     # 修复: 传 case_id 而非 case_data
                     return case_manager.run_case(case_id)

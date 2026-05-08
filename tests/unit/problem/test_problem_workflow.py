@@ -395,6 +395,155 @@ def test_workflow_service_preserves_data_state_problem(tmp_path: Path) -> None:
     assert replay["error_code"] == "problem_replay_unsupported"
 
 
+def test_data_state_problem_assets_includes_data_state_artifacts(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    db_path = tmp_path / "dsa_test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE t (id INTEGER, val TEXT)")
+    conn.execute("INSERT INTO t VALUES (1, 'a')")
+    conn.commit()
+    conn.close()
+    service.add_case(
+        "dsa_problem_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "query": "SELECT * FROM t WHERE id = 999",
+            "expected_result": [{"id": 999, "val": "missing"}],
+        },
+    )
+    service.run_case("dsa_problem_case")
+    problems = service.list_problem_records(
+        case_id="dsa_problem_case", problem_type="data_state"
+    )
+    assert len(problems) == 1
+    problem_id = problems[0]["problem_id"]
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    details = assets["assets"]["details"]
+    assert "data_state_artifacts" in details
+    dsa = details["data_state_artifacts"]
+    assert dsa["capture_status"] == "available"
+    assert dsa["data_source"]["db_type"] == "sqlite"
+    assert dsa["diff"]["capture_complete"] is True
+    recovery = assets["assets"]["recovery"]
+    assert "state_snapshot" in recovery
+    ss = recovery["state_snapshot"]
+    assert ss["available"] is True
+    assert ss["capture_status"] == "available"
+
+
+def test_data_state_problem_investigation_includes_state_snapshot(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    db_path = tmp_path / "inv_test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE items (id INTEGER)")
+    conn.commit()
+    conn.close()
+    service.add_case(
+        "inv_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "query": "SELECT * FROM items WHERE id = 1",
+            "expected_result": [{"id": 1}],
+        },
+    )
+    service.run_case("inv_case")
+    problems = service.list_problem_records(
+        case_id="inv_case", problem_type="data_state"
+    )
+    problem_id = problems[0]["problem_id"]
+    result = service.get_problem_record(problem_id)
+    assert result["success"] is True
+    investigation = result["problem"]["investigation"]
+    assert "state_snapshot" in investigation
+    ss = investigation["state_snapshot"]
+    assert ss["available"] is True
+    assert ss["capture_status"] == "available"
+    assert isinstance(ss["row_count_changes"], list)
+
+
+def test_data_state_recovery_plan_includes_state_snapshot(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    db_path = tmp_path / "rec_test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE data (key TEXT, value TEXT)")
+    conn.execute("INSERT INTO data VALUES ('x', '1')")
+    conn.commit()
+    conn.close()
+    service.add_case(
+        "rec_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "query": "SELECT value FROM data WHERE key = 'y'",
+            "expected_result": [{"value": "2"}],
+        },
+    )
+    service.run_case("rec_case")
+    problems = service.list_problem_records(
+        case_id="rec_case", problem_type="data_state"
+    )
+    problem_id = problems[0]["problem_id"]
+    recovery = service.recover_problem(problem_id)
+    assert recovery["success"] is True
+    assert "state_snapshot" in recovery["recovery"]
+    ss = recovery["recovery"]["state_snapshot"]
+    assert ss["available"] is True
+    assert ss["capture_status"] == "available"
+
+
+def test_data_state_problem_without_artifacts_degrades_gracefully(
+    tmp_path: Path,
+) -> None:
+    from ptest.models import ProblemRecord, ProblemAssetRecord
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.save_problem_record(
+        ProblemRecord(
+            problem_id="old_data_problem",
+            problem_type="data_state",
+            summary="old data problem without artifacts",
+        )
+    )
+    service.storage.save_problem_assets(
+        ProblemAssetRecord(
+            problem_id="old_data_problem",
+            problem_type="data_state",
+            summary="old data problem without artifacts",
+            details={"data_source": {"db_type": "sqlite"}},
+            recovery={"supported": False, "mode": "minimal_state_hints"},
+        )
+    )
+    result = service.get_problem_record("old_data_problem")
+    assert result["success"] is True
+    investigation = result["problem"]["investigation"]
+    assert "state_snapshot" in investigation
+    ss = investigation["state_snapshot"]
+    assert ss["available"] is False
+    assert ss["capture_status"] == "unavailable"
+
+
 def test_workflow_service_data_state_origin_hints_reflect_recent_predecessors(
     tmp_path: Path,
 ) -> None:

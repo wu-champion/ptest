@@ -164,6 +164,7 @@ class WorkspaceStorage:
         result: dict[str, Any],
         output: Any = None,
         object_artifacts: dict[str, Any] | None = None,
+        data_state_artifacts: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.ensure_layout()
         artifact_dir = self.artifacts_dir / execution_id
@@ -198,6 +199,11 @@ class WorkspaceStorage:
                 context_dir / "object_artifacts.json",
                 object_artifacts,
             )
+        if data_state_artifacts is not None:
+            files["data_state"] = self._write_artifact_file(
+                context_dir / "data_state.json",
+                data_state_artifacts,
+            )
 
         if output not in (None, ""):
             output_path = output_dir / (
@@ -210,16 +216,16 @@ class WorkspaceStorage:
             else:
                 files["output"] = self._write_artifact_file(output_path, output)
 
+        context_entries: dict[str, Any] = {
+            "environment": files["environment"],
+            "objects": files["objects"],
+        }
+        if "object_artifacts" in files:
+            context_entries["object_artifacts"] = files["object_artifacts"]
+        if "data_state" in files:
+            context_entries["data_state"] = files["data_state"]
         categories = {
-            "context": {
-                "environment": files["environment"],
-                "objects": files["objects"],
-                **(
-                    {"object_artifacts": files["object_artifacts"]}
-                    if "object_artifacts" in files
-                    else {}
-                ),
-            },
+            "context": context_entries,
             "case": {
                 "case": files["case"],
             },

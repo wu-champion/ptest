@@ -271,6 +271,9 @@ class _FakeMySQLCursor:
     def fetchall(self) -> list[tuple[object, ...]]:
         return self._rows
 
+    def close(self) -> None:
+        return None
+
 
 class _FakeMySQLConnection:
     def __init__(
@@ -1743,3 +1746,290 @@ def test_workflow_service_marks_detached_mock_runtime_as_stale(
     assert status["status"] == "stale"
     assert status["data"]["running"] is False
     assert status["data"]["runtime_state"]["status"] == "running"
+
+
+def test_sqlite_database_case_generates_data_state_artifacts(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    db_path = tmp_path / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE demo (id INTEGER PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO demo (value) VALUES ('hello')")
+    conn.commit()
+    conn.close()
+    service.add_case(
+        "ds_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "query": "SELECT * FROM demo",
+            "expected_result": [{"id": 1, "value": "hello"}],
+        },
+    )
+    result = service.run_case("ds_case")
+    assert result["success"] is True
+    executions = service.list_execution_records("ds_case")
+    assert len(executions) == 1
+    meta = executions[0]["metadata"]
+    dsa = meta.get("data_state_artifacts")
+    assert isinstance(dsa, dict)
+    assert dsa["capture_status"] == "available"
+    assert dsa["data_source"]["db_type"] == "sqlite"
+    assert dsa["before"] is not None
+    assert dsa["after"] is not None
+    assert dsa["diff"]["capture_complete"] is True
+    artifact_dir = tmp_path / ".ptest" / "artifacts" / executions[0]["execution_id"]
+    assert (artifact_dir / "context" / "data_state.json").exists()
+
+
+def test_data_state_artifacts_contains_schema_and_row_count(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    db_path = tmp_path / "schema.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE t1 (a INTEGER, b TEXT)")
+    conn.execute("CREATE TABLE t2 (x REAL)")
+    conn.execute("INSERT INTO t1 VALUES (1, 'a')")
+    conn.execute("INSERT INTO t1 VALUES (2, 'b')")
+    conn.execute("INSERT INTO t2 VALUES (3.14)")
+    conn.commit()
+    conn.close()
+    service.add_case(
+        "schema_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "query": "SELECT COUNT(*) FROM t1",
+            "expected_result": [{"count": 2}],
+        },
+    )
+    service.run_case("schema_case")
+    executions = service.list_execution_records("schema_case")
+    dsa = executions[0]["metadata"]["data_state_artifacts"]
+    after = dsa["after"]
+    assert after["capture_status"] == "available"
+    schema = after["schema"]
+    assert schema["table_count"] == 2
+    table_names = {t["name"] for t in schema["tables"]}
+    assert "t1" in table_names
+    assert "t2" in table_names
+    t1_info = next(t for t in schema["tables"] if t["name"] == "t1")
+    assert t1_info["row_count"] == 2
+    col_names = {c["name"] for c in t1_info["columns"]}
+    assert "a" in col_names
+    assert "b" in col_names
+
+
+def test_data_state_diff_captures_row_count_changes(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    db_path = tmp_path / "diff.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
+    conn.execute("INSERT INTO items (name) VALUES ('initial')")
+    conn.commit()
+    conn.close()
+    service.add_case(
+        "diff_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "operations": [
+                {
+                    "query": "INSERT INTO items (name) VALUES ('added')",
+                    "type": "execute",
+                },
+                {"query": "SELECT COUNT(*) as cnt FROM items", "type": "query"},
+            ],
+            "expected_result": [{"cnt": 2}],
+        },
+    )
+    result = service.run_case("diff_case")
+    assert result["success"] is True
+    executions = service.list_execution_records("diff_case")
+    dsa = executions[0]["metadata"]["data_state_artifacts"]
+    diff = dsa["diff"]
+    assert diff["capture_complete"] is True
+    changes = diff["row_count_changes"]
+    items_change = next(c for c in changes if c["table"] == "items")
+    assert items_change["before"] == 1
+    assert items_change["after"] == 2
+    assert items_change["delta"] == 1
+    assert diff["schema_changed"] is False
+
+
+def test_data_state_capture_degrades_when_database_missing(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "missing_db_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(tmp_path / "nonexistent.db"),
+            "query": "SELECT 1",
+            "expected_result": [{"1": 1}],
+        },
+    )
+    service.run_case("missing_db_case")
+    executions = service.list_execution_records("missing_db_case")
+    dsa = executions[0]["metadata"]["data_state_artifacts"]
+    assert dsa is not None
+    assert dsa["before"] is not None
+    assert dsa["before"].get("capture_status") == "unavailable"
+    diff = dsa["diff"]
+    assert diff["capture_complete"] is False
+
+
+def test_data_state_capture_unsupported_for_mysql(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "mysql_case",
+        {
+            "type": "database",
+            "db_type": "mysql",
+            "host": "localhost",
+            "port": 3306,
+            "query": "SELECT 1",
+            "expected_result": [{"1": 1}],
+        },
+    )
+    service.run_case("mysql_case")
+    executions = service.list_execution_records("mysql_case")
+    dsa = executions[0]["metadata"]["data_state_artifacts"]
+    assert dsa is not None
+    assert dsa["capture_status"] == "unsupported"
+
+
+def test_non_database_case_no_data_state_artifacts(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "api_case",
+        {
+            "type": "api",
+            "request": {"method": "GET", "url": "https://example.test/api"},
+            "expected_status": 200,
+        },
+    )
+    import requests as req
+    from unittest.mock import patch
+
+    with patch.object(
+        req,
+        "request",
+        return_value=type(
+            "R",
+            (),
+            {"status_code": 200, "json": lambda s: {}, "text": "{}", "headers": {}},
+        )(),
+    ):
+        service.run_case("api_case")
+    executions = service.list_execution_records("api_case")
+    dsa = executions[0]["metadata"].get("data_state_artifacts")
+    assert dsa is None
+
+
+def test_suite_sqlite_data_state_snapshot_regression(tmp_path: Path) -> None:
+    import sqlite3
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+
+    db_path = tmp_path / "suite_test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
+    conn.execute("INSERT INTO items (name) VALUES ('initial')")
+    conn.commit()
+    conn.close()
+
+    service.add_case(
+        "suite_ds_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": str(db_path),
+            "operations": [
+                {
+                    "query": "INSERT INTO items (name) VALUES ('from_suite')",
+                    "type": "execute",
+                },
+                {"query": "SELECT COUNT(*) as cnt FROM items", "type": "query"},
+            ],
+            "expected_result": [{"cnt": 2}],
+        },
+    )
+    service.create_suite(
+        {
+            "name": "ds_suite",
+            "cases": [{"case_id": "suite_ds_case", "order": 1}],
+        }
+    )
+
+    suite_run = service.run_suite("ds_suite")
+    assert suite_run["success"] is True
+
+    executions = service.list_execution_records("suite_ds_case")
+    assert len(executions) == 1
+    dsa = executions[0]["metadata"].get("data_state_artifacts")
+    assert isinstance(dsa, dict)
+    assert dsa["capture_status"] == "available"
+    assert dsa["before"] is not None
+    assert dsa["after"] is not None
+    assert dsa["diff"]["capture_complete"] is True
+    changes = dsa["diff"]["row_count_changes"]
+    items_change = next(c for c in changes if c["table"] == "items")
+    assert items_change["before"] == 1
+    assert items_change["after"] == 2
+    assert items_change["delta"] == 1
+
+    artifact_dir = tmp_path / ".ptest" / "artifacts" / executions[0]["execution_id"]
+    assert (artifact_dir / "context" / "data_state.json").exists()
+
+
+def test_data_state_capture_degrades_for_malformed_database_path(
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.add_case(
+        "malformed_db_case",
+        {
+            "type": "database",
+            "db_type": "sqlite",
+            "database": 12345,
+            "query": "SELECT 1 as value",
+            "expected_result": [{"value": 1}],
+        },
+    )
+    result = service.run_case("malformed_db_case")
+    assert result["success"] is False
+    executions = service.list_execution_records("malformed_db_case")
+    assert len(executions) == 1
+    dsa = executions[0]["metadata"].get("data_state_artifacts")
+    assert isinstance(dsa, dict)
+    assert dsa["capture_status"] == "unavailable"
+    assert dsa["before"]["capture_status"] == "unavailable"
+    assert "snapshot capture failed" in dsa["before"]["reason"]
