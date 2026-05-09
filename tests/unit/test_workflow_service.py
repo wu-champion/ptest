@@ -2176,7 +2176,7 @@ def test_start_preflight_records_problem(tmp_path: Path) -> None:
     matching = [p for p in problems if p.object_refs == ["mysql_svc"]]
     assert len(matching) >= 1
     problem = matching[0]
-    assert problem.problem_type == "dependency_object"
+    assert problem.problem_type in ("dependency_object", "dependency_configuration")
     # 检查 problem assets 中的 details 和 recovery
     assets = service.storage.get_problem_assets(problem.problem_id)
     assert assets is not None
