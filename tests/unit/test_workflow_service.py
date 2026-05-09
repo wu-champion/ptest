@@ -2484,6 +2484,102 @@ def test_preflight_managed_paths_empty_dir_warning(
     assert "data_dir:empty" in mp_check["details"]["missing_optional"]
 
 
+def test_preflight_workspace_boundary_path_escapes_workspace(
+    tmp_path: Path,
+) -> None:
+    """config_file 指向 workspace 外部应导致 workspace_boundary failed。"""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    # 注入一个指向 workspace 外部的 config_file
+    outside_path = str(tmp_path.parent / "outside_workspace" / "my.cnf")
+    record = service.storage.get_object("mysql_svc")
+    record.config["config_file"] = outside_path
+    service.storage.upsert_object(record)
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    wb_check = next(c for c in preflight["checks"] if c["code"] == "workspace_boundary")
+    assert wb_check["status"] == "failed"
+    assert wb_check["required"] is True
+    assert "config_file" in wb_check["details"]["violations"]
+
+
+def test_preflight_stale_pid_file_warning(
+    tmp_path: Path,
+) -> None:
+    """PID 文件引用已退出的进程应产生 stale pid warning。"""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    # 写入一个引用不存在 PID 的 pid_file
+    record = service.storage.get_object("mysql_svc")
+    pid_file = record.config.get("pid_file", "")
+    assert pid_file, "install should set pid_file"
+    Path(pid_file).parent.mkdir(parents=True, exist_ok=True)
+    Path(pid_file).write_text("99999999", encoding="utf-8")
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    pid_check = next(c for c in preflight["checks"] if c["code"] == "pid_state")
+    assert pid_check["status"] == "warning"
+    assert "stale" in pid_check["message"]
+
+
+def test_preflight_required_dependency_asset_missing_failed(
+    tmp_path: Path,
+) -> None:
+    """required dependency asset 路径不存在应导致 dependency_assets failed。"""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    record = service.storage.get_object("mysql_svc")
+    record.config["dependency_assets"] = [
+        {"path": str(tmp_path / "nonexistent" / "libfoo.so"), "required": True}
+    ]
+    service.storage.upsert_object(record)
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    da_check = next(c for c in preflight["checks"] if c["code"] == "dependency_assets")
+    assert da_check["status"] == "failed"
+    assert da_check["required"] is True
+    assert "missing_required" in da_check["details"]
+
+
 def test_preflight_dependency_assets_non_list_schema_warning(
     tmp_path: Path,
 ) -> None:
