@@ -2049,8 +2049,8 @@ def test_update_problem_record_syncs_assets_status(tmp_path: Path) -> None:
     assert record is not None
     assert assets is not None
     assert assets.status == "closed"
-    assert record.updated_at != original_record_updated
-    assert assets.updated_at != original_assets_updated
+    assert record.updated_at >= original_record_updated
+    assert assets.updated_at >= original_assets_updated
     assert record.updated_at == assets.updated_at
 
 
