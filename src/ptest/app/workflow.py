@@ -4947,24 +4947,44 @@ class WorkflowService:
         for key, value in managed_instance.items():
             if isinstance(value, str) and value:
                 path_sources[f"managed_instance.{key}"] = value
+        _REQUIRED_FOR_START = {"config_file", "pid_file"}
         violations: list[str] = []
+        empty_required: list[str] = []
+        empty_optional: list[str] = []
         for label, raw_path in path_sources.items():
             if not raw_path:
+                if label in _REQUIRED_FOR_START:
+                    empty_required.append(label)
+                else:
+                    empty_optional.append(label)
                 continue
             try:
                 if not self._path_within_workspace(workspace_path, Path(raw_path)):
                     violations.append(label)
             except (OSError, ValueError):
                 violations.append(f"{label}:unresolvable")
-        if violations:
+        if violations or empty_required:
+            all_failed = violations + [f"{p}:empty" for p in empty_required]
             return {
                 "code": "workspace_boundary",
                 "status": "failed",
                 "required": True,
-                "message": f"critical paths escape workspace: {', '.join(violations)}",
+                "message": f"critical paths escape workspace: {', '.join(all_failed)}",
                 "details": {
                     "workspace_path": str(workspace_path),
                     "violations": violations,
+                    "empty_required": empty_required,
+                },
+            }
+        if empty_optional:
+            return {
+                "code": "workspace_boundary",
+                "status": "warning",
+                "required": False,
+                "message": f"optional paths are empty: {', '.join(empty_optional)}",
+                "details": {
+                    "workspace_path": str(workspace_path),
+                    "empty_optional": empty_optional,
                 },
             }
         return {
@@ -5195,8 +5215,11 @@ class WorkflowService:
         schema_warnings: list[str] = []
         dependency_assets = config.get("dependency_assets", [])
         if isinstance(dependency_assets, list):
-            for asset in dependency_assets:
+            for idx, asset in enumerate(dependency_assets):
                 if not isinstance(asset, dict):
+                    schema_warnings.append(
+                        f"dependency_assets[{idx}] is {type(asset).__name__}, expected dict"
+                    )
                     continue
                 asset_path = str(asset.get("path", ""))
                 if not asset_path:
@@ -5213,16 +5236,29 @@ class WorkflowService:
                         missing_required.append(f"{asset_path}:unresolvable")
                     else:
                         missing_optional.append(f"{asset_path}:unresolvable")
+        elif dependency_assets is not None:
+            schema_warnings.append(
+                f"dependency_assets is {type(dependency_assets).__name__}, expected list"
+            )
         runtime_library_paths = config.get("runtime_library_paths", [])
         if isinstance(runtime_library_paths, list):
-            for lib_path in runtime_library_paths:
-                if not isinstance(lib_path, str) or not lib_path:
+            for idx, lib_path in enumerate(runtime_library_paths):
+                if not isinstance(lib_path, str):
+                    schema_warnings.append(
+                        f"runtime_library_paths[{idx}] is {type(lib_path).__name__}, expected str"
+                    )
+                    continue
+                if not lib_path:
                     continue
                 try:
                     if not Path(lib_path).expanduser().resolve().exists():
                         missing_required.append(lib_path)
                 except (OSError, ValueError):
                     missing_required.append(f"{lib_path}:unresolvable")
+        elif runtime_library_paths is not None:
+            schema_warnings.append(
+                f"runtime_library_paths is {type(runtime_library_paths).__name__}, expected list"
+            )
         dependency_requirements = config.get("dependency_requirements")
         if dependency_requirements is not None and not isinstance(
             dependency_requirements, dict
