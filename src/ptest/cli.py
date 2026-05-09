@@ -213,6 +213,7 @@ def setup_cli() -> argparse.ArgumentParser:
     check_obj_parser.add_argument(
         "--scope",
         default="start",
+        choices=["start", "restart"],
         help="Preflight scope (default: start)",
     )
 

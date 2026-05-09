@@ -2755,8 +2755,11 @@ class WorkflowService:
             metadata_for_preflight = (
                 record.metadata if isinstance(record.metadata, dict) else {}
             )
-            metadata_for_preflight.setdefault("runtime_preflight", {})
-            metadata_for_preflight["runtime_preflight"]["last_check"] = preflight
+            runtime_meta = metadata_for_preflight.get("runtime_preflight")
+            if not isinstance(runtime_meta, dict):
+                runtime_meta = {}
+                metadata_for_preflight["runtime_preflight"] = runtime_meta
+            runtime_meta["last_check"] = preflight
             record.metadata = metadata_for_preflight
             if preflight["summary"]["required_failed"] > 0:
                 failed_checks = [
@@ -5019,11 +5022,11 @@ class WorkflowService:
             try:
                 path = Path(raw).expanduser().resolve()
                 if path.exists():
-                    if not os.access(path, os.W_OK):
+                    if not os.access(path, os.W_OK | os.X_OK):
                         unwritable.append(dir_key)
                 else:
                     parent = path.parent
-                    if parent.exists() and os.access(parent, os.W_OK):
+                    if parent.exists() and os.access(parent, os.W_OK | os.X_OK):
                         missing_optional.append(dir_key)
                     else:
                         missing_required.append(dir_key)
@@ -5375,8 +5378,11 @@ class WorkflowService:
             )
         preflight = self._build_object_runtime_preflight(record, scope=scope)
         metadata = record.metadata if isinstance(record.metadata, dict) else {}
-        metadata.setdefault("runtime_preflight", {})
-        metadata["runtime_preflight"]["last_check"] = preflight
+        runtime_meta = metadata.get("runtime_preflight")
+        if not isinstance(runtime_meta, dict):
+            runtime_meta = {}
+            metadata["runtime_preflight"] = runtime_meta
+        runtime_meta["last_check"] = preflight
         record.metadata = metadata
         record.updated_at = datetime.now().isoformat()
         self.storage.upsert_object(record)
