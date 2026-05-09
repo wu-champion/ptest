@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:  # 允许手动触发
 
+env:
+  UV_INDEX_URL: https://pypi.org/simple
+
 jobs:
   docker-test:
     name: Docker 真实环境测试

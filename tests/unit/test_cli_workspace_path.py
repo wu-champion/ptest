@@ -444,3 +444,96 @@ def test_cli_exec_alias_matches_execution_command(
     assert exit_code == 0
     assert execution_id in captured.out
     assert "artifact_index.json" in captured.out
+
+
+def test_cli_obj_check_calls_workflow_check_object_readiness(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    WorkflowService(workspace).init_environment()
+
+    captured_args: dict[str, object] = {}
+
+    def fake_check(
+        self: WorkflowService,
+        name: str,
+        *,
+        scope: str = "start",
+    ) -> dict[str, object]:
+        captured_args["name"] = name
+        captured_args["scope"] = scope
+        return {
+            "success": True,
+            "status": "passed",
+            "message": f"Object '{name}' preflight: passed",
+            "runtime_preflight": {
+                "object_name": name,
+                "status": "passed",
+                "checks": [],
+                "summary": {
+                    "status": "passed",
+                    "passed": 7,
+                    "warning": 0,
+                    "failed": 0,
+                    "required_failed": 0,
+                },
+            },
+        }
+
+    monkeypatch.setattr(WorkflowService, "check_object_readiness", fake_check)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ptest", "obj", "check", "mysql_service", "--path", str(workspace)],
+    )
+
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert captured_args["name"] == "mysql_service"
+    assert captured_args["scope"] == "start"
+    assert "preflight: passed" in captured.out
+    assert "object_name" in captured.out
+
+
+def test_cli_obj_check_returns_failure_on_preflight_failed(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    WorkflowService(workspace).init_environment()
+
+    def fake_check(
+        self: WorkflowService,
+        name: str,
+        *,
+        scope: str = "start",
+    ) -> dict[str, object]:
+        return {
+            "success": False,
+            "status": "failed",
+            "message": f"Object '{name}' preflight: failed",
+            "runtime_preflight": {
+                "object_name": name,
+                "status": "failed",
+                "checks": [],
+                "summary": {
+                    "status": "failed",
+                    "passed": 5,
+                    "warning": 0,
+                    "failed": 2,
+                    "required_failed": 2,
+                },
+            },
+        }
+
+    monkeypatch.setattr(WorkflowService, "check_object_readiness", fake_check)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ptest", "obj", "check", "mysql_service", "--path", str(workspace)],
+    )
+
+    exit_code = cli.main()
+
+    assert exit_code == 1

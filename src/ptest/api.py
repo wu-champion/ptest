@@ -151,6 +151,18 @@ class PTestAPI:
             error_code=result.get("error_code"),
         )
 
+    def check_object_readiness(self, name: str, scope: str = "start") -> dict[str, Any]:
+        result = self.workflow.check_object_readiness(name, scope=scope)
+        return self._api_response(
+            success=result["success"],
+            status=result["status"],
+            message=result["message"],
+            data=result.get("data"),
+            error=result.get("error"),
+            error_code=result.get("error_code"),
+            runtime_preflight=result.get("runtime_preflight"),
+        )
+
     def start_object(self, name: str) -> dict[str, Any]:
         result = self.workflow.start_object(name)
         return self._api_response(
@@ -159,6 +171,7 @@ class PTestAPI:
             message=result["message"],
             data=result.get("data"),
             checks=result.get("checks"),
+            runtime_preflight=result.get("runtime_preflight"),
             error=result.get("error"),
             error_code=result.get("error_code"),
         )

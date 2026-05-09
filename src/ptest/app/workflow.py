@@ -2748,6 +2748,61 @@ class WorkflowService:
         obj = self._materialize_object(record)
         if record.type_name in {"database", "database_server", "database_client"}:
             self._recover_object_runtime(obj, record)
+
+        # ── runtime preflight gate (start / restart only) ───────────────
+        if action in {"start", "restart"} and self._supports_runtime_preflight(record):
+            preflight = self._build_object_runtime_preflight(record, scope=action)
+            metadata_for_preflight = (
+                record.metadata if isinstance(record.metadata, dict) else {}
+            )
+            runtime_meta = metadata_for_preflight.get("runtime_preflight")
+            if not isinstance(runtime_meta, dict):
+                runtime_meta = {}
+                metadata_for_preflight["runtime_preflight"] = runtime_meta
+            runtime_meta["last_check"] = preflight
+            record.metadata = metadata_for_preflight
+            if preflight["summary"]["required_failed"] > 0:
+                failed_checks = [
+                    c["code"]
+                    for c in preflight["checks"]
+                    if c.get("status") == "failed" and c.get("required", False)
+                ]
+                problem_type = self._classify_preflight_problem_type(
+                    preflight["checks"]
+                )
+                self._record_environment_dependency_problem(
+                    problem_type=problem_type,
+                    summary=f"Object '{name}' failed runtime preflight for '{action}'",
+                    details={
+                        "phase": "preflight",
+                        "action": action,
+                        "object": record.to_dict(),
+                        "runtime_preflight": preflight,
+                        "message": f"Object '{name}' failed runtime preflight",
+                    },
+                    recovery={
+                        "supported": False,
+                        "mode": "minimal_environment_recovery",
+                        "action": "fix_runtime_preflight",
+                        "object_name": name,
+                        "required_state": "ready_to_start",
+                        "failed_checks": failed_checks,
+                    },
+                    object_refs=[name],
+                )
+                record.updated_at = datetime.now().isoformat()
+                self.storage.upsert_object(record)
+                return self._operation_result(
+                    success=False,
+                    status="error",
+                    message=f"Object '{name}' failed runtime preflight for '{action}'",
+                    data=record.to_dict(),
+                    object=record.to_dict(),
+                    checks=preflight,
+                    runtime_preflight=preflight,
+                    error_code=f"object_{action}_preflight_failed",
+                )
+
         operation = getattr(obj, action)
         result = operation()
         success = result.startswith("✓")
@@ -4727,6 +4782,619 @@ class WorkflowService:
         if _resource is not None and value == _resource.RLIM_INFINITY:
             return "unlimited"
         return value
+
+    # ── runtime preflight checks ────────────────────────────────────────
+
+    _PREFLIGHT_SUPPORTED_TYPES = {"database_server"}
+
+    def _supports_runtime_preflight(self, record: ManagedObjectRecord) -> bool:
+        if record.type_name not in self._PREFLIGHT_SUPPORTED_TYPES:
+            return False
+        config = record.config if isinstance(record.config, dict) else {}
+        if str(config.get("db_type", "")).lower() != "mysql":
+            return False
+        managed_instance = config.get("managed_instance", {})
+        if not isinstance(managed_instance, dict) or not managed_instance:
+            return False
+        return True
+
+    def _build_object_runtime_preflight(
+        self,
+        record: ManagedObjectRecord,
+        *,
+        scope: str = "start",
+    ) -> dict[str, Any]:
+        checks: list[dict[str, Any]] = []
+        checks.append(self._runtime_preflight_check_object_installation(record))
+        checks.append(self._runtime_preflight_check_runtime_backend(record))
+        checks.append(self._runtime_preflight_check_workspace_boundary(record))
+        checks.append(self._runtime_preflight_check_managed_paths(record))
+        checks.append(self._runtime_preflight_check_pid_state(record))
+        checks.append(self._runtime_preflight_check_port_bind(record))
+        checks.append(self._runtime_preflight_check_dependency_assets(record))
+        summary = self._summarize_runtime_preflight_checks(checks)
+        return {
+            "object_name": record.name,
+            "object_type": record.type_name,
+            "scope": scope,
+            "status": summary["status"],
+            "checked_at": datetime.now().isoformat(),
+            "can_start": summary["required_failed"] == 0,
+            "can_run": summary["required_failed"] == 0,
+            "checks": checks,
+            "summary": summary,
+        }
+
+    def _runtime_preflight_check_object_installation(
+        self,
+        record: ManagedObjectRecord,
+    ) -> dict[str, Any]:
+        if not record.installed:
+            return {
+                "code": "object_installation",
+                "status": "failed",
+                "required": True,
+                "message": "object is not installed",
+                "details": {},
+            }
+        if record.status == OBJECT_STATUS_INSTALL_FAILED_PRESERVED:
+            return {
+                "code": "object_installation",
+                "status": "failed",
+                "required": True,
+                "message": "object installation failed and state is preserved",
+                "details": {"status": record.status},
+            }
+        if record.status == OBJECT_STATUS_START_FAILED_PRESERVED:
+            return {
+                "code": "object_installation",
+                "status": "warning",
+                "required": False,
+                "message": "object start previously failed; consider clear/reset before retrying",
+                "details": {"status": record.status},
+            }
+        return {
+            "code": "object_installation",
+            "status": "passed",
+            "required": True,
+            "message": "object is installed and available",
+            "details": {},
+        }
+
+    def _runtime_preflight_check_runtime_backend(
+        self,
+        record: ManagedObjectRecord,
+    ) -> dict[str, Any]:
+        try:
+            summary = self._build_object_runtime_backend_summary(record)
+        except Exception as exc:
+            return {
+                "code": "runtime_backend_capabilities",
+                "status": "failed",
+                "required": True,
+                "message": f"failed to build runtime backend summary: {exc}",
+                "details": {},
+            }
+        capability_status = summary.get("capability_status", "")
+        if capability_status == "unsatisfied":
+            return {
+                "code": "runtime_backend_capabilities",
+                "status": "failed",
+                "required": True,
+                "message": "runtime backend does not satisfy required capabilities",
+                "details": {
+                    "backend": summary.get("name"),
+                    "missing_capabilities": summary.get("missing_capabilities", []),
+                },
+            }
+        last_preflight = summary.get("last_preflight")
+        if (
+            isinstance(last_preflight, dict)
+            and last_preflight.get("status") == "failed"
+        ):
+            failure_reason = last_preflight.get("failure_reason", "")
+            if failure_reason in {"tcp_bind_denied", "runtime_backend_unsupported"}:
+                return {
+                    "code": "runtime_backend_capabilities",
+                    "status": "failed",
+                    "required": True,
+                    "message": f"last runtime preflight failed: {failure_reason}",
+                    "details": {"last_preflight": last_preflight},
+                }
+            return {
+                "code": "runtime_backend_capabilities",
+                "status": "warning",
+                "required": False,
+                "message": f"last runtime preflight failed: {failure_reason}",
+                "details": {"last_preflight": last_preflight},
+            }
+        return {
+            "code": "runtime_backend_capabilities",
+            "status": "passed",
+            "required": True,
+            "message": "runtime backend satisfies required capabilities",
+            "details": {},
+        }
+
+    def _runtime_preflight_check_workspace_boundary(
+        self,
+        record: ManagedObjectRecord,
+    ) -> dict[str, Any]:
+        config = record.config if isinstance(record.config, dict) else {}
+        raw_workspace = config.get("workspace_path") or self.root_path
+        try:
+            workspace_path = Path(str(raw_workspace)).expanduser().resolve()
+        except (OSError, ValueError) as exc:
+            return {
+                "code": "workspace_boundary",
+                "status": "failed",
+                "required": True,
+                "message": f"workspace path could not be resolved: {exc}",
+                "details": {
+                    "workspace_path": str(config.get("workspace_path", "")),
+                },
+            }
+        managed_instance = config.get("managed_instance", {})
+        if not isinstance(managed_instance, dict):
+            managed_instance = {}
+        path_sources = {
+            "workspace_path": str(config.get("workspace_path", "")),
+            "config_file": str(config.get("config_file", "")),
+            "log_file": str(config.get("log_file", "")),
+            "pid_file": str(config.get("pid_file", "")),
+            "staged_package_path": str(config.get("staged_package_path", "")),
+        }
+        for key, value in managed_instance.items():
+            if isinstance(value, str):
+                path_sources[f"managed_instance.{key}"] = value
+        _REQUIRED_FOR_START = {"config_file", "pid_file"}
+        violations: list[str] = []
+        empty_required: list[str] = []
+        empty_optional: list[str] = []
+        for label, raw_path in path_sources.items():
+            if not raw_path:
+                if label in _REQUIRED_FOR_START:
+                    empty_required.append(label)
+                else:
+                    empty_optional.append(label)
+                continue
+            try:
+                if not self._path_within_workspace(workspace_path, Path(raw_path)):
+                    violations.append(label)
+            except (OSError, ValueError):
+                violations.append(f"{label}:unresolvable")
+        if violations or empty_required:
+            all_failed = violations + [f"{p}:empty" for p in empty_required]
+            return {
+                "code": "workspace_boundary",
+                "status": "failed",
+                "required": True,
+                "message": f"critical paths escape workspace: {', '.join(all_failed)}",
+                "details": {
+                    "workspace_path": str(workspace_path),
+                    "violations": violations,
+                    "empty_required": empty_required,
+                },
+            }
+        if empty_optional:
+            return {
+                "code": "workspace_boundary",
+                "status": "warning",
+                "required": False,
+                "message": f"optional paths are empty: {', '.join(empty_optional)}",
+                "details": {
+                    "workspace_path": str(workspace_path),
+                    "empty_optional": empty_optional,
+                },
+            }
+        return {
+            "code": "workspace_boundary",
+            "status": "passed",
+            "required": True,
+            "message": "all critical paths are within workspace",
+            "details": {},
+        }
+
+    def _runtime_preflight_check_managed_paths(
+        self,
+        record: ManagedObjectRecord,
+    ) -> dict[str, Any]:
+        config = record.config if isinstance(record.config, dict) else {}
+        managed_instance = config.get("managed_instance", {})
+        if not isinstance(managed_instance, dict):
+            managed_instance = {}
+        required_dirs = [
+            "instance_root",
+            "install_dir",
+            "data_dir",
+            "config_dir",
+            "run_dir",
+            "log_dir",
+        ]
+        missing_required: list[str] = []
+        missing_optional: list[str] = []
+        unwritable: list[str] = []
+        for dir_key in required_dirs:
+            raw = managed_instance.get(dir_key, "")
+            if not raw:
+                missing_optional.append(f"{dir_key}:empty")
+                continue
+            try:
+                path = Path(raw).expanduser().resolve()
+                if path.exists():
+                    if not os.access(path, os.W_OK | os.X_OK):
+                        unwritable.append(dir_key)
+                else:
+                    parent = path.parent
+                    if parent.exists() and os.access(parent, os.W_OK | os.X_OK):
+                        missing_optional.append(dir_key)
+                    else:
+                        missing_required.append(dir_key)
+            except (OSError, ValueError):
+                missing_required.append(f"{dir_key}:unresolvable")
+        config_file = str(config.get("config_file", ""))
+        if config_file:
+            try:
+                if not Path(config_file).expanduser().resolve().exists():
+                    missing_required.append("config_file")
+            except (OSError, ValueError):
+                missing_required.append("config_file:unresolvable")
+        problems = missing_required + unwritable
+        if problems:
+            return {
+                "code": "managed_paths",
+                "status": "failed",
+                "required": True,
+                "message": f"required paths missing or unwritable: {', '.join(problems)}",
+                "details": {
+                    "missing_required": missing_required,
+                    "missing_optional": missing_optional,
+                    "unwritable": unwritable,
+                },
+            }
+        if missing_optional:
+            return {
+                "code": "managed_paths",
+                "status": "warning",
+                "required": False,
+                "message": f"some directories will be created at start: {', '.join(missing_optional)}",
+                "details": {"missing_optional": missing_optional},
+            }
+        return {
+            "code": "managed_paths",
+            "status": "passed",
+            "required": True,
+            "message": "all managed paths are available",
+            "details": {},
+        }
+
+    def _runtime_preflight_check_pid_state(
+        self,
+        record: ManagedObjectRecord,
+    ) -> dict[str, Any]:
+        config = record.config if isinstance(record.config, dict) else {}
+        pid_file_raw = str(config.get("pid_file", ""))
+        if not pid_file_raw:
+            return {
+                "code": "pid_state",
+                "status": "passed",
+                "required": False,
+                "message": "no pid file configured",
+                "details": {},
+            }
+        try:
+            pid_file = Path(pid_file_raw).expanduser().resolve()
+        except (OSError, ValueError):
+            return {
+                "code": "pid_state",
+                "status": "warning",
+                "required": False,
+                "message": "pid file path could not be resolved",
+                "details": {"pid_file": pid_file_raw},
+            }
+        if not pid_file.exists():
+            return {
+                "code": "pid_state",
+                "status": "passed",
+                "required": False,
+                "message": "no pid file present",
+                "details": {},
+            }
+        pid = self._read_pid_file(pid_file)
+        if pid is None:
+            return {
+                "code": "pid_state",
+                "status": "warning",
+                "required": False,
+                "message": "pid file exists but could not be read",
+                "details": {"pid_file": str(pid_file)},
+            }
+        if self._is_pid_running(pid):
+            if record.status == OBJECT_STATUS_RUNNING:
+                return {
+                    "code": "pid_state",
+                    "status": "warning",
+                    "required": False,
+                    "message": f"pid {pid} is running and object status is running",
+                    "details": {"pid": pid},
+                }
+            return {
+                "code": "pid_state",
+                "status": "failed",
+                "required": True,
+                "message": f"pid {pid} is running but object status is '{record.status}'; residual process detected",
+                "details": {"pid": pid, "object_status": record.status},
+            }
+        return {
+            "code": "pid_state",
+            "status": "warning",
+            "required": False,
+            "message": f"stale pid file references non-running pid {pid}",
+            "details": {"pid": pid},
+        }
+
+    def _runtime_preflight_check_port_bind(
+        self,
+        record: ManagedObjectRecord,
+    ) -> dict[str, Any]:
+        config = record.config if isinstance(record.config, dict) else {}
+        host = str(config.get("server_host", "127.0.0.1"))
+        port = self._coerce_mysql_port(config.get("server_port", config.get("port")))
+        if port <= 0:
+            return {
+                "code": "port_bind",
+                "status": "failed",
+                "required": True,
+                "message": "port is missing or invalid",
+                "details": {"port": port},
+            }
+        # running 对象用 TCP connect 验证端口可达性
+        if record.status == OBJECT_STATUS_RUNNING:
+            try:
+                reachable = self._is_host_port_reachable(host, port)
+            except Exception as exc:
+                return {
+                    "code": "port_bind",
+                    "status": "warning",
+                    "required": False,
+                    "message": f"port reachability check failed: {exc}",
+                    "details": {"host": host, "port": port},
+                }
+            if reachable:
+                return {
+                    "code": "port_bind",
+                    "status": "passed",
+                    "required": True,
+                    "message": f"port {host}:{port} is reachable (object is running)",
+                    "details": {"host": host, "port": port},
+                }
+            return {
+                "code": "port_bind",
+                "status": "warning",
+                "required": False,
+                "message": f"port {host}:{port} is not reachable but object status is running",
+                "details": {"host": host, "port": port},
+            }
+        # 非 running 对象用 bind probe 检测端口是否可被当前进程绑定
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind((host, port))
+        except PermissionError as exc:
+            return {
+                "code": "port_bind",
+                "status": "failed",
+                "required": True,
+                "reason": "bind_denied",
+                "message": f"runtime backend does not permit binding {host}:{port}: {exc}",
+                "details": {"host": host, "port": port},
+            }
+        except OSError as exc:
+            return {
+                "code": "port_bind",
+                "status": "failed",
+                "required": True,
+                "reason": "bind_unavailable",
+                "message": f"port {host}:{port} bind failed: {exc}",
+                "details": {"host": host, "port": port},
+            }
+        return {
+            "code": "port_bind",
+            "status": "passed",
+            "required": True,
+            "message": f"port {host}:{port} is available for binding",
+            "details": {"host": host, "port": port},
+        }
+
+    def _runtime_preflight_check_dependency_assets(
+        self,
+        record: ManagedObjectRecord,
+    ) -> dict[str, Any]:
+        config = record.config if isinstance(record.config, dict) else {}
+        missing_required: list[str] = []
+        missing_optional: list[str] = []
+        schema_warnings: list[str] = []
+        dependency_assets = config.get("dependency_assets", [])
+        if isinstance(dependency_assets, list):
+            for idx, asset in enumerate(dependency_assets):
+                if not isinstance(asset, dict):
+                    schema_warnings.append(
+                        f"dependency_assets[{idx}] is {type(asset).__name__}, expected dict"
+                    )
+                    continue
+                asset_path = str(asset.get("path", ""))
+                if not asset_path:
+                    schema_warnings.append(
+                        f"dependency_assets[{idx}] missing required 'path'"
+                    )
+                    continue
+                is_required = bool(asset.get("required", True))
+                try:
+                    if not Path(asset_path).expanduser().resolve().exists():
+                        if is_required:
+                            missing_required.append(asset_path)
+                        else:
+                            missing_optional.append(asset_path)
+                except (OSError, ValueError):
+                    if is_required:
+                        missing_required.append(f"{asset_path}:unresolvable")
+                    else:
+                        missing_optional.append(f"{asset_path}:unresolvable")
+        elif dependency_assets is not None:
+            schema_warnings.append(
+                f"dependency_assets is {type(dependency_assets).__name__}, expected list"
+            )
+        runtime_library_paths = config.get("runtime_library_paths", [])
+        if isinstance(runtime_library_paths, list):
+            for idx, lib_path in enumerate(runtime_library_paths):
+                if not isinstance(lib_path, str):
+                    schema_warnings.append(
+                        f"runtime_library_paths[{idx}] is {type(lib_path).__name__}, expected str"
+                    )
+                    continue
+                if not lib_path:
+                    schema_warnings.append(
+                        f"runtime_library_paths[{idx}] is empty string"
+                    )
+                    continue
+                try:
+                    if not Path(lib_path).expanduser().resolve().exists():
+                        missing_required.append(lib_path)
+                except (OSError, ValueError):
+                    missing_required.append(f"{lib_path}:unresolvable")
+        elif runtime_library_paths is not None:
+            schema_warnings.append(
+                f"runtime_library_paths is {type(runtime_library_paths).__name__}, expected list"
+            )
+        dependency_requirements = config.get("dependency_requirements")
+        if dependency_requirements is not None and not isinstance(
+            dependency_requirements, dict
+        ):
+            schema_warnings.append(
+                f"dependency_requirements is {type(dependency_requirements).__name__}, expected dict"
+            )
+        details: dict[str, Any] = {}
+        if missing_required:
+            details["missing_required"] = missing_required
+        if missing_optional:
+            details["missing_optional"] = missing_optional
+        if schema_warnings:
+            details["schema_warnings"] = schema_warnings
+        if isinstance(dependency_requirements, dict) and dependency_requirements:
+            details["dependency_requirements_keys"] = sorted(
+                str(k) for k in dependency_requirements
+            )
+        if missing_required:
+            return {
+                "code": "dependency_assets",
+                "status": "failed",
+                "required": True,
+                "message": f"required dependency assets missing: {', '.join(missing_required)}",
+                "details": details,
+            }
+        if schema_warnings or missing_optional:
+            warnings_combined = schema_warnings + [
+                f"optional asset missing: {p}" for p in missing_optional
+            ]
+            return {
+                "code": "dependency_assets",
+                "status": "warning",
+                "required": False,
+                "message": "; ".join(warnings_combined),
+                "details": details,
+            }
+        return {
+            "code": "dependency_assets",
+            "status": "passed",
+            "required": True,
+            "message": "all dependency assets are available",
+            "details": details,
+        }
+
+    def _summarize_runtime_preflight_checks(
+        self,
+        checks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        passed = sum(1 for c in checks if c.get("status") == "passed")
+        warning = sum(1 for c in checks if c.get("status") == "warning")
+        failed = sum(1 for c in checks if c.get("status") == "failed")
+        required_failed = sum(
+            1
+            for c in checks
+            if c.get("status") == "failed" and c.get("required", False)
+        )
+        if required_failed > 0:
+            status = "failed"
+        elif warning > 0:
+            status = "warning"
+        else:
+            status = "passed"
+        return {
+            "status": status,
+            "passed": passed,
+            "warning": warning,
+            "failed": failed,
+            "required_failed": required_failed,
+        }
+
+    _DEPENDENCY_CONFIGURATION_CHECKS = {
+        "object_installation",
+        "runtime_backend_capabilities",
+        "workspace_boundary",
+        "managed_paths",
+        "dependency_assets",
+    }
+
+    def _classify_preflight_problem_type(
+        self,
+        checks: list[dict[str, Any]],
+    ) -> str:
+        for check in checks:
+            if not (check.get("status") == "failed" and check.get("required", False)):
+                continue
+            code = check.get("code")
+            if code in self._DEPENDENCY_CONFIGURATION_CHECKS:
+                return "dependency_configuration"
+            # port_bind PermissionError 属于 backend capability 问题
+            if code == "port_bind" and check.get("reason") == "bind_denied":
+                return "dependency_configuration"
+        return "dependency_object"
+
+    def check_object_readiness(
+        self,
+        name: str,
+        *,
+        scope: str = "start",
+    ) -> dict[str, Any]:
+        record = self.storage.get_object(name)
+        if record is None:
+            return self._not_found_result("object", name)
+        if not self._supports_runtime_preflight(record):
+            return self._operation_result(
+                success=False,
+                status="unavailable",
+                message=f"runtime preflight is not available for object type '{record.type_name}'",
+                error_code="object_type_not_supported",
+            )
+        preflight = self._build_object_runtime_preflight(record, scope=scope)
+        metadata = record.metadata if isinstance(record.metadata, dict) else {}
+        runtime_meta = metadata.get("runtime_preflight")
+        if not isinstance(runtime_meta, dict):
+            runtime_meta = {}
+            metadata["runtime_preflight"] = runtime_meta
+        runtime_meta["last_check"] = preflight
+        record.metadata = metadata
+        record.updated_at = datetime.now().isoformat()
+        self.storage.upsert_object(record)
+        success = preflight["status"] != "failed"
+        return self._operation_result(
+            success=success,
+            status=preflight["status"],
+            message=f"Object '{name}' preflight: {preflight['status']}",
+            data=preflight,
+            runtime_preflight=preflight,
+            error_code=None if success else "object_preflight_failed",
+        )
 
     def _collect_object_runtime_snapshot(
         self,
@@ -7225,6 +7893,17 @@ class WorkflowService:
         if not isinstance(runtime, dict):
             runtime = {}
         managed_instance = self._build_managed_instance_diagnostics(record)
+        runtime_preflight: dict[str, Any] | None = None
+        preflight_meta = metadata.get("runtime_preflight", {})
+        if isinstance(preflight_meta, dict):
+            last_check = preflight_meta.get("last_check")
+            if isinstance(last_check, dict):
+                runtime_preflight = last_check
+        if runtime_preflight is None and self._supports_runtime_preflight(record):
+            try:
+                runtime_preflight = self._build_object_runtime_preflight(record)
+            except Exception:
+                runtime_preflight = None
         diagnostics: dict[str, Any] = {
             "status": "complete" if runtime_backend else "partial",
             "runtime_backend": runtime_backend,
@@ -7237,6 +7916,7 @@ class WorkflowService:
                 runtime_backend=runtime_backend,
                 managed_instance=managed_instance,
                 linked_problems=linked_problems,
+                runtime_preflight=runtime_preflight,
             ),
             "suggested_views": self._build_diagnostic_next_views(
                 problem_id=str(linked_problems[0]["problem_id"])
@@ -7246,6 +7926,8 @@ class WorkflowService:
                 object_refs=[record.name],
             ),
         }
+        if runtime_preflight is not None:
+            diagnostics["runtime_preflight"] = runtime_preflight
         return diagnostics
 
     def _build_managed_instance_diagnostics(
@@ -7293,6 +7975,7 @@ class WorkflowService:
         runtime_backend: dict[str, Any],
         managed_instance: dict[str, Any],
         linked_problems: list[dict[str, Any]],
+        runtime_preflight: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         signals = self._runtime_backend_diagnostic_signals(
             runtime_backend,
@@ -7329,6 +8012,26 @@ class WorkflowService:
                             "object_name": record.name,
                         }
                     )
+        if isinstance(runtime_preflight, dict):
+            preflight_status = runtime_preflight.get("status")
+            if preflight_status == "failed":
+                signals.append(
+                    {
+                        "level": "error",
+                        "code": "runtime_preflight_failed",
+                        "message": "runtime preflight check failed",
+                        "object_name": record.name,
+                    }
+                )
+            elif preflight_status == "warning":
+                signals.append(
+                    {
+                        "level": "warning",
+                        "code": "runtime_preflight_warning",
+                        "message": "runtime preflight check has warnings",
+                        "object_name": record.name,
+                    }
+                )
         return signals
 
     def _build_diagnostic_signals(
