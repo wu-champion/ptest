@@ -2389,6 +2389,101 @@ def test_preflight_workspace_boundary_empty_optional_path(
     assert "log_file" in wb_check["details"]["empty_optional"]
 
 
+def test_preflight_workspace_boundary_empty_string_not_cwd(
+    tmp_path: Path,
+) -> None:
+    """workspace_path="" 不应解析为 CWD，而应降级使用 root_path。"""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    # 安装后将 workspace_path 设为空字符串
+    record = service.storage.get_object("mysql_svc")
+    record.config["workspace_path"] = ""
+    service.storage.upsert_object(record)
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    wb_check = next(c for c in preflight["checks"] if c["code"] == "workspace_boundary")
+    # 空 workspace_path 应降级为 root_path，不应解析为 CWD
+    assert wb_check["details"]["workspace_path"] == str(tmp_path.resolve())
+
+
+def test_preflight_workspace_boundary_managed_instance_empty_dir(
+    tmp_path: Path,
+) -> None:
+    """managed_instance.data_dir="" 应产生 warning 而非静默跳过。"""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    # 安装后注入空 data_dir
+    record = service.storage.get_object("mysql_svc")
+    record.config["managed_instance"] = {
+        "data_dir": "",
+        "install_dir": str(tmp_path / "inst"),
+    }
+    service.storage.upsert_object(record)
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    wb_check = next(c for c in preflight["checks"] if c["code"] == "workspace_boundary")
+    # 空 data_dir 应进入 empty_optional
+    assert wb_check["status"] == "warning"
+    assert any(
+        "managed_instance.data_dir" in p for p in wb_check["details"]["empty_optional"]
+    )
+
+
+def test_preflight_managed_paths_empty_dir_warning(
+    tmp_path: Path,
+) -> None:
+    """managed_instance.data_dir="" 在 managed_paths 中应产生 warning。"""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    record = service.storage.get_object("mysql_svc")
+    record.config["managed_instance"] = {"data_dir": ""}
+    service.storage.upsert_object(record)
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    mp_check = next(c for c in preflight["checks"] if c["code"] == "managed_paths")
+    assert mp_check["status"] == "warning"
+    assert "data_dir:empty" in mp_check["details"]["missing_optional"]
+
+
 def test_preflight_dependency_assets_non_list_schema_warning(
     tmp_path: Path,
 ) -> None:
@@ -2477,7 +2572,9 @@ def test_preflight_runtime_library_paths_non_list_schema_warning(
     da_check = next(c for c in preflight["checks"] if c["code"] == "dependency_assets")
     assert da_check["status"] == "warning"
     assert "schema_warnings" in da_check["details"]
-    assert any("runtime_library_paths" in w for w in da_check["details"]["schema_warnings"])
+    assert any(
+        "runtime_library_paths" in w for w in da_check["details"]["schema_warnings"]
+    )
 
 
 def test_preflight_runtime_library_paths_non_string_item_schema_warning(

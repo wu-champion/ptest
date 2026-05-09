@@ -4918,12 +4918,9 @@ class WorkflowService:
         record: ManagedObjectRecord,
     ) -> dict[str, Any]:
         config = record.config if isinstance(record.config, dict) else {}
+        raw_workspace = config.get("workspace_path") or self.root_path
         try:
-            workspace_path = (
-                Path(str(config.get("workspace_path", self.root_path)))
-                .expanduser()
-                .resolve()
-            )
+            workspace_path = Path(str(raw_workspace)).expanduser().resolve()
         except (OSError, ValueError) as exc:
             return {
                 "code": "workspace_boundary",
@@ -4945,7 +4942,7 @@ class WorkflowService:
             "staged_package_path": str(config.get("staged_package_path", "")),
         }
         for key, value in managed_instance.items():
-            if isinstance(value, str) and value:
+            if isinstance(value, str):
                 path_sources[f"managed_instance.{key}"] = value
         _REQUIRED_FOR_START = {"config_file", "pid_file"}
         violations: list[str] = []
@@ -5017,6 +5014,7 @@ class WorkflowService:
         for dir_key in required_dirs:
             raw = managed_instance.get(dir_key, "")
             if not raw:
+                missing_optional.append(f"{dir_key}:empty")
                 continue
             try:
                 path = Path(raw).expanduser().resolve()
