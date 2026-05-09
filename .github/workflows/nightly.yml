@@ -10,6 +10,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  UV_INDEX_URL: https://pypi.org/simple
 
 jobs:
   # ============ 真实 Docker 集成测试 ============

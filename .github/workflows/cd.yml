@@ -15,6 +15,9 @@ on:
           - minor
           - major
 
+env:
+  UV_INDEX_URL: https://pypi.org/simple
+
 jobs:
   # ============ CI 检查 (复用 ci.yml) ============
   ci-check:

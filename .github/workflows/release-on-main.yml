@@ -8,6 +8,9 @@ on:
       - pyproject.toml
       - CHANGELOG.md
 
+env:
+  UV_INDEX_URL: https://pypi.org/simple
+
 jobs:
   prepare-release:
     name: 检查是否需要自动发布
