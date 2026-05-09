@@ -2608,6 +2608,68 @@ def test_preflight_runtime_library_paths_non_string_item_schema_warning(
     assert "bool" in da_check["details"]["schema_warnings"][1]
 
 
+def test_preflight_dependency_assets_missing_path_warning(
+    tmp_path: Path,
+) -> None:
+    """dependency_assets=[{"required": True}] 缺少 path 应产生 warning。"""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    record = service.storage.get_object("mysql_svc")
+    record.config["dependency_assets"] = [{"required": True}]
+    service.storage.upsert_object(record)
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    da_check = next(c for c in preflight["checks"] if c["code"] == "dependency_assets")
+    assert da_check["status"] == "warning"
+    assert "schema_warnings" in da_check["details"]
+    assert any(
+        "missing required 'path'" in w for w in da_check["details"]["schema_warnings"]
+    )
+
+
+def test_preflight_runtime_library_paths_empty_string_warning(
+    tmp_path: Path,
+) -> None:
+    """runtime_library_paths=[""] 空字符串应产生 warning。"""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    mysql_port = _find_free_port()
+    package_path = _create_fake_mysql_archive(tmp_path / "assets" / "mysql-8.4.tar.xz")
+    install_result = service.install_object(
+        "mysql",
+        "mysql_svc",
+        {
+            "mysql_package_path": str(package_path),
+            "workspace_path": str(tmp_path),
+            "port": mysql_port,
+        },
+    )
+    assert install_result["success"] is True
+    record = service.storage.get_object("mysql_svc")
+    record.config["runtime_library_paths"] = [""]
+    service.storage.upsert_object(record)
+
+    result = service.check_object_readiness("mysql_svc")
+    preflight = result["runtime_preflight"]
+    da_check = next(c for c in preflight["checks"] if c["code"] == "dependency_assets")
+    assert da_check["status"] == "warning"
+    assert "schema_warnings" in da_check["details"]
+    assert any("empty string" in w for w in da_check["details"]["schema_warnings"])
+
+
 def test_start_preflight_blocking_includes_checks_field(
     tmp_path: Path,
 ) -> None:

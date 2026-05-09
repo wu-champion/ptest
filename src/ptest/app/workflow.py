@@ -5221,6 +5221,9 @@ class WorkflowService:
                     continue
                 asset_path = str(asset.get("path", ""))
                 if not asset_path:
+                    schema_warnings.append(
+                        f"dependency_assets[{idx}] missing required 'path'"
+                    )
                     continue
                 is_required = bool(asset.get("required", True))
                 try:
@@ -5247,6 +5250,9 @@ class WorkflowService:
                     )
                     continue
                 if not lib_path:
+                    schema_warnings.append(
+                        f"runtime_library_paths[{idx}] is empty string"
+                    )
                     continue
                 try:
                     if not Path(lib_path).expanduser().resolve().exists():
