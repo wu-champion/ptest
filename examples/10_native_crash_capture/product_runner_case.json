@@ -1,0 +1,26 @@
+{
+  "type": "native",
+  "name": "product_runner_demo",
+  "command": ["pytest", "--config=demo.yaml", "cases/crash/test_stability.py"],
+  "cwd": "/workspace/product/test",
+  "env": {
+    "TEST_ROOT": "/workspace/product/test",
+    "ASAN_OPTIONS": "detect_leaks=0",
+    "LD_LIBRARY_PATH": "/workspace/product/lib"
+  },
+  "timeout": 600,
+  "expected_exit_code": 0,
+  "crash_expected": false,
+  "dump_watch_dirs": ["/tmp", "/var/lib/systemd/coredump"],
+  "log_paths": [
+    "/workspace/product/test/run",
+    "/var/log/product"
+  ],
+  "config_paths": [
+    "/workspace/product/test/env/demo.yaml"
+  ],
+  "data_summary_paths": [
+    "/var/lib/product"
+  ],
+  "object_name": "product_node_1"
+}

@@ -5,7 +5,12 @@
 """
 
 import json
+import os
+import signal
 import sqlite3
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Dict, Any, Tuple, Union
 from datetime import datetime
 from .result import TestCaseResult
@@ -86,6 +91,8 @@ class TestExecutor:
                     test_success, test_output = self._execute_web_test(case_data)
                 elif test_type == "service":
                     test_success, test_output = self._execute_service_test(case_data)
+                elif test_type == "native":
+                    test_success, test_output = self._execute_native_test(case_data)
                 else:
                     test_success, test_output = (
                         False,
@@ -96,7 +103,18 @@ class TestExecutor:
                     result.status = "passed"
                 else:
                     result.status = "failed"
-                    result.error_message = str(test_output)
+                    if isinstance(test_output, dict):
+                        result.output = test_output
+                        rc = test_output.get("returncode", "")
+                        sig = test_output.get("signal", "")
+                        timed_out = test_output.get("timed_out", False)
+                        result.error_message = (
+                            f"native process failed: returncode={rc}"
+                            + (f" signal={sig}" if sig else "")
+                            + (f" timed_out={timed_out}" if timed_out else "")
+                        )
+                    else:
+                        result.error_message = str(test_output)
 
         except Exception as e:
             test_success = False
@@ -681,6 +699,148 @@ class TestExecutor:
 
         except Exception as e:
             return False, f"Service test error: {str(e)}"
+
+    # ── native case ──────────────────────────────────────────────────────
+
+    _SIGNAL_NAMES: dict[int, str] = {}
+
+    @classmethod
+    def _get_signal_names(cls) -> dict[int, str]:
+        if not cls._SIGNAL_NAMES:
+            cls._SIGNAL_NAMES = {
+                v: k
+                for k, v in signal.__dict__.items()
+                if k.startswith("SIG") and not k.startswith("SIG_")
+            }
+        return cls._SIGNAL_NAMES
+
+    def _execute_native_test(self, case_data: Dict[str, Any]) -> Tuple[bool, Any]:
+        """执行 native 进程测试"""
+        command = case_data.get("command")
+        if not isinstance(command, list) or not command:
+            return False, "native case 'command' must be a non-empty list[str]"
+
+        cwd = case_data.get("cwd")
+        if cwd is not None:
+            cwd = str(cwd)
+            if not Path(cwd).expanduser().resolve().exists():
+                return False, f"native case 'cwd' does not exist: {cwd}"
+
+        env_extra = case_data.get("env")
+        timeout = case_data.get("timeout")
+        expected_exit_code = case_data.get("expected_exit_code", 0)
+        crash_expected = case_data.get("crash_expected", False)
+
+        self.env_manager.logger.info(f"Executing native case: {command}")
+
+        stdout_file = tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix="_stdout.txt",
+            delete=False,
+            prefix="ptest_native_",
+        )
+        stderr_file = tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix="_stderr.txt",
+            delete=False,
+            prefix="ptest_native_",
+        )
+
+        merged_env = os.environ.copy()
+        if isinstance(env_extra, dict):
+            merged_env.update({str(k): str(v) for k, v in env_extra.items()})
+
+        started_at = datetime.now()
+        timed_out = False
+        returncode: int | None = None
+        signal_name: str | None = None
+
+        try:
+            proc = subprocess.run(
+                [str(c) for c in command],
+                cwd=cwd,
+                env=merged_env,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                timeout=timeout
+                if isinstance(timeout, (int, float)) and timeout > 0
+                else None,
+                shell=False,
+            )
+            returncode = proc.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            returncode = -1
+        except FileNotFoundError as exc:
+            return False, f"native case command not found: {exc}"
+        except PermissionError as exc:
+            return False, f"native case command permission denied: {exc}"
+        except OSError as exc:
+            return False, f"native case command execution error: {exc}"
+        finally:
+            stdout_file.close()
+            stderr_file.close()
+
+        ended_at = datetime.now()
+        duration = (ended_at - started_at).total_seconds()
+
+        if returncode is not None and returncode < 0:
+            sig = -returncode
+            names = self._get_signal_names()
+            signal_name = names.get(sig, str(sig))
+        elif returncode is not None and returncode >= 0xC0000000:
+            signal_name = f"NTSTATUS(0x{returncode:08X})"
+
+        stdout_size = 0
+        stderr_size = 0
+        try:
+            stdout_size = Path(stdout_file.name).stat().st_size
+        except OSError:
+            pass
+        try:
+            stderr_size = Path(stderr_file.name).stat().st_size
+        except OSError:
+            pass
+
+        crash_detected = (
+            (returncode is not None and returncode < 0)
+            or (returncode is not None and returncode >= 0xC0000000)
+            or timed_out
+        )
+
+        process_result = {
+            "command": [str(c) for c in command],
+            "cwd": cwd,
+            "started_at": started_at.isoformat(),
+            "ended_at": ended_at.isoformat(),
+            "duration": round(duration, 3),
+            "returncode": returncode,
+            "signal": signal_name,
+            "timed_out": timed_out,
+            "expected_exit_code": expected_exit_code,
+            "crash_detected": crash_detected,
+            "crash_expected": crash_expected,
+            "stdout_ref": stdout_file.name,
+            "stderr_ref": stderr_file.name,
+            "stdout_size": stdout_size,
+            "stderr_size": stderr_size,
+        }
+
+        if crash_expected:
+            if crash_detected:
+                return True, process_result
+            return False, process_result
+
+        if timed_out:
+            return False, process_result
+
+        if crash_detected:
+            return False, process_result
+
+        if returncode != expected_exit_code:
+            return False, process_result
+
+        return True, process_result
 
     def _compare_response(self, expected: Any, actual: Any) -> bool:
         """比较预期结果和实际结果"""

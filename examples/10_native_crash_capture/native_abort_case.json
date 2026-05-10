@@ -1,0 +1,11 @@
+{
+  "type": "native",
+  "name": "native_abort_demo",
+  "command": ["python3", "crash_program.py", "abort"],
+  "timeout": 10,
+  "expected_exit_code": 0,
+  "crash_expected": false,
+  "log_paths": [],
+  "config_paths": [],
+  "data_summary_paths": []
+}

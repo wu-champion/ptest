@@ -69,6 +69,21 @@ PROBLEM_ALLOWED_STATUSES: set[str] = {
     "closed",
 }
 
+_MAX_ARTIFACT_IO_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+def _bounded_copy(src: Path, dst: Path, limit: int) -> bool:
+    """Copy at most *limit* bytes from src to dst. Return True if truncated."""
+    written = 0
+    with open(src, "rb") as f_in, open(dst, "wb") as f_out:
+        while written < limit:
+            chunk = f_in.read(min(65536, limit - written))
+            if not chunk:
+                return False
+            f_out.write(chunk)
+            written += len(chunk)
+        return bool(f_in.read(1))
+
 
 class _ReplayResponseView:
     def __init__(self, status_code: int, headers: dict[str, Any], body: Any) -> None:
@@ -4644,6 +4659,70 @@ class WorkflowService:
     def _workspace_dump_dir(self) -> Path:
         return self.root_path / "dumps"
 
+    def _probe_core_environment(self) -> dict[str, Any]:
+        import platform
+
+        limitations: list[str] = []
+        core_supported = _resource is not None and hasattr(_resource, "RLIMIT_CORE")
+        core_enabled = False
+        rlimit_core: dict[str, Any] = {}
+        if core_supported:
+            try:
+                soft, hard = _resource.getrlimit(_resource.RLIMIT_CORE)
+                rlimit_core = {
+                    "soft": self._serialize_core_limit_value(soft),
+                    "hard": self._serialize_core_limit_value(hard),
+                }
+                core_enabled = soft != 0
+                if hard == 0:
+                    limitations.append("process_core_hard_limit_disabled")
+            except (OSError, ValueError) as exc:
+                limitations.append(f"core_limit_probe_failed:{exc}")
+        else:
+            limitations.append("core_rlimit_unsupported")
+
+        core_pattern = ""
+        core_pattern_path = Path("/proc/sys/kernel/core_pattern")
+        try:
+            if core_pattern_path.is_file():
+                core_pattern = core_pattern_path.read_text(encoding="utf-8").strip()
+                if core_pattern.startswith("|"):
+                    limitations.append("system_core_pattern_pipe_handler")
+        except OSError:
+            limitations.append("core_pattern_unreadable")
+
+        dump_dir = self._workspace_dump_dir()
+        dump_dirs: list[str] = []
+        dump_dirs_writable: list[bool] = []
+        try:
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            probe = dump_dir / ".ptest_write_probe"
+            try:
+                probe.write_text("probe", encoding="utf-8")
+                probe.unlink(missing_ok=True)
+                writable = True
+            except OSError:
+                writable = False
+            dump_dirs.append(str(dump_dir))
+            dump_dirs_writable.append(writable)
+            if not writable:
+                limitations.append("dump_dir_not_writable")
+        except OSError:
+            limitations.append("dump_dir_unavailable")
+
+        return {
+            "platform": platform.system(),
+            "core_supported": core_supported,
+            "core_enabled": core_enabled,
+            "rlimit_core": rlimit_core,
+            "core_pattern": core_pattern,
+            "dump_dir": str(dump_dir),
+            "dump_dir_writable": dump_dirs_writable[0] if dump_dirs_writable else False,
+            "dump_dirs": dump_dirs,
+            "dump_dirs_writable": dump_dirs_writable,
+            "limitations": limitations,
+        }
+
     def _build_environment_crash_capture_capability(
         self,
         dump_dir: str | Path | None = None,
@@ -5711,6 +5790,155 @@ class WorkflowService:
         merged_definition["data"] = merged_data
         return merged_definition
 
+    def _write_native_process_artifact(
+        self,
+        execution_id: str,
+        process_result: dict[str, Any],
+        case_payload: dict[str, Any],
+        *,
+        case_id: str = "",
+        crash_capture: dict[str, Any] | None = None,
+        core_environment: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        artifact_dir = self.storage.artifacts_dir / execution_id
+        native_dir = artifact_dir / "native_process"
+        native_dir.mkdir(parents=True, exist_ok=True)
+
+        files: dict[str, str] = {}
+        native_process_data = dict(process_result)
+
+        stdout_src = process_result.get("stdout_ref", "")
+        stderr_src = process_result.get("stderr_ref", "")
+        temp_files_to_clean: list[Path] = []
+        if stdout_src and Path(stdout_src).is_file():
+            dst = native_dir / "stdout.txt"
+            truncated = _bounded_copy(Path(stdout_src), dst, _MAX_ARTIFACT_IO_BYTES)
+            files["native_stdout"] = self.storage._relative_workspace_path(dst)
+            native_process_data["stdout_ref"] = files["native_stdout"]
+            native_process_data["stdout_truncated"] = truncated
+            temp_files_to_clean.append(Path(stdout_src))
+        if stderr_src and Path(stderr_src).is_file():
+            dst = native_dir / "stderr.txt"
+            truncated = _bounded_copy(Path(stderr_src), dst, _MAX_ARTIFACT_IO_BYTES)
+            files["native_stderr"] = self.storage._relative_workspace_path(dst)
+            native_process_data["stderr_ref"] = files["native_stderr"]
+            native_process_data["stderr_truncated"] = truncated
+            temp_files_to_clean.append(Path(stderr_src))
+
+        for key in ("log_paths", "config_paths", "data_summary_paths"):
+            paths = case_payload.get(key)
+            if isinstance(paths, list):
+                summaries: list[dict[str, Any]] = []
+                for p in paths[:10]:
+                    p = str(p)
+                    entry: dict[str, Any] = {"path": p}
+                    try:
+                        pp = Path(p).expanduser().resolve()
+                        entry["exists"] = pp.exists()
+                        if pp.is_file():
+                            stat = pp.stat()
+                            entry["size"] = stat.st_size
+                            entry["mtime"] = stat.st_mtime
+                            if key == "config_paths":
+                                import hashlib
+
+                                h = hashlib.sha256()
+                                preview_bytes = b""
+                                with open(pp, "rb") as cf:
+                                    while True:
+                                        chunk = cf.read(65536)
+                                        if not chunk:
+                                            break
+                                        h.update(chunk)
+                                        if len(preview_bytes) < 512:
+                                            preview_bytes += chunk
+                                entry["hash_sha256"] = h.hexdigest()
+                                entry["preview"] = preview_bytes[:512].decode(
+                                    "utf-8", errors="replace"
+                                )
+                                entry["preview_truncated"] = stat.st_size > 512
+                            if key == "log_paths":
+                                try:
+                                    with open(pp, "rb") as lf:
+                                        lf.seek(0, 2)
+                                        size = lf.tell()
+                                        lf.seek(-min(512, size), 2)
+                                        tail = lf.read()
+                                    entry["tail_window"] = tail.decode(
+                                        "utf-8", errors="replace"
+                                    )
+                                except OSError:
+                                    pass
+                        elif pp.is_dir() and key == "data_summary_paths":
+                            file_count = 0
+                            total_size = 0
+                            truncated = False
+                            try:
+                                for item in pp.rglob("*"):
+                                    if item.is_file():
+                                        file_count += 1
+                                        total_size += item.stat().st_size
+                                        if file_count >= 1000:
+                                            truncated = True
+                                            break
+                            except OSError:
+                                pass
+                            entry["file_count"] = file_count
+                            entry["total_size"] = total_size
+                            entry["truncated"] = truncated
+                    except (OSError, ValueError):
+                        entry["exists"] = False
+                    summaries.append(entry)
+                native_process_data[key] = summaries
+
+        framework_context: dict[str, Any] = {}
+        env_extra = case_payload.get("env")
+        if isinstance(env_extra, dict):
+            framework_context["env_keys"] = sorted(str(k) for k in env_extra)
+        native_process_data["framework_context"] = framework_context
+
+        native_process_data["execution_id"] = execution_id
+        native_process_data["case_id"] = case_id or case_payload.get("name", "")
+
+        native_process_data["capture_status"] = "available"
+        if core_environment is not None:
+            native_process_data["core_environment"] = core_environment
+            native_process_data["limitations"] = core_environment.get("limitations", [])
+        else:
+            native_process_data["limitations"] = []
+        if crash_capture is not None:
+            native_process_data["crash_capture"] = crash_capture
+
+        for old_key, new_key in (
+            ("log_paths", "log_refs"),
+            ("config_paths", "config_refs"),
+            ("data_summary_paths", "data_dir_summaries"),
+        ):
+            if old_key in native_process_data:
+                native_process_data[new_key] = native_process_data.pop(old_key)
+
+        native_json_path = self.storage._write_artifact_file(
+            native_dir / "native_process.json",
+            native_process_data,
+        )
+        files["native_process"] = native_json_path
+
+        for tmp in temp_files_to_clean:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        return {
+            "files": files,
+            "native_process": {
+                "native_process": native_json_path,
+                "stdout": files.get("native_stdout", ""),
+                "stderr": files.get("native_stderr", ""),
+            },
+            "native_process_data": native_process_data,
+        }
+
     def _persist_execution(
         self,
         case_id: str,
@@ -5764,6 +5992,40 @@ class WorkflowService:
                 "data_state_artifacts": data_state_artifacts,
             },
         )
+        case_payload = self._unwrap_case_definition(case_definition)
+        extra_categories: dict[str, Any] | None = None
+        extra_files: dict[str, str] | None = None
+        if case_payload.get("type") == "native" and isinstance(result.output, dict):
+            native_crash_capture = {
+                "before": crash_snapshot_before or {},
+                "after": crash_snapshot_after,
+                "new_dump_refs": self._detect_new_crash_dump_refs(
+                    crash_snapshot_before or {},
+                    crash_snapshot_after,
+                ),
+            }
+            core_env = self._probe_core_environment()
+            native_refs = self._write_native_process_artifact(
+                execution_id,
+                result.output,
+                case_payload,
+                case_id=case_id,
+                crash_capture=native_crash_capture,
+                core_environment=core_env,
+            )
+            extra_categories = {
+                "native_process": native_refs.get("native_process", {}),
+            }
+            extra_files = native_refs.get("files")
+            record.metadata["native_process"] = native_refs.get(
+                "native_process_data", {}
+            )
+            npd = native_refs.get("native_process_data", {})
+            if isinstance(result.output, dict):
+                if "stdout_ref" in npd:
+                    result.output["stdout_ref"] = npd["stdout_ref"]
+                if "stderr_ref" in npd:
+                    result.output["stderr_ref"] = npd["stderr_ref"]
         artifacts = self.storage.save_execution_artifacts(
             execution_id,
             environment=environment,
@@ -5773,6 +6035,8 @@ class WorkflowService:
             output=result.output,
             object_artifacts=object_artifacts,
             data_state_artifacts=data_state_artifacts,
+            extra_categories=extra_categories,
+            extra_files=extra_files,
         )
         record.metadata["artifacts"] = artifacts
         artifact_index = self.storage.save_execution_artifact_record(record)
@@ -5824,19 +6088,41 @@ class WorkflowService:
             "error": None if failed == 0 else "One or more cases failed",
         }
 
-    def _preserve_problem_for_execution(self, record: ExecutionRecord) -> None:
-        if record.status not in {"failed", "error"}:
-            return
+    def _is_native_crash_candidate(
+        self,
+        case_payload: dict[str, Any],
+        record: ExecutionRecord,
+    ) -> bool:
+        if case_payload.get("type") != "native":
+            return False
+        native_process = record.metadata.get("native_process")
+        if isinstance(native_process, dict):
+            if native_process.get("crash_detected"):
+                return True
+            if native_process.get("timed_out"):
+                return True
+            rc = native_process.get("returncode")
+            if isinstance(rc, (int, float)) and (rc < 0 or rc >= 0xC0000000):
+                return True
+        if self._has_new_crash_dump_refs(record.metadata.get("crash_capture")):
+            return True
+        return False
 
+    def _preserve_problem_for_execution(self, record: ExecutionRecord) -> None:
         case_definition = record.metadata.get("case")
         if not isinstance(case_definition, dict):
             return
         case_payload = self._unwrap_case_definition(case_definition)
-        if not (
+
+        is_native_crash = self._is_native_crash_candidate(case_payload, record)
+        if record.status not in {"failed", "error"} and not is_native_crash:
+            return
+        if record.status in {"failed", "error"} and not (
             self._is_api_problem_candidate(case_payload)
             or self._is_data_problem_candidate(case_payload)
             or self._is_service_runtime_problem_candidate(case_payload)
             or self._has_new_crash_dump_refs(record.metadata.get("crash_capture"))
+            or is_native_crash
         ):
             return
 
@@ -5990,6 +6276,16 @@ class WorkflowService:
         if self._is_crash_dump_problem_candidate(
             case_payload
         ) or self._has_new_crash_dump_refs(crash_capture):
+            return self._build_crash_dump_problem_records(
+                record,
+                case_payload=case_payload,
+                environment_id=environment_id,
+                object_refs=object_refs,
+                artifact_refs=artifact_refs,
+                log_refs=log_refs,
+                crash_capture=crash_capture,
+            )
+        if self._is_native_crash_candidate(case_payload, record):
             return self._build_crash_dump_problem_records(
                 record,
                 case_payload=case_payload,
@@ -6414,6 +6710,31 @@ class WorkflowService:
             "crash_capture": crash_capture if isinstance(crash_capture, dict) else {},
             "case": case_payload,
         }
+        native_process = record.metadata.get("native_process")
+        if isinstance(native_process, dict):
+            details["process_result"] = {
+                "command": native_process.get("command"),
+                "cwd": native_process.get("cwd"),
+                "returncode": native_process.get("returncode"),
+                "signal": native_process.get("signal"),
+                "timed_out": native_process.get("timed_out"),
+                "crash_detected": native_process.get("crash_detected"),
+                "crash_expected": native_process.get("crash_expected"),
+            }
+            details["core_environment"] = native_process.get("core_environment", {})
+            details["native_case"] = {
+                "stdout_ref": native_process.get("stdout_ref"),
+                "stderr_ref": native_process.get("stderr_ref"),
+            }
+            log_summaries = native_process.get("log_refs")
+            if isinstance(log_summaries, list):
+                details["log_refs"] = log_summaries
+            config_summaries = native_process.get("config_refs")
+            if isinstance(config_summaries, list):
+                details["config_refs"] = config_summaries
+            data_summaries = native_process.get("data_dir_summaries")
+            if isinstance(data_summaries, list):
+                details["data_dir_summaries"] = data_summaries
         if object_artifacts:
             details["object_artifacts"] = object_artifacts
         preservation = self._build_preservation_summary(
@@ -6562,6 +6883,16 @@ class WorkflowService:
                     dump_dir = object_crash_capture.get("dump_dir")
                     if isinstance(dump_dir, str) and dump_dir:
                         directories.append(str(Path(dump_dir).expanduser().resolve()))
+
+        watch_dirs = case_payload.get("dump_watch_dirs")
+        if isinstance(watch_dirs, list):
+            for d in watch_dirs[:10]:
+                d = str(d)
+                if d:
+                    try:
+                        directories.append(str(Path(d).expanduser().resolve()))
+                    except (OSError, ValueError):
+                        pass
 
         unique: list[str] = []
         seen: set[str] = set()
@@ -8381,6 +8712,44 @@ class WorkflowService:
                 "latest_files": log_window.get("latest_files", []),
                 "snippets": log_window.get("snippets", []),
             }
+        process_result = details.get("process_result")
+        if isinstance(process_result, dict):
+            summary["process_exit"] = {
+                "status": crash_event.get("execution_status"),
+                "returncode": process_result.get("returncode"),
+                "signal": process_result.get("signal"),
+                "timed_out": process_result.get("timed_out"),
+                "crash_detected": process_result.get("crash_detected"),
+            }
+        core_env = details.get("core_environment")
+        if isinstance(core_env, dict):
+            limitations_list = core_env.get("limitations", [])
+            summary["core_environment"] = {
+                "available": core_env.get("core_enabled"),
+                "platform": core_env.get("platform"),
+                "limitations": limitations_list,
+                "reason": "; ".join(limitations_list) if limitations_list else "none",
+            }
+        site: dict[str, Any] = {}
+        log_refs = details.get("log_refs")
+        if isinstance(log_refs, list):
+            site["log_count"] = len(log_refs)
+        config_refs = details.get("config_refs")
+        if isinstance(config_refs, list):
+            site["config_count"] = len(config_refs)
+        data_dir = details.get("data_dir_summaries")
+        if isinstance(data_dir, list):
+            site["data_summary_count"] = len(data_dir)
+        dump_count = len(dump_refs) if isinstance(dump_refs, list) else 0
+        site["dump_count"] = dump_count
+        native_case = details.get("native_case")
+        if isinstance(native_case, dict):
+            if native_case.get("stdout_ref"):
+                site["stdout_ref"] = native_case["stdout_ref"]
+            if native_case.get("stderr_ref"):
+                site["stderr_ref"] = native_case["stderr_ref"]
+        if site:
+            summary["site_summary"] = site
         return summary
 
     def _build_problem_dependency_digest(
@@ -9876,7 +10245,7 @@ class WorkflowService:
         recommended_checks = recovery.get("recommended_checks", [])
         next_actions = recovery.get("next_actions", [])
         limitations = recovery.get("limitations", [])
-        return {
+        result: dict[str, Any] = {
             "problem_id": record.problem_id,
             "problem_type": record.problem_type,
             "summary": record.summary,
@@ -9893,6 +10262,35 @@ class WorkflowService:
             "limitations": limitations if isinstance(limitations, list) else [],
             "hints": recovery,
         }
+        process_result = details.get("process_result")
+        if isinstance(process_result, dict):
+            result["process_result"] = process_result
+        core_env = details.get("core_environment")
+        if isinstance(core_env, dict):
+            result["core_environment"] = core_env
+        native_case = details.get("native_case")
+        if isinstance(native_case, dict):
+            site_summary: dict[str, Any] = {}
+            if native_case.get("stdout_ref"):
+                site_summary["stdout_ref"] = native_case["stdout_ref"]
+            if native_case.get("stderr_ref"):
+                site_summary["stderr_ref"] = native_case["stderr_ref"]
+            dump_count = len(dump_refs) if isinstance(dump_refs, list) else 0
+            site_summary["dump_count"] = dump_count
+            log_summaries = details.get("log_refs")
+            if isinstance(log_summaries, list):
+                site_summary["log_refs"] = log_summaries
+                site_summary["log_count"] = len(log_summaries)
+            config_summaries = details.get("config_refs")
+            if isinstance(config_summaries, list):
+                site_summary["config_refs"] = config_summaries
+                site_summary["config_count"] = len(config_summaries)
+            data_dir_summaries = details.get("data_dir_summaries")
+            if isinstance(data_dir_summaries, list):
+                site_summary["data_dir_summaries"] = data_dir_summaries
+                site_summary["data_summary_count"] = len(data_dir_summaries)
+            result["site_summary"] = site_summary
+        return result
 
     def _record_environment_dependency_problem(
         self,
