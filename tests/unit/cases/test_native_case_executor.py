@@ -582,7 +582,7 @@ def test_native_crash_expected_also_generates_problem(tmp_path: Path) -> None:
 def test_native_crash_problem_recovery_has_site_summary(tmp_path: Path) -> None:
     service = WorkflowService(tmp_path)
     service.init_environment()
-    script = _create_crash_script(tmp_path, "signal")
+    script = _create_crash_script(tmp_path, "abort")
 
     service.add_case(
         "native_crash_recovery",
