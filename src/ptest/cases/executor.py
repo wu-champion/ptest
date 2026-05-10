@@ -103,9 +103,18 @@ class TestExecutor:
                     result.status = "passed"
                 else:
                     result.status = "failed"
-                    result.error_message = str(test_output)
                     if isinstance(test_output, dict):
                         result.output = test_output
+                        rc = test_output.get("returncode", "")
+                        sig = test_output.get("signal", "")
+                        timed_out = test_output.get("timed_out", False)
+                        result.error_message = (
+                            f"native process failed: returncode={rc}"
+                            + (f" signal={sig}" if sig else "")
+                            + (f" timed_out={timed_out}" if timed_out else "")
+                        )
+                    else:
+                        result.error_message = str(test_output)
 
         except Exception as e:
             test_success = False

@@ -165,6 +165,8 @@ class WorkspaceStorage:
         output: Any = None,
         object_artifacts: dict[str, Any] | None = None,
         data_state_artifacts: dict[str, Any] | None = None,
+        extra_categories: dict[str, Any] | None = None,
+        extra_files: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         self.ensure_layout()
         artifact_dir = self.artifacts_dir / execution_id
@@ -238,6 +240,10 @@ class WorkspaceStorage:
             if "output" in files
             else {},
         }
+        if extra_categories:
+            categories.update(extra_categories)
+        if extra_files:
+            files.update(extra_files)
         log_index = {
             "execution_id": execution_id,
             "workspace_logs_dir": self._relative_workspace_path(
