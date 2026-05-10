@@ -708,7 +708,9 @@ class TestExecutor:
     def _get_signal_names(cls) -> dict[int, str]:
         if not cls._SIGNAL_NAMES:
             cls._SIGNAL_NAMES = {
-                v: k for k, v in signal.__dict__.items() if k.startswith("SIG") and not k.startswith("SIG_")
+                v: k
+                for k, v in signal.__dict__.items()
+                if k.startswith("SIG") and not k.startswith("SIG_")
             }
         return cls._SIGNAL_NAMES
 
@@ -732,10 +734,16 @@ class TestExecutor:
         self.env_manager.logger.info(f"Executing native case: {command}")
 
         stdout_file = tempfile.NamedTemporaryFile(
-            mode="wb", suffix="_stdout.txt", delete=False, prefix="ptest_native_",
+            mode="wb",
+            suffix="_stdout.txt",
+            delete=False,
+            prefix="ptest_native_",
         )
         stderr_file = tempfile.NamedTemporaryFile(
-            mode="wb", suffix="_stderr.txt", delete=False, prefix="ptest_native_",
+            mode="wb",
+            suffix="_stderr.txt",
+            delete=False,
+            prefix="ptest_native_",
         )
 
         merged_env = os.environ.copy()
@@ -754,7 +762,9 @@ class TestExecutor:
                 env=merged_env,
                 stdout=stdout_file,
                 stderr=stderr_file,
-                timeout=timeout if isinstance(timeout, (int, float)) and timeout > 0 else None,
+                timeout=timeout
+                if isinstance(timeout, (int, float)) and timeout > 0
+                else None,
                 shell=False,
             )
             returncode = proc.returncode
@@ -790,10 +800,7 @@ class TestExecutor:
         except OSError:
             pass
 
-        crash_detected = (
-            (returncode is not None and returncode < 0)
-            or timed_out
-        )
+        crash_detected = (returncode is not None and returncode < 0) or timed_out
 
         process_result = {
             "command": [str(c) for c in command],

@@ -72,6 +72,7 @@ def test_native_case_nonzero_exit_failed(tmp_path: Path) -> None:
     assert isinstance(result["output"], dict)
     assert result["output"]["returncode"] == 1
     assert result["output"]["crash_detected"] is False
+    assert "/tmp/ptest_native_" not in result.get("error_message", "")
 
 
 def test_native_case_abort_records_signal(tmp_path: Path) -> None:
@@ -416,6 +417,8 @@ def test_native_case_log_config_summaries(tmp_path: Path) -> None:
     assert np_data["config_refs"][0]["exists"] is True
     assert len(np_data["data_dir_summaries"]) == 1
     assert "env_keys" in np_data["framework_context"]
+    assert np_data["case_id"] == "native_refs"
+    assert np_data["capture_status"] == "available"
 
 
 def test_native_case_core_environment_in_artifact(tmp_path: Path) -> None:
@@ -597,6 +600,14 @@ def test_native_crash_problem_recovery_has_site_summary(tmp_path: Path) -> None:
     assert "site_summary" in recovery["recovery"]
     assert recovery["recovery"]["supported"] is False
     assert recovery["recovery"]["mode"] == "crash_dump_investigation"
+
+    site = recovery["recovery"]["site_summary"]
+    assert isinstance(site.get("dump_count"), int)
+    assert site.get("log_count", 0) == 0
+    assert site.get("config_count", 0) == 0
+    assert site.get("data_summary_count", 0) == 0
+    assert "stdout_ref" in site
+    assert "stderr_ref" in site
 
 
 def test_native_crash_investigation_has_process_exit(tmp_path: Path) -> None:

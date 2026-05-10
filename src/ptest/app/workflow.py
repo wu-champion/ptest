@@ -5841,6 +5841,7 @@ class WorkflowService:
                             entry["mtime"] = stat.st_mtime
                             if key == "config_paths":
                                 import hashlib
+
                                 h = hashlib.sha256()
                                 preview_bytes = b""
                                 with open(pp, "rb") as cf:
@@ -6005,7 +6006,9 @@ class WorkflowService:
             }
             core_env = self._probe_core_environment()
             native_refs = self._write_native_process_artifact(
-                execution_id, result.output, case_payload,
+                execution_id,
+                result.output,
+                case_payload,
                 case_id=case_id,
                 crash_capture=native_crash_capture,
                 core_environment=core_env,
@@ -6014,7 +6017,9 @@ class WorkflowService:
                 "native_process": native_refs.get("native_process", {}),
             }
             extra_files = native_refs.get("files")
-            record.metadata["native_process"] = native_refs.get("native_process_data", {})
+            record.metadata["native_process"] = native_refs.get(
+                "native_process_data", {}
+            )
             npd = native_refs.get("native_process_data", {})
             if isinstance(result.output, dict):
                 if "stdout_ref" in npd:
