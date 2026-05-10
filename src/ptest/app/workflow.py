@@ -6102,7 +6102,7 @@ class WorkflowService:
             if native_process.get("timed_out"):
                 return True
             rc = native_process.get("returncode")
-            if isinstance(rc, (int, float)) and rc < 0:
+            if isinstance(rc, (int, float)) and (rc < 0 or rc >= 0xC0000000):
                 return True
         if self._has_new_crash_dump_refs(record.metadata.get("crash_capture")):
             return True

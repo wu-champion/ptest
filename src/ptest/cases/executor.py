@@ -788,6 +788,8 @@ class TestExecutor:
             sig = -returncode
             names = self._get_signal_names()
             signal_name = names.get(sig, str(sig))
+        elif returncode is not None and returncode >= 0xC0000000:
+            signal_name = f"NTSTATUS(0x{returncode:08X})"
 
         stdout_size = 0
         stderr_size = 0
@@ -800,7 +802,11 @@ class TestExecutor:
         except OSError:
             pass
 
-        crash_detected = (returncode is not None and returncode < 0) or timed_out
+        crash_detected = (
+            (returncode is not None and returncode < 0)
+            or (returncode is not None and returncode >= 0xC0000000)
+            or timed_out
+        )
 
         process_result = {
             "command": [str(c) for c in command],

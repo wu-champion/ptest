@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import signal
+import sys
 import textwrap
 from pathlib import Path
+
+import pytest
 
 from ptest.app import WorkflowService
 
@@ -91,11 +94,15 @@ def test_native_case_abort_records_signal(tmp_path: Path) -> None:
     result = service.run_case("native_abort")
     assert result["status"] == "failed"
     assert isinstance(result["output"], dict)
-    assert result["output"]["returncode"] < 0
     assert result["output"]["crash_detected"] is True
     assert result["output"]["signal"] is not None
+    rc = result["output"]["returncode"]
+    assert rc < 0 or rc >= 0xC0000000
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="os.kill(SIGTERM) semantics differ on Windows"
+)
 def test_native_case_signal_exit(tmp_path: Path) -> None:
     service = WorkflowService(tmp_path)
     service.init_environment()
