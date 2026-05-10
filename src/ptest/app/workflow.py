@@ -69,6 +69,21 @@ PROBLEM_ALLOWED_STATUSES: set[str] = {
     "closed",
 }
 
+_MAX_ARTIFACT_IO_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+def _bounded_copy(src: Path, dst: Path, limit: int) -> bool:
+    """Copy at most *limit* bytes from src to dst. Return True if truncated."""
+    written = 0
+    with open(src, "rb") as f_in, open(dst, "wb") as f_out:
+        while written < limit:
+            chunk = f_in.read(min(65536, limit - written))
+            if not chunk:
+                return False
+            f_out.write(chunk)
+            written += len(chunk)
+        return bool(f_in.read(1))
+
 
 class _ReplayResponseView:
     def __init__(self, status_code: int, headers: dict[str, Any], body: Any) -> None:
@@ -5792,33 +5807,19 @@ class WorkflowService:
         files: dict[str, str] = {}
         native_process_data = dict(process_result)
 
-        _MAX_IO_BYTES = 1 * 1024 * 1024  # 1 MB
-
-        def _bounded_copy(src: Path, dst: Path, limit: int) -> bool:
-            """Copy at most *limit* bytes from src to dst. Return True if truncated."""
-            written = 0
-            with open(src, "rb") as f_in, open(dst, "wb") as f_out:
-                while written < limit:
-                    chunk = f_in.read(min(65536, limit - written))
-                    if not chunk:
-                        return False
-                    f_out.write(chunk)
-                    written += len(chunk)
-                return bool(f_in.read(1))
-
         stdout_src = process_result.get("stdout_ref", "")
         stderr_src = process_result.get("stderr_ref", "")
         temp_files_to_clean: list[Path] = []
         if stdout_src and Path(stdout_src).is_file():
             dst = native_dir / "stdout.txt"
-            truncated = _bounded_copy(Path(stdout_src), dst, _MAX_IO_BYTES)
+            truncated = _bounded_copy(Path(stdout_src), dst, _MAX_ARTIFACT_IO_BYTES)
             files["native_stdout"] = self.storage._relative_workspace_path(dst)
             native_process_data["stdout_ref"] = files["native_stdout"]
             native_process_data["stdout_truncated"] = truncated
             temp_files_to_clean.append(Path(stdout_src))
         if stderr_src and Path(stderr_src).is_file():
             dst = native_dir / "stderr.txt"
-            truncated = _bounded_copy(Path(stderr_src), dst, _MAX_IO_BYTES)
+            truncated = _bounded_copy(Path(stderr_src), dst, _MAX_ARTIFACT_IO_BYTES)
             files["native_stderr"] = self.storage._relative_workspace_path(dst)
             native_process_data["stderr_ref"] = files["native_stderr"]
             native_process_data["stderr_truncated"] = truncated

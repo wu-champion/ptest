@@ -732,10 +732,10 @@ class TestExecutor:
         self.env_manager.logger.info(f"Executing native case: {command}")
 
         stdout_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix="_stdout.txt", delete=False, prefix="ptest_native_",
+            mode="wb", suffix="_stdout.txt", delete=False, prefix="ptest_native_",
         )
         stderr_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix="_stderr.txt", delete=False, prefix="ptest_native_",
+            mode="wb", suffix="_stderr.txt", delete=False, prefix="ptest_native_",
         )
 
         merged_env = os.environ.copy()
