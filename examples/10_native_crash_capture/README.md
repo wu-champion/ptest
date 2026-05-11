@@ -156,3 +156,30 @@ The problem includes:
 - `core_environment` — platform, core_enabled, rlimit, core_pattern, limitations
 - `dump_refs` — discovered core/dump files
 - `native_case` — stdout/stderr references
+
+## Managed Object Crash Linkage (P5-D)
+
+When a native case includes `object_name`, the crash problem is linked to the managed object:
+
+- `crash_target.object_name` uses the case `object_name` (falls back to `service_name` for backward compatibility)
+- `object_summary` reports whether the object was found, its type, status, and installation state
+- `next_actions` include object-specific investigation entries:
+  - `inspect_object_status` — check the object after the crash
+  - `inspect_execution_object_artifacts` — review captured artifacts
+  - `verify_object_binding` — when object is not found
+- `problem assets`, `problem show` (investigation), and `problem recover` all include `object_summary`
+
+Example case with object linkage:
+
+```json
+{
+  "type": "native",
+  "name": "product_crash_test",
+  "command": ["/opt/product/bin/test_runner", "--suite=stability"],
+  "object_name": "product_service",
+  "timeout": 300,
+  "dump_watch_dirs": ["/tmp", "/var/lib/systemd/coredump"]
+}
+```
+
+When `object_name` is absent, the behavior is identical to P5-A/P5-B (no object linkage).

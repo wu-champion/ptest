@@ -6649,13 +6649,17 @@ class WorkflowService:
         problem_id = f"problem_{record.execution_id}"
         now = datetime.now().isoformat()
         service_name = case_payload.get("service_name", "")
+        object_name_raw = case_payload.get("object_name")
+        target_object_name = (
+            object_name_raw
+            if isinstance(object_name_raw, str) and object_name_raw
+            else service_name
+            if isinstance(service_name, str) and service_name
+            else ""
+        )
         runtime_object_refs = object_refs.copy()
-        if (
-            isinstance(service_name, str)
-            and service_name
-            and service_name not in runtime_object_refs
-        ):
-            runtime_object_refs.append(service_name)
+        if target_object_name and target_object_name not in runtime_object_refs:
+            runtime_object_refs.append(target_object_name)
         object_artifacts = self._build_problem_object_artifacts(
             record,
             problem_type="crash_dump",
@@ -6679,11 +6683,11 @@ class WorkflowService:
             elif "summary" not in ref:
                 ref["summary"] = self._summarize_crash_dump_ref(ref)
         dump_summary = self._build_crash_dump_summary(dump_refs)
-        object_summary = self._build_crash_dump_object_summary(service_name)
+        object_summary = self._build_crash_dump_object_summary(target_object_name)
         log_window = self._build_crash_dump_log_window(log_refs)
         crash_target = {
             "service_name": service_name,
-            "object_name": service_name,
+            "object_name": target_object_name,
             "runtime_backend": "object_or_external_service",
             "host": case_payload.get("host", "localhost"),
             "port": case_payload.get("port", 8080),
@@ -6702,7 +6706,11 @@ class WorkflowService:
                 dump_refs=dump_refs,
                 crash_target=crash_target,
             ),
-            "next_actions": self._build_crash_dump_next_actions(dump_refs),
+            "next_actions": self._build_crash_dump_next_actions(
+                dump_refs,
+                crash_target=crash_target,
+                object_summary=object_summary,
+            ),
             "limitations": [
                 "current crash_dump recovery preserves dump/core references but does not parse dump contents",
                 "current crash_dump recovery does not reconstruct historical runtime state automatically",
@@ -6757,7 +6765,7 @@ class WorkflowService:
         preservation = self._build_preservation_summary(
             {
                 "crash_target": (
-                    bool(service_name),
+                    bool(target_object_name),
                     "crash target identity was not preserved",
                 ),
                 "dump_refs": (
@@ -7291,20 +7299,55 @@ class WorkflowService:
         ]
 
     def _build_crash_dump_next_actions(
-        self, dump_refs: list[dict[str, Any]]
+        self,
+        dump_refs: list[dict[str, Any]],
+        *,
+        crash_target: dict[str, Any] | None = None,
+        object_summary: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        actions = [
+        target_name = ""
+        if isinstance(crash_target, dict):
+            target_name = str(
+                crash_target.get("object_name")
+                or crash_target.get("service_name")
+                or ""
+            )
+        has_object = bool(target_name)
+        object_found = (
+            isinstance(object_summary, dict)
+            and object_summary.get("object_found") is True
+        )
+        if has_object:
+            actions: list[dict[str, Any]] = [
+                {
+                    "priority": "high",
+                    "action": "inspect_object_status",
+                    "object_name": target_name,
+                    "reason": "check the managed object status after the crash event",
+                },
+                {
+                    "priority": "high",
+                    "action": "inspect_execution_object_artifacts",
+                    "object_name": target_name,
+                    "reason": "review object artifacts captured during the execution",
+                },
+            ]
+        else:
+            actions = []
+        actions.append(
             {
                 "priority": "high",
                 "action": "inspect_dump_refs",
                 "reason": "verify whether the preserved dump/core files are present and complete",
-            },
+            }
+        )
+        actions.append(
             {
                 "priority": "high",
                 "action": "inspect_recent_runtime_logs",
                 "reason": "use the crash window logs to confirm pre-crash runtime context",
-            },
-        ]
+            }
+        )
         has_existing = False
         has_archive = False
         for ref in dump_refs:
@@ -7335,6 +7378,22 @@ class WorkflowService:
                     "priority": "medium",
                     "action": "verify_dump_generation_environment",
                     "reason": "no dump/core files were found; verify core_pattern, ulimit, and dump directory permissions",
+                }
+            )
+        if has_object and not object_found:
+            actions.append(
+                {
+                    "priority": "medium",
+                    "action": "verify_object_binding",
+                    "object_name": target_name,
+                    "reason": "the managed object was not found; verify the object binding and installation",
+                }
+            )
+            actions.append(
+                {
+                    "priority": "low",
+                    "action": "inspect_problem_assets",
+                    "reason": "object not found; review problem assets for additional crash context",
                 }
             )
         return actions
@@ -8823,16 +8882,16 @@ class WorkflowService:
         )
         return summary
 
-    def _build_crash_dump_object_summary(self, service_name: Any) -> dict[str, Any]:
-        if not isinstance(service_name, str) or not service_name:
+    def _build_crash_dump_object_summary(self, object_name: Any) -> dict[str, Any]:
+        if not isinstance(object_name, str) or not object_name:
             return {
-                "service_name": service_name,
+                "object_name": object_name if isinstance(object_name, str) else "",
                 "object_found": False,
             }
-        record = self.storage.get_object(service_name)
+        record = self.storage.get_object(object_name)
         if record is None:
             return {
-                "service_name": service_name,
+                "object_name": object_name,
                 "object_found": False,
             }
         crash_capture = (
@@ -8843,7 +8902,7 @@ class WorkflowService:
         if not isinstance(crash_capture, dict):
             crash_capture = {}
         return {
-            "service_name": service_name,
+            "object_name": object_name,
             "object_found": True,
             "type_name": record.type_name,
             "status": record.status,
@@ -10558,6 +10617,11 @@ class WorkflowService:
         core_env = details.get("core_environment")
         if isinstance(core_env, dict):
             result["core_environment"] = core_env
+        object_summary = recovery.get(
+            "object_summary", details.get("object_summary", {})
+        )
+        if isinstance(object_summary, dict):
+            result["object_summary"] = object_summary
         native_case = details.get("native_case")
         if isinstance(native_case, dict):
             site_summary: dict[str, Any] = {}
