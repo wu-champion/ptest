@@ -643,3 +643,362 @@ def test_native_crash_investigation_has_process_exit(tmp_path: Path) -> None:
     assert "process_exit" in investigation
     assert investigation["process_exit"]["crash_detected"] is True
     assert "core_environment" in investigation
+
+
+# -- P5-B: dump summary tests --
+
+
+def test_native_crash_problem_has_dump_summary(tmp_path: Path) -> None:
+    """Native crash with no real dump files still produces dump_summary."""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "native_dump_summary",
+        {
+            "type": "native",
+            "name": "native_dump_summary",
+            "command": ["python3", str(script)],
+        },
+    )
+    result = service.run_case("native_dump_summary")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="native_dump_summary")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+
+    assets = service.get_problem_assets(crash_problems[0]["problem_id"])
+    details = assets["assets"]["details"]
+    assert "dump_summary" in details
+    ds = details["dump_summary"]
+    assert ds["total_count"] == 0
+    assert ds["available_count"] == 0
+    assert isinstance(ds["types"], dict)
+    assert isinstance(ds["warnings"], list)
+
+
+def test_dump_ref_summary_available_for_existing_file(tmp_path: Path) -> None:
+    """Explicit dump_paths pointing to an existing file gets summary_status=available."""
+    dump_file = tmp_path / "test.core"
+    dump_file.write_bytes(b"\x7fELF" + b"\x00" * 100)
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "dump_ref_existing",
+        {
+            "type": "native",
+            "name": "dump_ref_existing",
+            "command": ["python3", str(script)],
+            "dump_paths": [str(dump_file)],
+        },
+    )
+    result = service.run_case("dump_ref_existing")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="dump_ref_existing")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+
+    assets = service.get_problem_assets(crash_problems[0]["problem_id"])
+    refs = assets["assets"]["details"]["dump_refs"]
+    assert len(refs) >= 1
+    ref = next(r for r in refs if r["path"] == str(dump_file))
+    assert ref["exists"] is True
+    assert ref["summary"]["summary_status"] == "available"
+    assert ref["summary"]["file_type"] == "elf_core"
+    assert ref["summary"]["detected_by"] == "magic"
+    assert len(ref["summary"]["hash_sha256_prefix"]) == 16
+
+
+def test_dump_ref_summary_unavailable_for_missing_file(tmp_path: Path) -> None:
+    """dump_paths pointing to a missing file gets summary_status=unavailable."""
+    missing = tmp_path / "missing.core"
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "dump_ref_missing",
+        {
+            "type": "native",
+            "name": "dump_ref_missing",
+            "command": ["python3", str(script)],
+            "dump_paths": [str(missing)],
+        },
+    )
+    result = service.run_case("dump_ref_missing")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="dump_ref_missing")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+
+    assets = service.get_problem_assets(crash_problems[0]["problem_id"])
+    refs = assets["assets"]["details"]["dump_refs"]
+    ref = next(r for r in refs if r["path"] == str(missing))
+    assert ref["exists"] is False
+    assert ref["summary"]["summary_status"] == "unavailable"
+    assert "file_missing" in ref["summary"]["warnings"]
+
+
+def test_dump_ref_summary_empty_file_warning(tmp_path: Path) -> None:
+    """Empty dump file gets empty_file warning."""
+    empty = tmp_path / "empty.core"
+    empty.write_bytes(b"")
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "dump_ref_empty",
+        {
+            "type": "native",
+            "name": "dump_ref_empty",
+            "command": ["python3", str(script)],
+            "dump_paths": [str(empty)],
+        },
+    )
+    result = service.run_case("dump_ref_empty")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="dump_ref_empty")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+
+    assets = service.get_problem_assets(crash_problems[0]["problem_id"])
+    refs = assets["assets"]["details"]["dump_refs"]
+    ref = next(r for r in refs if r["path"] == str(empty))
+    assert "empty_file" in ref["summary"]["warnings"]
+
+
+def test_dump_ref_summary_archive_zip(tmp_path: Path) -> None:
+    """zip file gets file_type=archive with entry_count."""
+    import zipfile
+
+    arc = tmp_path / "crash_assets.zip"
+    with zipfile.ZipFile(arc, "w") as zf:
+        zf.writestr("core.1234", b"\x7fELF" + b"\x00" * 50)
+        zf.writestr("stderr.log", "error output\n")
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "dump_ref_zip",
+        {
+            "type": "native",
+            "name": "dump_ref_zip",
+            "command": ["python3", str(script)],
+            "dump_paths": [str(arc)],
+        },
+    )
+    result = service.run_case("dump_ref_zip")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="dump_ref_zip")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+
+    assets = service.get_problem_assets(crash_problems[0]["problem_id"])
+    refs = assets["assets"]["details"]["dump_refs"]
+    ref = next(r for r in refs if r["path"] == str(arc))
+    s = ref["summary"]
+    assert s["summary_status"] == "available"
+    assert s["file_type"] == "archive"
+    assert s["detected_by"] == "archive_probe"
+    assert s["archive"]["format"] == "zip"
+    assert s["archive"]["entry_count"] == 2
+    assert len(s["archive"]["sample_entries"]) == 2
+
+
+def test_dump_ref_summary_corrupt_archive(tmp_path: Path) -> None:
+    """Corrupt zip gets summary_status=error."""
+    bad = tmp_path / "bad.zip"
+    bad.write_bytes(b"PK\x00\x00corrupt data")
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "dump_ref_corrupt",
+        {
+            "type": "native",
+            "name": "dump_ref_corrupt",
+            "command": ["python3", str(script)],
+            "dump_paths": [str(bad)],
+        },
+    )
+    result = service.run_case("dump_ref_corrupt")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="dump_ref_corrupt")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+
+    assets = service.get_problem_assets(crash_problems[0]["problem_id"])
+    refs = assets["assets"]["details"]["dump_refs"]
+    ref = next(r for r in refs if r["path"] == str(bad))
+    assert ref["summary"]["summary_status"] == "error"
+    assert "archive_probe_failed" in ref["summary"]["warnings"]
+
+
+def test_archive_entry_names_are_safe(tmp_path: Path) -> None:
+    """Absolute and parent-path entries are sanitized in sample_entries."""
+    import zipfile
+
+    arc = tmp_path / "unsafe_entries.zip"
+    with zipfile.ZipFile(arc, "w") as zf:
+        zf.writestr("/tmp/core.1234", b"\x7fELF" + b"\x00" * 10)
+        zf.writestr("../../etc/passwd", b"root:x:0:0")
+        zf.writestr("safe/dir/file.log", b"ok\n")
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "dump_ref_unsafe_zip",
+        {
+            "type": "native",
+            "name": "dump_ref_unsafe_zip",
+            "command": ["python3", str(script)],
+            "dump_paths": [str(arc)],
+        },
+    )
+    result = service.run_case("dump_ref_unsafe_zip")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="dump_ref_unsafe_zip")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+
+    assets = service.get_problem_assets(crash_problems[0]["problem_id"])
+    refs = assets["assets"]["details"]["dump_refs"]
+    ref = next(r for r in refs if r["path"] == str(arc))
+    entries = ref["summary"]["archive"]["sample_entries"]
+    assert "tmp/core.1234" in entries
+    assert "etc/passwd" in entries
+    assert "safe/dir/file.log" in entries
+    assert not any(e.startswith("/") for e in entries)
+    assert not any(".." in e for e in entries)
+    assert "archive_contains_absolute_path" in ref["summary"]["warnings"]
+    assert "archive_contains_parent_path" in ref["summary"]["warnings"]
+
+
+def test_archive_backslash_path_triggers_warning(tmp_path: Path) -> None:
+    """Windows-style backslash parent paths trigger zip-slip warning."""
+    import zipfile
+
+    arc = tmp_path / "backslash.zip"
+    with zipfile.ZipFile(arc, "w") as zf:
+        zf.writestr("..\\evil\\core.1234", b"\x7fELF" + b"\x00" * 10)
+        zf.writestr("safe.log", b"ok\n")
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "dump_ref_backslash",
+        {
+            "type": "native",
+            "name": "dump_ref_backslash",
+            "command": ["python3", str(script)],
+            "dump_paths": [str(arc)],
+        },
+    )
+    result = service.run_case("dump_ref_backslash")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="dump_ref_backslash")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+
+    assets = service.get_problem_assets(crash_problems[0]["problem_id"])
+    refs = assets["assets"]["details"]["dump_refs"]
+    ref = next(r for r in refs if r["path"] == str(arc))
+    assert "archive_contains_parent_path" in ref["summary"]["warnings"]
+    entries = ref["summary"]["archive"]["sample_entries"]
+    assert not any(".." in e for e in entries)
+
+
+def test_dump_summary_in_investigation_and_recovery(tmp_path: Path) -> None:
+    """dump_summary appears in investigation and recovery outputs."""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "dump_summary_ir",
+        {
+            "type": "native",
+            "name": "dump_summary_ir",
+            "command": ["python3", str(script)],
+        },
+    )
+    result = service.run_case("dump_summary_ir")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="dump_summary_ir")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+    problem_id = crash_problems[0]["problem_id"]
+
+    # Investigation
+    problem = service.get_problem_record(problem_id)
+    investigation = problem["problem"]["investigation"]
+    assert "dump_summary" in investigation
+    assert isinstance(investigation["dump_summary"]["total_count"], int)
+
+    # Recovery
+    recovery = service.recover_problem(problem_id)
+    assert "dump_summary" in recovery["recovery"]
+    assert isinstance(recovery["recovery"]["dump_summary"]["total_count"], int)
+
+
+def test_dump_ref_summary_limit_reached(tmp_path: Path) -> None:
+    """Beyond 20 dump refs, extras get summary_status=skipped."""
+    dump_paths = []
+    for i in range(25):
+        f = tmp_path / f"dump_{i:02d}.core"
+        f.write_bytes(b"\x7fELF" + b"\x00" * 10)
+        dump_paths.append(str(f))
+
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "dump_ref_limit",
+        {
+            "type": "native",
+            "name": "dump_ref_limit",
+            "command": ["python3", str(script)],
+            "dump_paths": dump_paths,
+        },
+    )
+    result = service.run_case("dump_ref_limit")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="dump_ref_limit")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+
+    assets = service.get_problem_assets(crash_problems[0]["problem_id"])
+    refs = assets["assets"]["details"]["dump_refs"]
+    assert len(refs) == 25
+
+    summarized = [r for r in refs if r["summary"]["summary_status"] == "available"]
+    skipped = [r for r in refs if r["summary"]["summary_status"] == "skipped"]
+    assert len(summarized) == 20
+    assert len(skipped) == 5
+    assert "dump_ref_summary_limit_reached" in skipped[0]["summary"]["warnings"]

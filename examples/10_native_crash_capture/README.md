@@ -111,6 +111,35 @@ Each native case execution generates:
 - `result/result.json` — execution result
 - `indexes/artifact_index.json` — manifest with categories
 
+## Dump Summary (P5-B)
+
+When `dump_paths` or auto-discovered dump files are present, ptest generates a lightweight summary for each ref:
+
+- **file_type**: `elf_core`, `minidump`, `archive`, `text_dump`, or `unknown` (detected by magic bytes or extension)
+- **hash_sha256_prefix**: first 16 hex chars of sha256 (streams up to 16 MB)
+- **warnings**: `empty_file`, `file_missing`, `permission_denied`, `archive_probe_failed`, etc.
+
+For archive files (`.zip`, `.tar`, `.tar.gz`, `.tgz`), ptest reads the directory only (no extraction) and reports:
+
+- `entry_count`, `sample_entries` (up to 20), `total_uncompressed_size`, `truncated`
+
+A `dump_summary` aggregate is included in `problem assets.details`, `problem show` investigation, and `problem recover`:
+
+```json
+{
+  "dump_summary": {
+    "total_count": 2,
+    "available_count": 1,
+    "unavailable_count": 1,
+    "types": {"elf_core": 1, "unknown": 1},
+    "has_archive": false,
+    "warnings": ["file_missing"]
+  }
+}
+```
+
+ptest does **not** parse core contents, symbolize stacks, or extract archives. The summary is purely metadata for deciding whether to continue investigation.
+
 ## Problem Generation
 
 A `crash_dump` problem is generated when:
