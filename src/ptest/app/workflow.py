@@ -4,6 +4,8 @@ import ast
 import hashlib
 import json
 import os
+import tarfile
+import zipfile
 import re
 import socket
 import sqlite3
@@ -6664,6 +6666,19 @@ class WorkflowService:
             self._build_crash_dump_refs(case_payload),
             self._extract_new_crash_dump_refs(crash_capture),
         )
+        for idx, ref in enumerate(dump_refs):
+            if idx >= self._DUMP_MAX_SUMMARY_REFS:
+                ref["summary"] = {
+                    "summary_status": "skipped",
+                    "file_type": "unknown",
+                    "detected_by": "fallback",
+                    "hash_sha256_prefix": "",
+                    "hash_scope": "not_computed",
+                    "warnings": ["dump_ref_summary_limit_reached"],
+                }
+            elif "summary" not in ref:
+                ref["summary"] = self._summarize_crash_dump_ref(ref)
+        dump_summary = self._build_crash_dump_summary(dump_refs)
         object_summary = self._build_crash_dump_object_summary(service_name)
         log_window = self._build_crash_dump_log_window(log_refs)
         crash_target = {
@@ -6679,6 +6694,7 @@ class WorkflowService:
             "mode": "crash_dump_investigation",
             "crash_target": crash_target,
             "dump_refs": dump_refs,
+            "dump_summary": dump_summary,
             "object_summary": object_summary,
             "log_window": log_window,
             "boundary": boundary,
@@ -6705,6 +6721,7 @@ class WorkflowService:
                 "check_type": case_payload.get("check_type", "port"),
             },
             "dump_refs": dump_refs,
+            "dump_summary": dump_summary,
             "object_summary": object_summary,
             "log_window": log_window,
             "crash_capture": crash_capture if isinstance(crash_capture, dict) else {},
@@ -6824,20 +6841,19 @@ class WorkflowService:
             path = Path(item).expanduser()
             exists = path.exists()
             stat = path.stat() if exists else None
-            refs.append(
-                {
-                    "path": str(path),
-                    "exists": exists,
-                    "kind": "core_or_dump",
-                    "name": path.name,
-                    "size": stat.st_size if stat is not None else None,
-                    "modified_at": (
-                        datetime.fromtimestamp(stat.st_mtime).isoformat()
-                        if stat is not None
-                        else None
-                    ),
-                }
-            )
+            ref = {
+                "path": str(path),
+                "exists": exists,
+                "kind": "core_or_dump",
+                "name": path.name,
+                "size": stat.st_size if stat is not None else None,
+                "modified_at": (
+                    datetime.fromtimestamp(stat.st_mtime).isoformat()
+                    if stat is not None
+                    else None
+                ),
+            }
+            refs.append(ref)
         return refs
 
     def _capture_workspace_crash_dump_snapshot(
@@ -6912,18 +6928,17 @@ class WorkflowService:
             if not item.is_file() or not self._looks_like_crash_dump_file(item):
                 continue
             stat = item.stat()
-            refs.append(
-                {
-                    "path": str(item.resolve()),
-                    "exists": True,
-                    "kind": "core_or_dump",
-                    "name": item.name,
-                    "size": stat.st_size,
-                    "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                    "source": "workspace_scan",
-                    "directory": str(path.resolve()),
-                }
-            )
+            ref = {
+                "path": str(item.resolve()),
+                "exists": True,
+                "kind": "core_or_dump",
+                "name": item.name,
+                "size": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "source": "workspace_scan",
+                "directory": str(path.resolve()),
+            }
+            refs.append(ref)
         return refs
 
     def _looks_like_crash_dump_file(self, path: Path) -> bool:
@@ -6934,6 +6949,251 @@ class WorkflowService:
             or name.endswith(".dump")
             or name.endswith(".dmp")
         )
+
+    # -- P5-B: dump ref summary helpers --
+
+    _DUMP_HEADER_READ_BYTES = 4096
+    _DUMP_HASH_PREFIX_BYTES = 16 * 1024 * 1024  # 16 MB
+    _DUMP_MAX_SUMMARY_REFS = 20
+
+    def _detect_crash_dump_file_type(
+        self,
+        header: bytes,
+        path: Path,
+    ) -> tuple[str, str]:
+        """Return (file_type, detected_by) from magic bytes or extension."""
+        if len(header) >= 4:
+            if header[:4] == b"\x7fELF":
+                return "elf_core", "magic"
+            if header[:4] == b"MDMP":
+                return "minidump", "magic"
+        if len(header) >= 2:
+            if header[:2] == b"PK":
+                return "archive", "magic"
+            if header[:2] == b"\x1f\x8b":
+                return "archive", "magic"
+        name = path.name.lower()
+        if name.endswith((".zip", ".tar", ".tgz")) or name.endswith(".tar.gz"):
+            return "archive", "extension"
+        if name.endswith((".txt", ".log")):
+            return "text_dump", "extension"
+        return "unknown", "fallback"
+
+    def _hash_crash_dump_prefix(self, path: Path) -> tuple[str, str]:
+        """Return (hash_sha256_prefix, hash_scope). Streams up to 16 MB."""
+        h = hashlib.sha256()
+        read = 0
+        try:
+            with open(path, "rb") as f:
+                while read < self._DUMP_HASH_PREFIX_BYTES:
+                    chunk = f.read(min(65536, self._DUMP_HASH_PREFIX_BYTES - read))
+                    if not chunk:
+                        break
+                    h.update(chunk)
+                    read += len(chunk)
+                remaining = f.read(1)
+        except OSError:
+            return "", "not_computed"
+        prefix = h.hexdigest()[:16]
+        scope = "full_file" if not remaining else "prefix_only"
+        return prefix, scope
+
+    def _summarize_crash_dump_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
+        """Build a lightweight summary for a single dump ref."""
+        path_str = ref.get("path")
+        if not isinstance(path_str, str):
+            return {"summary_status": "unavailable", "warnings": ["no_path"]}
+        p = Path(path_str)
+        if not p.exists():
+            return {
+                "summary_status": "unavailable",
+                "file_type": "unknown",
+                "detected_by": "fallback",
+                "hash_sha256_prefix": "",
+                "hash_scope": "not_computed",
+                "warnings": ["file_missing"],
+            }
+        if not p.is_file():
+            return {
+                "summary_status": "unavailable",
+                "file_type": "unknown",
+                "detected_by": "fallback",
+                "hash_sha256_prefix": "",
+                "hash_scope": "not_computed",
+                "warnings": ["not_a_regular_file"],
+            }
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = None
+        warnings: list[str] = []
+        if size is not None and size == 0:
+            warnings.append("empty_file")
+        try:
+            with open(p, "rb") as f:
+                header = f.read(self._DUMP_HEADER_READ_BYTES)
+        except OSError:
+            return {
+                "summary_status": "error",
+                "file_type": "unknown",
+                "detected_by": "fallback",
+                "hash_sha256_prefix": "",
+                "hash_scope": "not_computed",
+                "warnings": ["permission_denied"],
+            }
+        file_type, detected_by = self._detect_crash_dump_file_type(header, p)
+        hash_prefix, hash_scope = self._hash_crash_dump_prefix(p)
+        summary: dict[str, Any] = {
+            "summary_status": "available",
+            "file_type": file_type,
+            "detected_by": detected_by,
+            "hash_sha256_prefix": hash_prefix,
+            "hash_scope": hash_scope,
+            "header_size": len(header),
+            "warnings": warnings,
+        }
+        if file_type == "archive":
+            archive_info = self._summarize_crash_archive(p)
+            summary["detected_by"] = "archive_probe"
+            archive_status = archive_info.get("summary_status")
+            if archive_status in ("error", "skipped"):
+                summary["summary_status"] = archive_status
+                summary["warnings"] = list(
+                    {*warnings, *archive_info.get("warnings", [])}
+                )
+            else:
+                summary["archive"] = archive_info.get("archive", {})
+                summary["warnings"] = list(
+                    {*warnings, *archive_info.get("warnings", [])}
+                )
+        return summary
+
+    @staticmethod
+    def _safe_archive_entry_name(raw: str) -> str:
+        """Normalize an archive entry name for safe display."""
+        parts = [p for p in raw.replace("\\", "/").split("/") if p and p != ".."]
+        return "/".join(parts)
+
+    @staticmethod
+    def _check_archive_entry_warnings(
+        raw: str,
+        seen: set[str],
+    ) -> None:
+        """Check a raw entry name for unsafe patterns; mutate *seen* in place."""
+        norm = raw.replace("\\", "/")
+        if ".." in norm.split("/"):
+            seen.add("archive_contains_parent_path")
+        if norm.startswith("/"):
+            seen.add("archive_contains_absolute_path")
+
+    def _summarize_crash_archive(self, path: Path) -> dict[str, Any]:
+        """Read archive directory only — no extraction."""
+        name = path.name.lower()
+        sample_limit = 20
+        entry_count = 0
+        total_uncompressed = 0
+        sample_entries: list[str] = []
+        truncated = False
+        warning_set: set[str] = set()
+        try:
+            if name.endswith(".zip"):
+                with zipfile.ZipFile(path, "r") as zf:
+                    for info in zf.infolist():
+                        entry_count += 1
+                        total_uncompressed += info.file_size
+                        if len(sample_entries) < sample_limit:
+                            sample_entries.append(
+                                self._safe_archive_entry_name(info.filename)
+                            )
+                        self._check_archive_entry_warnings(info.filename, warning_set)
+                    if entry_count > sample_limit:
+                        truncated = True
+                        warning_set.add("archive_entry_summary_truncated")
+                return {
+                    "summary_status": "available",
+                    "archive": {
+                        "format": "zip",
+                        "entry_count": entry_count,
+                        "sample_entries": sample_entries,
+                        "total_uncompressed_size": total_uncompressed,
+                        "truncated": truncated,
+                    },
+                    "warnings": sorted(warning_set),
+                }
+            if name.endswith((".tar", ".tar.gz", ".tgz")):
+                mode: str = "r:gz" if name.endswith((".tar.gz", ".tgz")) else "r:"
+                with tarfile.open(path, mode) as tf:  # type: ignore[call-overload]
+                    for member in tf:
+                        if not member.isfile():
+                            continue
+                        entry_count += 1
+                        total_uncompressed += member.size
+                        if len(sample_entries) < sample_limit:
+                            sample_entries.append(
+                                self._safe_archive_entry_name(member.name)
+                            )
+                        self._check_archive_entry_warnings(member.name, warning_set)
+                    if entry_count > sample_limit:
+                        truncated = True
+                        warning_set.add("archive_entry_summary_truncated")
+                return {
+                    "summary_status": "available",
+                    "archive": {
+                        "format": "tar" if name.endswith(".tar") else "tar.gz",
+                        "entry_count": entry_count,
+                        "sample_entries": sample_entries,
+                        "total_uncompressed_size": total_uncompressed,
+                        "truncated": truncated,
+                    },
+                    "warnings": sorted(warning_set),
+                }
+        except (zipfile.BadZipFile, tarfile.TarError, OSError):
+            return {
+                "summary_status": "error",
+                "archive": {},
+                "warnings": ["archive_probe_failed"],
+            }
+        return {
+            "summary_status": "skipped",
+            "archive": {},
+            "warnings": ["unsupported_archive_format"],
+        }
+
+    def _build_crash_dump_summary(
+        self,
+        dump_refs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Aggregate summary across all dump refs."""
+        total = len(dump_refs)
+        available = 0
+        unavailable = 0
+        types: dict[str, int] = {}
+        has_archive = False
+        all_warnings: list[str] = []
+        seen_warnings: set[str] = set()
+        for ref in dump_refs:
+            s = ref.get("summary", {})
+            status = s.get("summary_status")
+            if status == "available":
+                available += 1
+            elif status == "unavailable":
+                unavailable += 1
+            ft = s.get("file_type", "unknown")
+            types[ft] = types.get(ft, 0) + 1
+            if ft == "archive":
+                has_archive = True
+            for w in s.get("warnings", []):
+                if w not in seen_warnings:
+                    seen_warnings.add(w)
+                    all_warnings.append(w)
+        return {
+            "total_count": total,
+            "available_count": available,
+            "unavailable_count": unavailable,
+            "types": types,
+            "has_archive": has_archive,
+            "warnings": all_warnings,
+        }
 
     def _detect_new_crash_dump_refs(
         self,
@@ -7045,12 +7305,36 @@ class WorkflowService:
                 "reason": "use the crash window logs to confirm pre-crash runtime context",
             },
         ]
-        if any(ref.get("exists") is True for ref in dump_refs):
+        has_existing = False
+        has_archive = False
+        for ref in dump_refs:
+            if ref.get("exists") is True:
+                has_existing = True
+            s = ref.get("summary", {})
+            if isinstance(s, dict) and s.get("file_type") == "archive":
+                has_archive = True
+        if has_existing:
             actions.append(
                 {
                     "priority": "medium",
                     "action": "prepare_followup_dump_analysis",
                     "reason": "the dump/core asset exists and can be used in a deeper crash investigation phase",
+                }
+            )
+        if has_archive:
+            actions.append(
+                {
+                    "priority": "medium",
+                    "action": "inspect_archive_entry_summary",
+                    "reason": "an archive file was found in dump refs; review its entry summary before extraction",
+                }
+            )
+        if not has_existing:
+            actions.append(
+                {
+                    "priority": "medium",
+                    "action": "verify_dump_generation_environment",
+                    "reason": "no dump/core files were found; verify core_pattern, ulimit, and dump directory permissions",
                 }
             )
         return actions
@@ -8689,6 +8973,9 @@ class WorkflowService:
             },
             "dump_refs": dump_refs if isinstance(dump_refs, list) else [],
         }
+        dump_summary = recovery.get("dump_summary", details.get("dump_summary"))
+        if isinstance(dump_summary, dict):
+            summary["dump_summary"] = dump_summary
         if isinstance(boundary, dict):
             summary["boundary"] = {
                 "scope": boundary.get("scope"),
@@ -10262,6 +10549,9 @@ class WorkflowService:
             "limitations": limitations if isinstance(limitations, list) else [],
             "hints": recovery,
         }
+        dump_summary = recovery.get("dump_summary", details.get("dump_summary"))
+        if isinstance(dump_summary, dict):
+            result["dump_summary"] = dump_summary
         process_result = details.get("process_result")
         if isinstance(process_result, dict):
             result["process_result"] = process_result

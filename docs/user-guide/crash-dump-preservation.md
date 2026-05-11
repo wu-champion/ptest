@@ -183,3 +183,35 @@ ptest problem show <problem_id> --path /tmp/ptest-crash-dump-demo
 - dump/core 自动发现与自动挂接
 
 也就是说，当前目标是先把严重故障资产稳定接住，而不是一步做到完整 crash 平台。
+
+## Dump Summary (P5-B)
+
+当 `dump_paths` 或自动发现的 dump 文件存在时，ptest 会为每个 ref 生成轻量摘要：
+
+- **file_type**: `elf_core`、`minidump`、`archive`、`text_dump` 或 `unknown`（通过 magic 字节或扩展名识别）
+- **hash_sha256_prefix**: sha256 十六进制前 16 位（流式计算，最多 16MB）
+- **detected_by**: `magic`、`extension`、`archive_probe` 或 `fallback`
+- **warnings**: `empty_file`、`file_missing`、`permission_denied`、`archive_probe_failed` 等
+
+对于压缩包文件（`.zip`、`.tar`、`.tar.gz`、`.tgz`），ptest 只读取目录（不解压），报告：
+
+- `entry_count`、`sample_entries`（最多 20 条）、`total_uncompressed_size`、`truncated`
+
+当 dump refs 超过 20 个时，超出部分标记 `summary_status=skipped`，warnings 包含 `dump_ref_summary_limit_reached`。
+
+`problem assets.details`、`problem show` investigation 和 `problem recover` 都包含聚合摘要 `dump_summary`：
+
+```json
+{
+  "dump_summary": {
+    "total_count": 2,
+    "available_count": 1,
+    "unavailable_count": 1,
+    "types": {"elf_core": 1, "unknown": 1},
+    "has_archive": false,
+    "warnings": ["file_missing"]
+  }
+}
+```
+
+ptest **不会**解析 core 内容、符号化栈或解压压缩包。摘要纯粹是元数据，用于判断是否值得继续调查。
