@@ -197,7 +197,7 @@ ptest problem show <problem_id> --path /tmp/ptest-crash-dump-demo
 
 - `entry_count`、`sample_entries`（最多 20 条）、`total_uncompressed_size`、`truncated`
 
-当 dump refs 超过 20 个时，超出部分标记 `summary_status=skipped`，warning 包含 `dump_ref_summary_limit_reached`。
+当 dump refs 超过 20 个时，超出部分标记 `summary_status=skipped`，warnings 包含 `dump_ref_summary_limit_reached`。
 
 `problem assets.details`、`problem show` investigation 和 `problem recover` 都包含聚合摘要 `dump_summary`：
 

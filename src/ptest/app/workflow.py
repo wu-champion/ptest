@@ -7074,6 +7074,18 @@ class WorkflowService:
         parts = [p for p in raw.replace("\\", "/").split("/") if p and p != ".."]
         return "/".join(parts)
 
+    @staticmethod
+    def _check_archive_entry_warnings(
+        raw: str,
+        seen: set[str],
+    ) -> None:
+        """Check a raw entry name for unsafe patterns; mutate *seen* in place."""
+        norm = raw.replace("\\", "/")
+        if ".." in norm.split("/"):
+            seen.add("archive_contains_parent_path")
+        if norm.startswith("/"):
+            seen.add("archive_contains_absolute_path")
+
     def _summarize_crash_archive(self, path: Path) -> dict[str, Any]:
         """Read archive directory only — no extraction."""
         name = path.name.lower()
@@ -7082,7 +7094,7 @@ class WorkflowService:
         total_uncompressed = 0
         sample_entries: list[str] = []
         truncated = False
-        warnings: list[str] = []
+        warning_set: set[str] = set()
         try:
             if name.endswith(".zip"):
                 with zipfile.ZipFile(path, "r") as zf:
@@ -7093,14 +7105,10 @@ class WorkflowService:
                             sample_entries.append(
                                 self._safe_archive_entry_name(info.filename)
                             )
-                        norm = info.filename.replace("\\", "/")
-                        if ".." in norm.split("/"):
-                            warnings.append("archive_contains_parent_path")
-                        if norm.startswith("/"):
-                            warnings.append("archive_contains_absolute_path")
+                        self._check_archive_entry_warnings(info.filename, warning_set)
                     if entry_count > sample_limit:
                         truncated = True
-                        warnings.append("archive_entry_summary_truncated")
+                        warning_set.add("archive_entry_summary_truncated")
                 return {
                     "summary_status": "available",
                     "archive": {
@@ -7110,7 +7118,7 @@ class WorkflowService:
                         "total_uncompressed_size": total_uncompressed,
                         "truncated": truncated,
                     },
-                    "warnings": warnings,
+                    "warnings": sorted(warning_set),
                 }
             if name.endswith((".tar", ".tar.gz", ".tgz")):
                 mode: str = "r:gz" if name.endswith((".tar.gz", ".tgz")) else "r:"
@@ -7124,14 +7132,10 @@ class WorkflowService:
                             sample_entries.append(
                                 self._safe_archive_entry_name(member.name)
                             )
-                        norm = member.name.replace("\\", "/")
-                        if ".." in norm.split("/"):
-                            warnings.append("archive_contains_parent_path")
-                        if norm.startswith("/"):
-                            warnings.append("archive_contains_absolute_path")
+                        self._check_archive_entry_warnings(member.name, warning_set)
                     if entry_count > sample_limit:
                         truncated = True
-                        warnings.append("archive_entry_summary_truncated")
+                        warning_set.add("archive_entry_summary_truncated")
                 return {
                     "summary_status": "available",
                     "archive": {
@@ -7141,7 +7145,7 @@ class WorkflowService:
                         "total_uncompressed_size": total_uncompressed,
                         "truncated": truncated,
                     },
-                    "warnings": warnings,
+                    "warnings": sorted(warning_set),
                 }
         except (zipfile.BadZipFile, tarfile.TarError, OSError):
             return {
