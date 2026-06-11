@@ -414,6 +414,51 @@ class TestBuildObjectCrashRecommendations:
         assert "check_logs" in actions
 
 
+class TestObjectSummaryBackwardCompatibility:
+    """测试 object_summary 向后兼容性"""
+
+    def test_object_summary_contains_both_fields(
+        self, workflow: WorkflowService, installed_object
+    ):
+        """测试：object_summary 同时包含 object_name 和 service_name"""
+        # 获取 object summary
+        summary = workflow._build_crash_dump_object_summary("mysql_demo")
+
+        # 验证同时包含两个字段
+        assert "object_name" in summary
+        assert "service_name" in summary
+        assert summary["object_name"] == "mysql_demo"
+        assert summary["service_name"] == "mysql_demo"
+
+    def test_object_summary_not_found_contains_both_fields(
+        self, workflow: WorkflowService
+    ):
+        """测试：object 不存在时也同时包含两个字段"""
+        # 获取 object summary
+        summary = workflow._build_crash_dump_object_summary("nonexistent")
+
+        # 验证同时包含两个字段
+        assert "object_name" in summary
+        assert "service_name" in summary
+        assert summary["object_name"] == "nonexistent"
+        assert summary["service_name"] == "nonexistent"
+        assert summary["object_found"] is False
+
+    def test_object_summary_empty_name_contains_both_fields(
+        self, workflow: WorkflowService
+    ):
+        """测试：空名称时也同时包含两个字段"""
+        # 获取 object summary
+        summary = workflow._build_crash_dump_object_summary("")
+
+        # 验证同时包含两个字段
+        assert "object_name" in summary
+        assert "service_name" in summary
+        assert summary["object_name"] == ""
+        assert summary["service_name"] == ""
+        assert summary["object_found"] is False
+
+
 class TestCrashLinkageIntegration:
     """集成测试：crash 联动完整流程"""
 
