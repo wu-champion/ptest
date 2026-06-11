@@ -57,6 +57,9 @@ from ..reports.generator import ReportGenerator
 from ..suites import SuiteManager
 from ..storage import WorkspaceStorage
 from ..tools.manager import ToolManager
+from ..core import get_logger
+
+logger = get_logger("workflow")
 
 _resource: Any
 try:
@@ -3292,6 +3295,19 @@ class WorkflowService:
             failure_state = metadata.get("failure_state")
             if isinstance(failure_state, dict):
                 payload["failure_state"] = failure_state
+
+            # 新增：crash 信息
+            crash_capture = metadata.get("crash_capture")
+            if isinstance(crash_capture, dict) and crash_capture:
+                crash_count = crash_capture.get("crash_count", 0)
+                if crash_count and crash_count > 0:
+                    payload["crash_info"] = {
+                        "last_crash_time": crash_capture.get("last_crash_time"),
+                        "crash_count": crash_count,
+                        "last_problem_id": crash_capture.get("last_problem_id"),
+                        "dump_dir": crash_capture.get("dump_dir"),
+                    }
+
         payload["suggested_actions"] = self._build_object_suggested_actions(
             record.status,
             linked_problems,
@@ -6158,6 +6174,25 @@ class WorkflowService:
         problem_record, problem_assets = built
 
         self._save_problem_bundle(problem_record, problem_assets)
+
+        # 新增：crash 后更新 object 状态
+        if problem_record.problem_type == "crash_dump" and problem_record.object_refs:
+            for obj_name in problem_record.object_refs:
+                self._update_object_after_crash(
+                    object_name=obj_name,
+                    execution_id=record.execution_id,
+                    problem_id=problem_record.problem_id,
+                    crash_info={
+                        "signal": case_payload.get("signal"),
+                        "returncode": case_payload.get("returncode"),
+                        "dump_dir": record.metadata.get("crash_capture", {}).get(
+                            "dump_dir"
+                        )
+                        if isinstance(record.metadata.get("crash_capture"), dict)
+                        else None,
+                    },
+                )
+
         problems = record.metadata.setdefault("problems", [])
         if isinstance(problems, list):
             problem_dict = problem_record.to_dict()
@@ -6649,13 +6684,17 @@ class WorkflowService:
         problem_id = f"problem_{record.execution_id}"
         now = datetime.now().isoformat()
         service_name = case_payload.get("service_name", "")
+        object_name_raw = case_payload.get("object_name")
+        target_object_name = (
+            object_name_raw
+            if isinstance(object_name_raw, str) and object_name_raw
+            else service_name
+            if isinstance(service_name, str) and service_name
+            else ""
+        )
         runtime_object_refs = object_refs.copy()
-        if (
-            isinstance(service_name, str)
-            and service_name
-            and service_name not in runtime_object_refs
-        ):
-            runtime_object_refs.append(service_name)
+        if target_object_name and target_object_name not in runtime_object_refs:
+            runtime_object_refs.append(target_object_name)
         object_artifacts = self._build_problem_object_artifacts(
             record,
             problem_type="crash_dump",
@@ -6679,11 +6718,11 @@ class WorkflowService:
             elif "summary" not in ref:
                 ref["summary"] = self._summarize_crash_dump_ref(ref)
         dump_summary = self._build_crash_dump_summary(dump_refs)
-        object_summary = self._build_crash_dump_object_summary(service_name)
+        object_summary = self._build_crash_dump_object_summary(target_object_name)
         log_window = self._build_crash_dump_log_window(log_refs)
         crash_target = {
             "service_name": service_name,
-            "object_name": service_name,
+            "object_name": target_object_name,
             "runtime_backend": "object_or_external_service",
             "host": case_payload.get("host", "localhost"),
             "port": case_payload.get("port", 8080),
@@ -6702,7 +6741,11 @@ class WorkflowService:
                 dump_refs=dump_refs,
                 crash_target=crash_target,
             ),
-            "next_actions": self._build_crash_dump_next_actions(dump_refs),
+            "next_actions": self._build_crash_dump_next_actions(
+                dump_refs,
+                crash_target=crash_target,
+                object_summary=object_summary,
+            ),
             "limitations": [
                 "current crash_dump recovery preserves dump/core references but does not parse dump contents",
                 "current crash_dump recovery does not reconstruct historical runtime state automatically",
@@ -6757,7 +6800,7 @@ class WorkflowService:
         preservation = self._build_preservation_summary(
             {
                 "crash_target": (
-                    bool(service_name),
+                    bool(target_object_name),
                     "crash target identity was not preserved",
                 ),
                 "dump_refs": (
@@ -7291,20 +7334,55 @@ class WorkflowService:
         ]
 
     def _build_crash_dump_next_actions(
-        self, dump_refs: list[dict[str, Any]]
+        self,
+        dump_refs: list[dict[str, Any]],
+        *,
+        crash_target: dict[str, Any] | None = None,
+        object_summary: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        actions = [
+        target_name = ""
+        if isinstance(crash_target, dict):
+            target_name = str(
+                crash_target.get("object_name")
+                or crash_target.get("service_name")
+                or ""
+            )
+        has_object = bool(target_name)
+        object_found = (
+            isinstance(object_summary, dict)
+            and object_summary.get("object_found") is True
+        )
+        if has_object:
+            actions: list[dict[str, Any]] = [
+                {
+                    "priority": "high",
+                    "action": "inspect_object_status",
+                    "object_name": target_name,
+                    "reason": "check the managed object status after the crash event",
+                },
+                {
+                    "priority": "high",
+                    "action": "inspect_execution_object_artifacts",
+                    "object_name": target_name,
+                    "reason": "review object artifacts captured during the execution",
+                },
+            ]
+        else:
+            actions = []
+        actions.append(
             {
                 "priority": "high",
                 "action": "inspect_dump_refs",
                 "reason": "verify whether the preserved dump/core files are present and complete",
-            },
+            }
+        )
+        actions.append(
             {
                 "priority": "high",
                 "action": "inspect_recent_runtime_logs",
                 "reason": "use the crash window logs to confirm pre-crash runtime context",
-            },
-        ]
+            }
+        )
         has_existing = False
         has_archive = False
         for ref in dump_refs:
@@ -7335,6 +7413,22 @@ class WorkflowService:
                     "priority": "medium",
                     "action": "verify_dump_generation_environment",
                     "reason": "no dump/core files were found; verify core_pattern, ulimit, and dump directory permissions",
+                }
+            )
+        if has_object and not object_found:
+            actions.append(
+                {
+                    "priority": "medium",
+                    "action": "verify_object_binding",
+                    "object_name": target_name,
+                    "reason": "the managed object was not found; verify the object binding and installation",
+                }
+            )
+            actions.append(
+                {
+                    "priority": "low",
+                    "action": "inspect_problem_assets",
+                    "reason": "object not found; review problem assets for additional crash context",
                 }
             )
         return actions
@@ -8823,16 +8917,18 @@ class WorkflowService:
         )
         return summary
 
-    def _build_crash_dump_object_summary(self, service_name: Any) -> dict[str, Any]:
-        if not isinstance(service_name, str) or not service_name:
+    def _build_crash_dump_object_summary(self, object_name: Any) -> dict[str, Any]:
+        if not isinstance(object_name, str) or not object_name:
             return {
-                "service_name": service_name,
+                "object_name": object_name if isinstance(object_name, str) else "",
+                "service_name": object_name if isinstance(object_name, str) else "",
                 "object_found": False,
             }
-        record = self.storage.get_object(service_name)
+        record = self.storage.get_object(object_name)
         if record is None:
             return {
-                "service_name": service_name,
+                "object_name": object_name,
+                "service_name": object_name,
                 "object_found": False,
             }
         crash_capture = (
@@ -8843,13 +8939,183 @@ class WorkflowService:
         if not isinstance(crash_capture, dict):
             crash_capture = {}
         return {
-            "service_name": service_name,
+            "object_name": object_name,
+            "service_name": object_name,  # 向后兼容：保留 service_name 作为别名
             "object_found": True,
             "type_name": record.type_name,
             "status": record.status,
             "installed": record.installed,
             "updated_at": record.updated_at,
             "dump_dir": crash_capture.get("dump_dir"),
+        }
+
+    # ===== Crash Linkage Methods =====
+
+    def _update_object_after_crash(
+        self,
+        object_name: str,
+        execution_id: str,
+        problem_id: str,
+        crash_info: dict[str, Any],
+    ) -> None:
+        """crash 发生后更新 object 状态"""
+        from ..models import OBJECT_STATUS_CRASH_PRESERVED
+
+        # 1. 获取 object record
+        record = self.storage.get_object(object_name)
+        if record is None:
+            logger.debug(
+                "Object not found, skip crash update",
+                extra={"object_name": object_name, "problem_id": problem_id},
+            )
+            return
+
+        # 2. 更新状态
+        record.status = OBJECT_STATUS_CRASH_PRESERVED
+        record.updated_at = datetime.now().isoformat()
+
+        # 3. 更新 crash_capture 元数据
+        if not isinstance(record.metadata, dict):
+            record.metadata = {}
+
+        crash_capture = record.metadata.get("crash_capture", {})
+        if not isinstance(crash_capture, dict):
+            crash_capture = {}
+
+        # 更新 crash 计数
+        crash_count = crash_capture.get("crash_count", 0) + 1
+
+        # 更新 crash 历史
+        crash_history = crash_capture.get("crash_history", [])
+        if not isinstance(crash_history, list):
+            crash_history = []
+
+        crash_history.append(
+            {
+                "time": datetime.now().isoformat(),
+                "execution_id": execution_id,
+                "problem_id": problem_id,
+                "signal": crash_info.get("signal"),
+                "returncode": crash_info.get("returncode"),
+            }
+        )
+
+        # 只保留最近 10 条记录
+        crash_history = crash_history[-10:]
+
+        # 更新 crash_capture
+        crash_capture.update(
+            {
+                "last_crash_time": datetime.now().isoformat(),
+                "last_execution_id": execution_id,
+                "last_problem_id": problem_id,
+                "crash_count": crash_count,
+                "dump_dir": crash_info.get("dump_dir"),
+                "crash_history": crash_history,
+            }
+        )
+
+        record.metadata["crash_capture"] = crash_capture
+
+        # 4. 持久化
+        try:
+            self.storage.upsert_object(record)
+            logger.info(
+                "Object updated after crash",
+                extra={
+                    "object_name": object_name,
+                    "problem_id": problem_id,
+                    "crash_count": crash_count,
+                    "signal": crash_info.get("signal"),
+                    "returncode": crash_info.get("returncode"),
+                },
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to update object after crash",
+                extra={
+                    "object_name": object_name,
+                    "problem_id": problem_id,
+                    "error": str(e),
+                },
+            )
+
+    def list_object_issues(
+        self,
+        object_name: str,
+        problem_type: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """列出 object 关联的 problem 记录"""
+        # 1. 加载所有 problem records (返回 dict[str, ProblemRecord])
+        all_problems = self.storage.load_problem_records()
+
+        # 2. 过滤关联到指定 object 的 problem
+        object_problems = []
+        for problem in all_problems.values():
+            if not isinstance(problem, ProblemRecord):
+                continue
+            if object_name in problem.object_refs:
+                # 可选：按 problem_type 过滤
+                if problem_type and problem.problem_type != problem_type:
+                    continue
+                object_problems.append(problem)
+
+        # 3. 按创建时间倒序排序
+        object_problems.sort(key=lambda p: p.created_at, reverse=True)
+
+        # 4. 限制返回数量
+        object_problems = object_problems[:limit]
+
+        # 5. 构建返回结果
+        return [
+            {
+                "problem_id": p.problem_id,
+                "problem_type": p.problem_type,
+                "status": p.status,
+                "summary": p.summary,
+                "created_at": p.created_at,
+                "latest_action": p.latest_action,
+            }
+            for p in object_problems
+        ]
+
+    def get_object_crash_info(self, object_name: str) -> dict[str, Any]:
+        """获取 object 的 crash 联动信息"""
+        record = self.storage.get_object(object_name)
+        if record is None:
+            return {"object_name": object_name, "object_found": False}
+
+        crash_capture = (
+            record.metadata.get("crash_capture", {})
+            if isinstance(record.metadata, dict)
+            else {}
+        )
+        if not isinstance(crash_capture, dict) or not crash_capture:
+            return {
+                "object_name": object_name,
+                "object_found": True,
+                "crash_info": None,
+            }
+
+        # 只有当 crash_count > 0 时才返回 crash_info
+        crash_count = crash_capture.get("crash_count", 0)
+        if not crash_count or crash_count == 0:
+            return {
+                "object_name": object_name,
+                "object_found": True,
+                "crash_info": None,
+            }
+
+        return {
+            "object_name": object_name,
+            "object_found": True,
+            "crash_info": {
+                "last_crash_time": crash_capture.get("last_crash_time"),
+                "crash_count": crash_count,
+                "last_problem_id": crash_capture.get("last_problem_id"),
+                "dump_dir": crash_capture.get("dump_dir"),
+            },
         }
 
     def _build_crash_dump_log_window(self, log_refs: dict[str, Any]) -> dict[str, Any]:
@@ -10558,6 +10824,11 @@ class WorkflowService:
         core_env = details.get("core_environment")
         if isinstance(core_env, dict):
             result["core_environment"] = core_env
+        object_summary = recovery.get(
+            "object_summary", details.get("object_summary", {})
+        )
+        if isinstance(object_summary, dict):
+            result["object_summary"] = object_summary
         native_case = details.get("native_case")
         if isinstance(native_case, dict):
             site_summary: dict[str, Any] = {}
@@ -10580,7 +10851,100 @@ class WorkflowService:
                 site_summary["data_dir_summaries"] = data_dir_summaries
                 site_summary["data_summary_count"] = len(data_dir_summaries)
             result["site_summary"] = site_summary
+
+        # 新增：object 级恢复建议
+        object_name = record.object_refs[0] if record.object_refs else None
+        if object_name:
+            object_record = self.storage.get_object(object_name)
+            if object_record:
+                result["object_recovery"] = {
+                    "object_name": object_name,
+                    "object_status": object_record.status,
+                    "recommendations": self._build_object_crash_recommendations(
+                        object_name, record, assets
+                    ),
+                }
+
         return result
+
+    def _build_object_crash_recommendations(
+        self,
+        object_name: str,
+        record: ProblemRecord,
+        assets: ProblemAssetRecord,
+    ) -> list[dict[str, Any]]:
+        """构建 object crash 恢复建议"""
+        recommendations: list[dict[str, Any]] = []
+
+        # 1. 查看详细信息
+        recommendations.append(
+            {
+                "action": "view_details",
+                "command": f"ptest problem show {record.problem_id}",
+                "reason": "查看详细的 crash 信息和现场数据",
+            }
+        )
+
+        # 2. 查看 object 状态
+        recommendations.append(
+            {
+                "action": "check_object",
+                "command": f"ptest obj status {object_name}",
+                "reason": "查看 object 当前状态和 crash 历史",
+            }
+        )
+
+        # 3. 查看关联的 issues
+        recommendations.append(
+            {
+                "action": "list_issues",
+                "command": f"ptest obj issues {object_name}",
+                "reason": "查看 object 关联的所有问题",
+            }
+        )
+
+        # 4. 根据 crash 类型提供建议
+        details = assets.details if isinstance(assets.details, dict) else {}
+        process_result = details.get("process_result", {})
+        if isinstance(process_result, dict):
+            signal = process_result.get("signal")
+            returncode = process_result.get("returncode")
+
+            if signal == "SIGSEGV":
+                recommendations.append(
+                    {
+                        "action": "analyze_core",
+                        "command": "使用 gdb 分析 core 文件",
+                        "reason": "SIGSEGV 通常是内存访问错误，需要分析 core 文件",
+                    }
+                )
+            elif signal == "SIGABRT":
+                recommendations.append(
+                    {
+                        "action": "check_logs",
+                        "command": f"ptest problem show {record.problem_id}",
+                        "reason": "SIGABRT 通常是断言失败，需要查看日志",
+                    }
+                )
+            elif returncode and returncode != 0:
+                recommendations.append(
+                    {
+                        "action": "check_output",
+                        "command": f"ptest execution artifacts {record.execution_id}",
+                        "reason": "查看执行输出和错误信息",
+                    }
+                )
+
+        # 5. 尝试重启
+        recommendations.append(
+            {
+                "action": "restart_object",
+                "command": f"ptest obj start {object_name}",
+                "reason": "尝试重启 object 恢复服务",
+            }
+        )
+
+        return recommendations
 
     def _record_environment_dependency_problem(
         self,

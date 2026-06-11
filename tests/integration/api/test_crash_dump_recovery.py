@@ -113,7 +113,9 @@ def test_crash_dump_problem_preserves_dump_refs_and_recovery_plan(tmp_path) -> N
     assert recovery["recovery"]["recommended_checks"][0]["purpose"] == (
         "inspect_dump_refs"
     )
-    assert recovery["recovery"]["next_actions"][0]["action"] == "inspect_dump_refs"
+    action_names = [a["action"] for a in recovery["recovery"]["next_actions"]]
+    assert "inspect_dump_refs" in action_names
+    assert "inspect_object_status" in action_names
 
 
 def test_crash_dump_problem_exposes_side_effect_hints_for_prior_trigger(

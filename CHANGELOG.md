@@ -1,3 +1,29 @@
+## [1.11.0] - 2026-06-11
+
+### Added - 新增功能
+
+- 新增 P5-D 受管对象 Crash 联动能力
+  - 新增 `crash_preserved` 对象状态，crash 后自动更新对象状态
+  - 新增 `crash_capture` 元数据，记录 crash 时间、execution_id、problem_id、crash_count、crash_history
+  - 新增 `ptest obj issues <name>` 命令，列出对象关联的 problem
+  - 增强 `ptest obj status <name>` 输出，展示 crash 信息
+  - 新增 `get_object_crash_info` Python API，获取对象 crash 联动信息
+  - 新增 `list_object_issues` Python API，列出对象关联的 problem
+  - 增强 `problem recover`，提供对象级恢复建议
+  - 支持按 crash 类型（SIGSEGV、SIGABRT）提供针对性建议
+
+### Changed - 改进
+
+- 扩展 `OBJECT_FAILURE_PRESERVED_STATUSES`，包含 `crash_preserved` 状态
+- 扩展 `OBJECT_CLEARABLE_STATUSES`，支持清除 `crash_preserved` 状态
+- 扩展 `OBJECT_RESETTABLE_STATUSES`，支持重置 `crash_preserved` 状态
+- 增强 `_build_crash_dump_recovery_plan`，包含对象级恢复建议
+- 增强 `_build_object_status_payload`，包含 crash 信息
+
+### Fixed - 修复
+
+- 无
+
 ## [1.10.1] - 2026-05-03
 
 ### Fixed - 修复

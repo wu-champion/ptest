@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from ptest.app import WorkflowService
+from ptest.models import ManagedObjectRecord
 
 
 def _create_crash_script(tmp_path: Path, behavior: str) -> Path:
@@ -1002,3 +1003,220 @@ def test_dump_ref_summary_limit_reached(tmp_path: Path) -> None:
     assert len(summarized) == 20
     assert len(skipped) == 5
     assert "dump_ref_summary_limit_reached" in skipped[0]["summary"]["warnings"]
+
+
+# ---------------------------------------------------------------------------
+# P5-D: Managed object crash linkage tests
+# ---------------------------------------------------------------------------
+
+
+def test_native_crash_with_object_name_sets_crash_target(tmp_path: Path) -> None:
+    """When a native case has object_name, crash_target.object_name uses it."""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.upsert_object(
+        ManagedObjectRecord(
+            name="my_app",
+            type_name="service",
+            status="running",
+            installed=True,
+            config={},
+        )
+    )
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "native_obj_crash",
+        {
+            "type": "native",
+            "name": "native_obj_crash",
+            "command": ["python3", str(script)],
+            "object_name": "my_app",
+        },
+    )
+    result = service.run_case("native_obj_crash")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="native_obj_crash")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+    problem_id = crash_problems[0]["problem_id"]
+
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    details = assets["assets"]["details"]
+
+    assert details["crash_target"]["object_name"] == "my_app"
+    assert details["crash_target"]["service_name"] == ""
+    assert details["object_summary"]["object_found"] is True
+    assert details["object_summary"]["object_name"] == "my_app"
+    assert details["object_summary"]["type_name"] == "service"
+    assert "status" in details["object_summary"]
+
+    # P5-D3: object_artifacts present in details
+    assert "object_artifacts" in details
+    oa = details["object_artifacts"]
+    assert isinstance(oa.get("before"), dict)
+    assert isinstance(oa.get("after"), dict)
+
+    # P5-D4: investigation carries object_summary and diagnostics.object_artifacts
+    problem = service.get_problem_record(problem_id)
+    investigation = problem["problem"]["investigation"]
+    assert investigation["object_summary"]["object_found"] is True
+    assert investigation["object_summary"]["object_name"] == "my_app"
+    diagnostics = investigation.get("diagnostics", {})
+    assert diagnostics.get("object_artifacts", {}).get("object_count") == 1
+
+    recovery = service.recover_problem(problem_id)
+    assert recovery["success"] is True
+    assert recovery["recovery"]["object_summary"]["object_found"] is True
+    assert recovery["recovery"]["object_summary"]["object_name"] == "my_app"
+
+
+def test_native_crash_with_missing_object_degrades_gracefully(
+    tmp_path: Path,
+) -> None:
+    """When object_name references a non-existent object, problem still generates."""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "native_missing_obj",
+        {
+            "type": "native",
+            "name": "native_missing_obj",
+            "command": ["python3", str(script)],
+            "object_name": "ghost_app",
+        },
+    )
+    result = service.run_case("native_missing_obj")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="native_missing_obj")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+    problem_id = crash_problems[0]["problem_id"]
+
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    details = assets["assets"]["details"]
+
+    assert details["crash_target"]["object_name"] == "ghost_app"
+    assert details["object_summary"]["object_found"] is False
+    assert details["object_summary"]["object_name"] == "ghost_app"
+
+    problem = service.get_problem_record(problem_id)
+    next_actions = problem["problem"]["investigation"].get("next_actions", [])
+    action_names = [a["action"] for a in next_actions]
+    assert "verify_object_binding" in action_names
+    assert "inspect_problem_assets" in action_names
+
+
+def test_native_crash_next_actions_include_object_when_present(
+    tmp_path: Path,
+) -> None:
+    """When object_name is present, next_actions include object investigation entries."""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    service.storage.upsert_object(
+        ManagedObjectRecord(
+            name="svc_obj",
+            type_name="service",
+            status="running",
+            installed=True,
+            config={},
+        )
+    )
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "native_obj_actions",
+        {
+            "type": "native",
+            "name": "native_obj_actions",
+            "command": ["python3", str(script)],
+            "object_name": "svc_obj",
+        },
+    )
+    result = service.run_case("native_obj_actions")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="native_obj_actions")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+    problem_id = crash_problems[0]["problem_id"]
+
+    problem = service.get_problem_record(problem_id)
+    next_actions = problem["problem"]["investigation"].get("next_actions", [])
+    action_names = [a["action"] for a in next_actions]
+    assert "inspect_object_status" in action_names
+    assert "inspect_execution_object_artifacts" in action_names
+
+    obj_status_action = next(
+        a for a in next_actions if a["action"] == "inspect_object_status"
+    )
+    assert obj_status_action["object_name"] == "svc_obj"
+
+
+def test_native_crash_next_actions_no_object_when_absent(tmp_path: Path) -> None:
+    """When no object_name, next_actions have no object-related entries."""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "native_no_obj",
+        {
+            "type": "native",
+            "name": "native_no_obj",
+            "command": ["python3", str(script)],
+        },
+    )
+    result = service.run_case("native_no_obj")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="native_no_obj")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+    problem_id = crash_problems[0]["problem_id"]
+
+    problem = service.get_problem_record(problem_id)
+    next_actions = problem["problem"]["investigation"].get("next_actions", [])
+    action_names = [a["action"] for a in next_actions]
+    assert "inspect_object_status" not in action_names
+    assert "inspect_execution_object_artifacts" not in action_names
+    assert "verify_object_binding" not in action_names
+
+
+def test_native_crash_with_service_name_backward_compat(tmp_path: Path) -> None:
+    """Old service_name field still works for crash_dump problem (backward compat)."""
+    service = WorkflowService(tmp_path)
+    service.init_environment()
+    script = _create_crash_script(tmp_path, "abort")
+
+    service.add_case(
+        "native_svc_compat",
+        {
+            "type": "native",
+            "name": "native_svc_compat",
+            "command": ["python3", str(script)],
+            "service_name": "legacy_service",
+        },
+    )
+    result = service.run_case("native_svc_compat")
+    assert result["status"] == "failed"
+
+    problems = service.list_problem_records(case_id="native_svc_compat")
+    crash_problems = [p for p in problems if p["problem_type"] == "crash_dump"]
+    assert len(crash_problems) >= 1
+    problem_id = crash_problems[0]["problem_id"]
+
+    assets = service.get_problem_assets(problem_id)
+    assert assets["success"] is True
+    details = assets["assets"]["details"]
+
+    assert details["crash_target"]["object_name"] == "legacy_service"
+    assert details["crash_target"]["service_name"] == "legacy_service"
+    assert details["object_summary"]["object_found"] is False
+    assert details["object_summary"]["object_name"] == "legacy_service"
