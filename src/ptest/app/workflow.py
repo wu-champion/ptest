@@ -125,11 +125,23 @@ def _apply_output_schema(
         if old_name in result and new_name not in result:
             result[new_name] = result[old_name]
 
-    # 添加元数据记录字段映射关系
-    if "_meta" not in result:
-        result["_meta"] = {}
-    result["_meta"]["field_aliases"] = schema
-    result["_meta"]["deprecated_fields"] = _DEPRECATED_FIELDS
+    # 添加元数据记录字段映射关系（合并而非覆盖）
+    existing_meta = result.get("_meta")
+    if isinstance(existing_meta, dict):
+        # 复制一份，避免就地修改调用方传入的 _meta
+        meta: dict[str, Any] = existing_meta.copy()
+    else:
+        meta = {}
+
+    # 仅在字段不存在时设置，避免覆盖已有元数据
+    if "field_aliases" not in meta:
+        meta["field_aliases"] = schema
+
+    # 废弃字段列表与当前 schema 保持一致
+    if "deprecated_fields" not in meta:
+        meta["deprecated_fields"] = list(schema.keys())
+
+    result["_meta"] = meta
 
     return result
 
@@ -2484,6 +2496,10 @@ class WorkflowService:
         Returns:
             验证历史字典
         """
+        # 验证并规范化参数
+        limit = max(limit, 0)
+        offset = max(offset, 0)
+
         # 获取 problem record
         record = self.storage.get_problem_record(problem_id)
         if record is None:

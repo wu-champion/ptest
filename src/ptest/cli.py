@@ -1460,7 +1460,7 @@ def _handle_problem_command(
 
     print_colored(
         f"✗ Unknown problem action: {args.problem_action}. "
-        f"Available: {PROBLEM_ACTIONS}/bundle/verify",
+        f"Available: {PROBLEM_ACTIONS}",
         91,
     )
     return False

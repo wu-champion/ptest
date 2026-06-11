@@ -8,6 +8,7 @@ Crash Evidence Bundle 模块
 from __future__ import annotations
 
 import json
+import re
 import tarfile
 import tempfile
 from datetime import datetime
@@ -17,6 +18,27 @@ from typing import Any
 from ..core import get_logger
 
 logger = get_logger("bundle")
+
+
+def _sanitize_filename(name: str) -> str:
+    """规范化文件名，移除或替换无效字符。
+
+    Args:
+        name: 原始文件名
+
+    Returns:
+        规范化后的文件名
+    """
+    # 替换路径分隔符和空格
+    sanitized = re.sub(r"[/\\:\s]+", "_", name)
+    # 移除其他特殊字符
+    sanitized = re.sub(r'[<>"|?*]+', "", sanitized)
+    # 移除首尾空格和点
+    sanitized = sanitized.strip(" .")
+    # 如果为空，使用默认值
+    if not sanitized:
+        sanitized = "unknown"
+    return sanitized
 
 
 def _collect_bundle_assets(
@@ -160,7 +182,8 @@ def _create_bundle_archive(
         )
 
         # 创建 tar.gz 归档
-        archive_path = output_path / f"bundle_{manifest['problem_id']}.tar.gz"
+        sanitized_id = _sanitize_filename(manifest["problem_id"])
+        archive_path = output_path / f"bundle_{sanitized_id}.tar.gz"
         with tarfile.open(archive_path, "w:gz") as tar:
             for file_path in tmp_path.iterdir():
                 tar.add(file_path, arcname=file_path.name)
@@ -219,7 +242,7 @@ def export_problem_bundle(
         }
 
     except Exception as e:
-        logger.error(f"Failed to export problem bundle: {e}")
+        logger.exception("Failed to export problem bundle")
         return {
             "success": False,
             "status": "error",
