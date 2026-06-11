@@ -166,7 +166,7 @@ When a native case includes `object_name`, the crash problem is linked to the ma
 - `next_actions` include object-specific investigation entries:
   - `inspect_object_status` — check the object after the crash
   - `inspect_execution_object_artifacts` — review captured artifacts
-  - `verify_object_binding` — when object is not found
+  - `verify_object_binding` — when the object is not found
 - `problem assets`, `problem show` (investigation), and `problem recover` all include `object_summary`
 
 Example case with object linkage:

@@ -8921,12 +8921,14 @@ class WorkflowService:
         if not isinstance(object_name, str) or not object_name:
             return {
                 "object_name": object_name if isinstance(object_name, str) else "",
+                "service_name": object_name if isinstance(object_name, str) else "",
                 "object_found": False,
             }
         record = self.storage.get_object(object_name)
         if record is None:
             return {
                 "object_name": object_name,
+                "service_name": object_name,
                 "object_found": False,
             }
         crash_capture = (
@@ -8938,6 +8940,7 @@ class WorkflowService:
             crash_capture = {}
         return {
             "object_name": object_name,
+            "service_name": object_name,  # 向后兼容：保留 service_name 作为别名
             "object_found": True,
             "type_name": record.type_name,
             "status": record.status,
