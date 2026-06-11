@@ -76,6 +76,18 @@ PROBLEM_ALLOWED_STATUSES: set[str] = {
 
 _MAX_ARTIFACT_IO_BYTES = 1 * 1024 * 1024  # 1 MB
 
+# 字段映射表：原字段名 -> 新字段名
+PROBLEM_OUTPUT_SCHEMA: dict[str, str] = {
+    "preservation_status": "preservation_integrity",
+    "latest_action": "last_recovery_action",
+    "object_refs": "objects",
+    "artifact_refs": "artifacts",
+    "log_refs": "logs",
+}
+
+# 已废弃字段列表
+_DEPRECATED_FIELDS: list[str] = list(PROBLEM_OUTPUT_SCHEMA.keys())
+
 
 def _bounded_copy(src: Path, dst: Path, limit: int) -> bool:
     """Copy at most *limit* bytes from src to dst. Return True if truncated."""
@@ -88,6 +100,38 @@ def _bounded_copy(src: Path, dst: Path, limit: int) -> bool:
             f_out.write(chunk)
             written += len(chunk)
         return bool(f_in.read(1))
+
+
+def _apply_output_schema(
+    payload: dict[str, Any],
+    schema: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """应用字段映射，保留旧字段作为向后兼容。
+
+    Args:
+        payload: 原始 payload
+        schema: 字段映射表，默认使用 PROBLEM_OUTPUT_SCHEMA
+
+    Returns:
+        应用映射后的 payload，包含新旧字段
+    """
+    if schema is None:
+        schema = PROBLEM_OUTPUT_SCHEMA
+
+    result = payload.copy()
+
+    # 应用字段映射：旧字段保留，新增新字段
+    for old_name, new_name in schema.items():
+        if old_name in result and new_name not in result:
+            result[new_name] = result[old_name]
+
+    # 添加元数据记录字段映射关系
+    if "_meta" not in result:
+        result["_meta"] = {}
+    result["_meta"]["field_aliases"] = schema
+    result["_meta"]["deprecated_fields"] = _DEPRECATED_FIELDS
+
+    return result
 
 
 class _ReplayResponseView:
@@ -1815,6 +1859,8 @@ class WorkflowService:
             if isinstance(latest_comparison, dict)
             else None,
         )
+        # 应用字段映射（向后兼容）
+        payload = _apply_output_schema(payload)
         return payload
 
     def _build_problem_asset_summary(
@@ -2130,6 +2176,8 @@ class WorkflowService:
             if isinstance(latest_comparison, dict)
             else None,
         )
+        # 应用字段映射（向后兼容）
+        payload = _apply_output_schema(payload)
         return payload
 
     def _problem_recovery_history_actions(
