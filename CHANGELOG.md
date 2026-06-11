@@ -1,3 +1,34 @@
+## [1.12.0] - 2026-06-12
+
+### Added - 新增功能
+
+- 新增 P5-E Crash Evidence Bundle 能力
+  - 新增 `src/ptest/app/bundle.py` 模块，提供证据包收集和导出功能
+  - 新增 `ptest problem bundle <problem_id>` 命令，导出问题证据包
+  - 新增 `export_problem_bundle()` Python API，支持程序化导出
+  - 证据包格式为 tar.gz，包含 manifest.json、problem_record.json、evidence.json 等
+
+- 新增问题验证历史查询能力
+  - 新增 `ptest problem verify <problem_id>` 命令，查看验证历史
+  - 新增 `get_problem_verification_runs()` Python API，支持分页查询
+  - 验证历史包含趋势分析、复现状态、恢复状态等摘要信息
+
+- 新增字段命名收口能力
+  - 新增 `PROBLEM_OUTPUT_SCHEMA` 字段映射表
+  - 新增 `_apply_output_schema()` 工具函数，支持向后兼容的字段重命名
+  - API 输出同时包含新旧字段名，确保向后兼容
+
+### Changed - 改进
+
+- 增强 `_problem_record_payload()`，应用字段映射
+- 增强 `_problem_assets_payload()`，应用字段映射
+- 增强 `_build_problem_asset_summary()`，应用字段映射
+- CLI `ptest problem` 命令新增 `bundle` 和 `verify` 子命令
+
+### Fixed - 修复
+
+- 无
+
 ## [1.11.0] - 2026-06-11
 
 ### Added - 新增功能

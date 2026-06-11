@@ -76,6 +76,18 @@ PROBLEM_ALLOWED_STATUSES: set[str] = {
 
 _MAX_ARTIFACT_IO_BYTES = 1 * 1024 * 1024  # 1 MB
 
+# 字段映射表：原字段名 -> 新字段名
+PROBLEM_OUTPUT_SCHEMA: dict[str, str] = {
+    "preservation_status": "preservation_integrity",
+    "latest_action": "last_recovery_action",
+    "object_refs": "objects",
+    "artifact_refs": "artifacts",
+    "log_refs": "logs",
+}
+
+# 已废弃字段列表
+_DEPRECATED_FIELDS: list[str] = list(PROBLEM_OUTPUT_SCHEMA.keys())
+
 
 def _bounded_copy(src: Path, dst: Path, limit: int) -> bool:
     """Copy at most *limit* bytes from src to dst. Return True if truncated."""
@@ -88,6 +100,50 @@ def _bounded_copy(src: Path, dst: Path, limit: int) -> bool:
             f_out.write(chunk)
             written += len(chunk)
         return bool(f_in.read(1))
+
+
+def _apply_output_schema(
+    payload: dict[str, Any],
+    schema: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """应用字段映射，保留旧字段作为向后兼容。
+
+    Args:
+        payload: 原始 payload
+        schema: 字段映射表，默认使用 PROBLEM_OUTPUT_SCHEMA
+
+    Returns:
+        应用映射后的 payload，包含新旧字段
+    """
+    if schema is None:
+        schema = PROBLEM_OUTPUT_SCHEMA
+
+    result = payload.copy()
+
+    # 应用字段映射：旧字段保留，新增新字段
+    for old_name, new_name in schema.items():
+        if old_name in result and new_name not in result:
+            result[new_name] = result[old_name]
+
+    # 添加元数据记录字段映射关系（合并而非覆盖）
+    existing_meta = result.get("_meta")
+    if isinstance(existing_meta, dict):
+        # 复制一份，避免就地修改调用方传入的 _meta
+        meta: dict[str, Any] = existing_meta.copy()
+    else:
+        meta = {}
+
+    # 仅在字段不存在时设置，避免覆盖已有元数据
+    if "field_aliases" not in meta:
+        meta["field_aliases"] = schema
+
+    # 废弃字段列表与当前 schema 保持一致
+    if "deprecated_fields" not in meta:
+        meta["deprecated_fields"] = list(schema.keys())
+
+    result["_meta"] = meta
+
+    return result
 
 
 class _ReplayResponseView:
@@ -1815,6 +1871,8 @@ class WorkflowService:
             if isinstance(latest_comparison, dict)
             else None,
         )
+        # 应用字段映射（向后兼容）
+        payload = _apply_output_schema(payload)
         return payload
 
     def _build_problem_asset_summary(
@@ -1878,6 +1936,8 @@ class WorkflowService:
         }
         if load_error:
             result["error"] = load_error
+        # 应用字段映射（向后兼容）
+        result = _apply_output_schema(result)
         return result
 
     def _build_problem_collection_summary(
@@ -2130,6 +2190,8 @@ class WorkflowService:
             if isinstance(latest_comparison, dict)
             else None,
         )
+        # 应用字段映射（向后兼容）
+        payload = _apply_output_schema(payload)
         return payload
 
     def _problem_recovery_history_actions(
@@ -2418,6 +2480,55 @@ class WorkflowService:
             recovery_action=recovery.to_dict(),
         )
 
+    def get_problem_verification_runs(
+        self,
+        problem_id: str,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """获取问题验证历史。
+
+        Args:
+            problem_id: 问题 ID
+            limit: 返回数量限制
+            offset: 偏移量
+
+        Returns:
+            验证历史字典
+        """
+        # 验证并规范化参数
+        limit = max(limit, 0)
+        offset = max(offset, 0)
+
+        # 获取 problem record
+        record = self.storage.get_problem_record(problem_id)
+        if record is None:
+            return self._not_found_result("problem", problem_id)
+
+        # 获取验证 runs
+        all_runs = self._build_problem_verification_runs(problem_id)
+
+        # 分页
+        total = len(all_runs)
+        runs = all_runs[offset : offset + limit]
+
+        # 构建摘要
+        summary = self._build_history_verification_summary(all_runs)
+
+        return self._operation_result(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(runs)} verification runs for problem '{problem_id}'",
+            data={
+                "problem_id": problem_id,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "runs": runs,
+                "summary": summary,
+            },
+        )
+
     def replay_problem(self, problem_id: str) -> dict[str, Any]:
         record = self.storage.get_problem_record(problem_id)
         if record is None:
@@ -2587,6 +2698,52 @@ class WorkflowService:
             recovery=recovery,
             recovery_action=recovery_action.to_dict(),
         )
+
+    def export_problem_bundle(
+        self,
+        problem_id: str,
+        output_path: str | Path | None = None,
+    ) -> dict[str, Any]:
+        """导出问题证据包。
+
+        Args:
+            problem_id: 问题 ID
+            output_path: 输出目录路径，默认为工作区根目录
+
+        Returns:
+            导出结果字典
+        """
+        from .bundle import export_problem_bundle as _export_bundle
+
+        # 获取 problem record
+        record = self.storage.get_problem_record(problem_id)
+        if record is None:
+            return self._not_found_result("problem", problem_id)
+
+        # 获取 problem assets
+        assets = self.storage.get_problem_assets(problem_id)
+        if assets is None:
+            return self._not_found_result("problem_assets", problem_id)
+
+        # 获取 recovery history
+        history_records = self.storage.list_problem_recovery_history(problem_id)
+        recovery_history = [r.to_dict() for r in history_records]
+
+        # 确定输出路径
+        if output_path is None:
+            output_path = self.root_path
+        output_path = Path(output_path)
+
+        # 调用 bundle 模块导出
+        result = _export_bundle(
+            problem_id=problem_id,
+            problem_record=record.to_dict(),
+            problem_assets=assets.to_dict(),
+            recovery_history=recovery_history,
+            output_path=output_path,
+        )
+
+        return result
 
     def destroy_environment(self) -> dict[str, Any]:
         record = self.storage.load_environment()
