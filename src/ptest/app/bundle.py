@@ -119,7 +119,9 @@ def _create_bundle_archive(
         # 写入 recovery_history.json
         history_path = tmp_path / "recovery_history.json"
         history_path.write_text(
-            json.dumps(assets.get("recovery_history", []), indent=2, ensure_ascii=False),
+            json.dumps(
+                assets.get("recovery_history", []), indent=2, ensure_ascii=False
+            ),
             encoding="utf-8",
         )
         manifest["files"].append({"name": "recovery_history.json", "type": "json"})
