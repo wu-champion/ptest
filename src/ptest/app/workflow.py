@@ -1924,6 +1924,8 @@ class WorkflowService:
         }
         if load_error:
             result["error"] = load_error
+        # 应用字段映射（向后兼容）
+        result = _apply_output_schema(result)
         return result
 
     def _build_problem_collection_summary(
