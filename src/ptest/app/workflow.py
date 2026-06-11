@@ -2468,6 +2468,51 @@ class WorkflowService:
             recovery_action=recovery.to_dict(),
         )
 
+    def get_problem_verification_runs(
+        self,
+        problem_id: str,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """获取问题验证历史。
+
+        Args:
+            problem_id: 问题 ID
+            limit: 返回数量限制
+            offset: 偏移量
+
+        Returns:
+            验证历史字典
+        """
+        # 获取 problem record
+        record = self.storage.get_problem_record(problem_id)
+        if record is None:
+            return self._not_found_result("problem", problem_id)
+
+        # 获取验证 runs
+        all_runs = self._build_problem_verification_runs(problem_id)
+
+        # 分页
+        total = len(all_runs)
+        runs = all_runs[offset : offset + limit]
+
+        # 构建摘要
+        summary = self._build_history_verification_summary(all_runs)
+
+        return self._operation_result(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(runs)} verification runs for problem '{problem_id}'",
+            data={
+                "problem_id": problem_id,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "runs": runs,
+                "summary": summary,
+            },
+        )
+
     def replay_problem(self, problem_id: str) -> dict[str, Any]:
         record = self.storage.get_problem_record(problem_id)
         if record is None:

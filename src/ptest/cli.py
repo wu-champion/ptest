@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .cases.manager import CaseManager
     from .environment import EnvironmentManager
 
-PROBLEM_ACTIONS = "list/show/assets/replay/recover/history/update/bundle"
+PROBLEM_ACTIONS = "list/show/assets/replay/recover/history/update/bundle/verify"
 
 
 @dataclass(frozen=True)
@@ -482,6 +482,19 @@ def setup_cli() -> argparse.ArgumentParser:
     problem_bundle_parser.add_argument("problem_id", help="Problem ID")
     problem_bundle_parser.add_argument(
         "--output", help="Output directory path (default: workspace root)"
+    )
+
+    problem_verify_parser = problem_subparsers.add_parser(
+        "verify",
+        help="List problem verification runs",
+        parents=[workspace_parent],
+    )
+    problem_verify_parser.add_argument("problem_id", help="Problem ID")
+    problem_verify_parser.add_argument(
+        "--limit", type=int, default=10, help="Max number of runs to show"
+    )
+    problem_verify_parser.add_argument(
+        "--offset", type=int, default=0, help="Offset for pagination"
     )
 
     # suite commands
@@ -1433,9 +1446,21 @@ def _handle_problem_command(
             print(json.dumps(result["data"], indent=2, ensure_ascii=False))
         return True
 
+    if args.problem_action == "verify":
+        limit = getattr(args, "limit", 10)
+        offset = getattr(args, "offset", 0)
+        result = service.get_problem_verification_runs(
+            args.problem_id, limit=limit, offset=offset
+        )
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print(json.dumps(result["data"], indent=2, ensure_ascii=False))
+        return True
+
     print_colored(
         f"✗ Unknown problem action: {args.problem_action}. "
-        f"Available: {PROBLEM_ACTIONS}/bundle",
+        f"Available: {PROBLEM_ACTIONS}/bundle/verify",
         91,
     )
     return False

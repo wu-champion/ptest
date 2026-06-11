@@ -263,6 +263,26 @@ class PTestAPI:
             data=issues,
         )
 
+    def get_problem_verification_runs(
+        self,
+        problem_id: str,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """获取问题验证历史"""
+        result = self.workflow.get_problem_verification_runs(
+            problem_id,
+            limit=limit,
+            offset=offset,
+        )
+        return self._api_response(
+            success=result.get("success", False),
+            status=result.get("status", "error"),
+            message=result.get("message", "Failed to get verification runs"),
+            data=result.get("data"),
+            error=result.get("error"),
+        )
+
     def export_problem_bundle(
         self,
         problem_id: str,
