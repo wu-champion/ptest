@@ -367,3 +367,64 @@ class TestHistoryVerificationSummary:
         summary = WorkflowService._build_history_verification_summary(runs)
 
         assert summary["inconclusive_count"] == 2
+
+
+class TestGetProblemVerificationRunsEdgeCases:
+    """测试 limit/offset 边界条件"""
+
+    def test_negative_limit_normalized_to_zero(
+        self, workflow: WorkflowService, problem_with_replays: str
+    ):
+        """测试：负数 limit 规范化为 0"""
+        result = workflow.get_problem_verification_runs(
+            problem_with_replays, limit=-1
+        )
+
+        assert result["success"] is True
+        assert result["data"]["runs"] == []
+
+    def test_negative_offset_normalized_to_zero(
+        self, workflow: WorkflowService, problem_with_replays: str
+    ):
+        """测试：负数 offset 规范化为 0"""
+        result = workflow.get_problem_verification_runs(
+            problem_with_replays, offset=-5
+        )
+
+        assert result["success"] is True
+        assert len(result["data"]["runs"]) == 3  # 返回全部
+
+    def test_zero_limit_returns_empty(
+        self, workflow: WorkflowService, problem_with_replays: str
+    ):
+        """测试：limit=0 返回空列表"""
+        result = workflow.get_problem_verification_runs(
+            problem_with_replays, limit=0
+        )
+
+        assert result["success"] is True
+        assert result["data"]["runs"] == []
+        assert result["data"]["total"] == 3
+
+    def test_limit_exceeds_total(
+        self, workflow: WorkflowService, problem_with_replays: str
+    ):
+        """测试：limit 超过总数返回全部"""
+        result = workflow.get_problem_verification_runs(
+            problem_with_replays, limit=100
+        )
+
+        assert result["success"] is True
+        assert len(result["data"]["runs"]) == 3
+
+    def test_offset_exceeds_total(
+        self, workflow: WorkflowService, problem_with_replays: str
+    ):
+        """测试：offset 超过总数返回空"""
+        result = workflow.get_problem_verification_runs(
+            problem_with_replays, offset=100
+        )
+
+        assert result["success"] is True
+        assert result["data"]["runs"] == []
+        assert result["data"]["total"] == 3
