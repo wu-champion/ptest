@@ -232,6 +232,37 @@ class PTestAPI:
             data=objects,
         )
 
+    def get_object_crash_info(self, object_name: str) -> dict[str, Any]:
+        """获取 object 的 crash 联动信息"""
+        result = self.workflow.get_object_crash_info(object_name)
+        return self._api_response(
+            success=result.get("object_found", False),
+            status="ok" if result.get("object_found") else "not_found",
+            message=f"Crash info retrieved for object '{object_name}'"
+            if result.get("object_found")
+            else f"Object '{object_name}' not found",
+            data=result,
+        )
+
+    def list_object_issues(
+        self,
+        object_name: str,
+        problem_type: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """列出 object 关联的 problem 记录"""
+        issues = self.workflow.list_object_issues(
+            object_name,
+            problem_type=problem_type,
+            limit=limit,
+        )
+        return self._api_response(
+            success=True,
+            status="ok",
+            message=f"Retrieved {len(issues)} issues for object '{object_name}'",
+            data=issues,
+        )
+
     def install_tool(self, name: str, **kwargs: Any) -> dict[str, Any]:
         return self.workflow.install_tool(name, kwargs)
 

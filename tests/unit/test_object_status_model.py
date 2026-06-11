@@ -7,6 +7,7 @@ from ptest.models import (
     OBJECT_NORMAL_STATUSES,
     OBJECT_RESETTABLE_STATUSES,
     OBJECT_STATUS_CREATED,
+    OBJECT_STATUS_CRASH_PRESERVED,
     OBJECT_STATUS_INSTALL_FAILED_PRESERVED,
     OBJECT_STATUS_INSTALLED,
     OBJECT_STATUS_RUNNING,
@@ -41,6 +42,7 @@ def test_failure_preserved_statuses_are_classified_consistently() -> None:
     assert OBJECT_FAILURE_PRESERVED_STATUSES == {
         OBJECT_STATUS_INSTALL_FAILED_PRESERVED,
         OBJECT_STATUS_START_FAILED_PRESERVED,
+        OBJECT_STATUS_CRASH_PRESERVED,
     }
     assert (
         is_failure_preserved_object_status(OBJECT_STATUS_INSTALL_FAILED_PRESERVED)
@@ -49,6 +51,9 @@ def test_failure_preserved_statuses_are_classified_consistently() -> None:
     assert (
         is_failure_preserved_object_status(OBJECT_STATUS_START_FAILED_PRESERVED) is True
     )
+    assert (
+        is_failure_preserved_object_status(OBJECT_STATUS_CRASH_PRESERVED) is True
+    )
     assert is_failure_preserved_object_status(OBJECT_STATUS_RUNNING) is False
 
 
@@ -56,6 +61,7 @@ def test_clearable_and_resettable_status_sets_match_phase_one_scope() -> None:
     assert OBJECT_CLEARABLE_STATUSES == OBJECT_FAILURE_PRESERVED_STATUSES
     assert is_clearable_object_status(OBJECT_STATUS_INSTALL_FAILED_PRESERVED) is True
     assert is_clearable_object_status(OBJECT_STATUS_START_FAILED_PRESERVED) is True
+    assert is_clearable_object_status(OBJECT_STATUS_CRASH_PRESERVED) is True
     assert is_clearable_object_status(OBJECT_STATUS_INSTALLED) is False
 
     assert OBJECT_RESETTABLE_STATUSES == {
@@ -64,10 +70,12 @@ def test_clearable_and_resettable_status_sets_match_phase_one_scope() -> None:
         OBJECT_STATUS_STOPPED,
         OBJECT_STATUS_INSTALL_FAILED_PRESERVED,
         OBJECT_STATUS_START_FAILED_PRESERVED,
+        OBJECT_STATUS_CRASH_PRESERVED,
     }
     assert is_resettable_object_status(OBJECT_STATUS_INSTALLED) is True
     assert is_resettable_object_status(OBJECT_STATUS_RUNNING) is True
     assert is_resettable_object_status(OBJECT_STATUS_STOPPED) is True
     assert is_resettable_object_status(OBJECT_STATUS_INSTALL_FAILED_PRESERVED) is True
     assert is_resettable_object_status(OBJECT_STATUS_START_FAILED_PRESERVED) is True
+    assert is_resettable_object_status(OBJECT_STATUS_CRASH_PRESERVED) is True
     assert is_resettable_object_status(OBJECT_STATUS_CREATED) is False

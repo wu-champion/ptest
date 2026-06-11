@@ -217,6 +217,17 @@ def setup_cli() -> argparse.ArgumentParser:
         help="Preflight scope (default: start)",
     )
 
+    issues_obj_parser = obj_subparsers.add_parser(
+        "issues", help="List object related issues", parents=[workspace_parent]
+    )
+    issues_obj_parser.add_argument("name", help="Object name")
+    issues_obj_parser.add_argument(
+        "--type", dest="problem_type", help="Filter by problem type"
+    )
+    issues_obj_parser.add_argument(
+        "--limit", type=int, default=10, help="Max number of issues to show"
+    )
+
     tool_parser = subparsers.add_parser(
         "tool",
         help=get_colored_text("Manage test tools", 92),
@@ -985,6 +996,31 @@ def _handle_object_command(
             print(json.dumps(preflight, indent=2, ensure_ascii=False))
         return result["success"]
 
+    if args.obj_action == "issues":
+        issues = service.list_object_issues(
+            args.name,
+            problem_type=getattr(args, "problem_type", None),
+            limit=getattr(args, "limit", 10),
+        )
+        print(f"\nIssues for object: {args.name}\n")
+        if not issues:
+            print("No issues found.")
+            return True
+
+        # 表格格式
+        print("┌────────────┬────────────┬──────────┬─────────────────────┐")
+        print("│ ID         │ Type       │ Status   │ Created             │")
+        print("├────────────┼────────────┼──────────┼─────────────────────┤")
+        for issue in issues:
+            problem_id = issue["problem_id"][:10]
+            problem_type = issue["problem_type"][:10]
+            status = issue["status"][:8]
+            created_at = issue["created_at"][:19]
+            print(f"│ {problem_id:<10} │ {problem_type:<10} │ {status:<8} │ {created_at:<19} │")
+        print("└────────────┴────────────┴──────────┴─────────────────────┘")
+        print(f"\nTotal: {len(issues)} issues")
+        return True
+
     action_handlers = {
         "start": service.start_object,
         "stop": service.stop_object,
@@ -1002,9 +1038,44 @@ def _handle_object_command(
     result = handler(args.name)
     if "message" in result:
         print_colored(result["message"], 92 if result.get("success") else 91)
-    else:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    if "object" in result:
+
+    # 增强 status 输出
+    if args.obj_action == "status" and result.get("success"):
+        obj_data = result.get("object", {})
+        if isinstance(obj_data, dict):
+            # 基本信息
+            print(f"\nObject: {obj_data.get('name', '')}")
+            print(f"Type:       {obj_data.get('type_name', '')}")
+            print(f"Status:     {obj_data.get('status', '')}")
+            print(f"Installed:  {obj_data.get('installed', False)}")
+            print(f"Updated:    {obj_data.get('updated_at', '')}")
+
+            # crash 信息
+            crash_info = obj_data.get("crash_info")
+            if crash_info:
+                print("\nCrash Information:")
+                print("┌─────────────────┬─────────────────────────────────┐")
+                print(f"│ Last Crash      │ {crash_info.get('last_crash_time', 'N/A'):<31} │")
+                print(f"│ Crash Count     │ {crash_info.get('crash_count', 0):<31} │")
+                print(f"│ Last Problem    │ {crash_info.get('last_problem_id', 'N/A'):<31} │")
+                print(f"│ Dump Directory  │ {crash_info.get('dump_dir', 'N/A'):<31} │")
+                print("└─────────────────┴─────────────────────────────────┘")
+
+            # linked problems
+            linked_problems = obj_data.get("linked_problems")
+            if linked_problems:
+                print("\nRecent Issues:")
+                print("┌────────────┬────────────┬──────────┬─────────────────────┐")
+                print("│ ID         │ Type       │ Status   │ Created             │")
+                print("├────────────┼────────────┼──────────┼─────────────────────┤")
+                for prob in linked_problems[:5]:
+                    problem_id = str(prob.get("problem_id", ""))[:10]
+                    problem_type = str(prob.get("problem_type", ""))[:10]
+                    status = str(prob.get("status", ""))[:8]
+                    created_at = str(prob.get("created_at", ""))[:19]
+                    print(f"│ {problem_id:<10} │ {problem_type:<10} │ {status:<8} │ {created_at:<19} │")
+                print("└────────────┴────────────┴──────────┴─────────────────────┘")
+    elif "object" in result:
         print(json.dumps(result["object"], indent=2, ensure_ascii=False))
     return bool(result.get("success", True))
 
