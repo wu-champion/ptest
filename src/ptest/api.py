@@ -263,6 +263,21 @@ class PTestAPI:
             data=issues,
         )
 
+    def export_problem_bundle(
+        self,
+        problem_id: str,
+        output_path: str | Path | None = None,
+    ) -> dict[str, Any]:
+        """导出问题证据包"""
+        result = self.workflow.export_problem_bundle(problem_id, output_path)
+        return self._api_response(
+            success=result.get("success", False),
+            status=result.get("status", "error"),
+            message=result.get("message", "Export failed"),
+            data=result.get("data"),
+            error=result.get("error"),
+        )
+
     def install_tool(self, name: str, **kwargs: Any) -> dict[str, Any]:
         return self.workflow.install_tool(name, kwargs)
 

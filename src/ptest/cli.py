@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .cases.manager import CaseManager
     from .environment import EnvironmentManager
 
-PROBLEM_ACTIONS = "list/show/assets/replay/recover/history/update"
+PROBLEM_ACTIONS = "list/show/assets/replay/recover/history/update/bundle"
 
 
 @dataclass(frozen=True)
@@ -472,6 +472,16 @@ def setup_cli() -> argparse.ArgumentParser:
     )
     problem_update_parser.add_argument(
         "--notes", help="Investigation notes (replaces existing notes)"
+    )
+
+    problem_bundle_parser = problem_subparsers.add_parser(
+        "bundle",
+        help="Export problem evidence bundle",
+        parents=[workspace_parent],
+    )
+    problem_bundle_parser.add_argument("problem_id", help="Problem ID")
+    problem_bundle_parser.add_argument(
+        "--output", help="Output directory path (default: workspace root)"
     )
 
     # suite commands
@@ -1412,9 +1422,20 @@ def _handle_problem_command(
         print(json.dumps(result["problem"], indent=2, ensure_ascii=False))
         return True
 
+    if args.problem_action == "bundle":
+        output_path = getattr(args, "output", None)
+        result = service.export_problem_bundle(args.problem_id, output_path)
+        if not result["success"]:
+            print_colored(result["message"], 91)
+            return False
+        print_colored(result["message"], 92)
+        if result.get("data"):
+            print(json.dumps(result["data"], indent=2, ensure_ascii=False))
+        return True
+
     print_colored(
         f"✗ Unknown problem action: {args.problem_action}. "
-        f"Available: {PROBLEM_ACTIONS}",
+        f"Available: {PROBLEM_ACTIONS}/bundle",
         91,
     )
     return False

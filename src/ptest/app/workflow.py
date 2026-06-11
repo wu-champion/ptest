@@ -2638,6 +2638,52 @@ class WorkflowService:
             recovery_action=recovery_action.to_dict(),
         )
 
+    def export_problem_bundle(
+        self,
+        problem_id: str,
+        output_path: str | Path | None = None,
+    ) -> dict[str, Any]:
+        """导出问题证据包。
+
+        Args:
+            problem_id: 问题 ID
+            output_path: 输出目录路径，默认为工作区根目录
+
+        Returns:
+            导出结果字典
+        """
+        from .bundle import export_problem_bundle as _export_bundle
+
+        # 获取 problem record
+        record = self.storage.get_problem_record(problem_id)
+        if record is None:
+            return self._not_found_result("problem", problem_id)
+
+        # 获取 problem assets
+        assets = self.storage.get_problem_assets(problem_id)
+        if assets is None:
+            return self._not_found_result("problem_assets", problem_id)
+
+        # 获取 recovery history
+        history_records = self.storage.list_problem_recovery_history(problem_id)
+        recovery_history = [r.to_dict() for r in history_records]
+
+        # 确定输出路径
+        if output_path is None:
+            output_path = self.root_path
+        output_path = Path(output_path)
+
+        # 调用 bundle 模块导出
+        result = _export_bundle(
+            problem_id=problem_id,
+            problem_record=record.to_dict(),
+            problem_assets=assets.to_dict(),
+            recovery_history=recovery_history,
+            output_path=output_path,
+        )
+
+        return result
+
     def destroy_environment(self) -> dict[str, Any]:
         record = self.storage.load_environment()
         if record is None:
