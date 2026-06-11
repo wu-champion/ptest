@@ -9092,12 +9092,20 @@ class WorkflowService:
             else {}
         )
         if not isinstance(crash_capture, dict) or not crash_capture:
-            return {"object_name": object_name, "object_found": True, "crash_info": None}
+            return {
+                "object_name": object_name,
+                "object_found": True,
+                "crash_info": None,
+            }
 
         # 只有当 crash_count > 0 时才返回 crash_info
         crash_count = crash_capture.get("crash_count", 0)
         if not crash_count or crash_count == 0:
-            return {"object_name": object_name, "object_found": True, "crash_info": None}
+            return {
+                "object_name": object_name,
+                "object_found": True,
+                "crash_info": None,
+            }
 
         return {
             "object_name": object_name,

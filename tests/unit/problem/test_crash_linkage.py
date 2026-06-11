@@ -261,9 +261,7 @@ class TestGetObjectCrashInfo:
         result = workflow.get_object_crash_info("nonexistent")
         assert result["object_found"] is False
 
-    def test_get_crash_info_no_crash(
-        self, workflow: WorkflowService, installed_object
-    ):
+    def test_get_crash_info_no_crash(self, workflow: WorkflowService, installed_object):
         """测试：无 crash 信息时返回 None"""
         result = workflow.get_object_crash_info("mysql_demo")
         assert result["object_found"] is True
@@ -302,9 +300,7 @@ class TestGetObjectStatusWithCrashInfo:
         assert result["success"] is True
         assert "crash_info" not in result.get("object", {})
 
-    def test_status_with_crash_info(
-        self, workflow: WorkflowService, installed_object
-    ):
+    def test_status_with_crash_info(self, workflow: WorkflowService, installed_object):
         """测试：有 crash 信息时 status 包含 crash_info"""
         # 模拟 crash
         workflow._update_object_after_crash(
@@ -462,9 +458,7 @@ class TestObjectSummaryBackwardCompatibility:
 class TestCrashLinkageIntegration:
     """集成测试：crash 联动完整流程"""
 
-    def test_crash_updates_object_and_creates_problem(
-        self, workflow: WorkflowService
-    ):
+    def test_crash_updates_object_and_creates_problem(self, workflow: WorkflowService):
         """测试：crash 后同时更新 object 和创建 problem"""
         # 安装 object
         workflow.install_object(

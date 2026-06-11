@@ -51,9 +51,7 @@ def test_failure_preserved_statuses_are_classified_consistently() -> None:
     assert (
         is_failure_preserved_object_status(OBJECT_STATUS_START_FAILED_PRESERVED) is True
     )
-    assert (
-        is_failure_preserved_object_status(OBJECT_STATUS_CRASH_PRESERVED) is True
-    )
+    assert is_failure_preserved_object_status(OBJECT_STATUS_CRASH_PRESERVED) is True
     assert is_failure_preserved_object_status(OBJECT_STATUS_RUNNING) is False
 
 

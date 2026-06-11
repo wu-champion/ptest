@@ -1016,7 +1016,9 @@ def _handle_object_command(
             problem_type = issue["problem_type"][:10]
             status = issue["status"][:8]
             created_at = issue["created_at"][:19]
-            print(f"│ {problem_id:<10} │ {problem_type:<10} │ {status:<8} │ {created_at:<19} │")
+            print(
+                f"│ {problem_id:<10} │ {problem_type:<10} │ {status:<8} │ {created_at:<19} │"
+            )
         print("└────────────┴────────────┴──────────┴─────────────────────┘")
         print(f"\nTotal: {len(issues)} issues")
         return True
@@ -1055,9 +1057,13 @@ def _handle_object_command(
             if crash_info:
                 print("\nCrash Information:")
                 print("┌─────────────────┬─────────────────────────────────┐")
-                print(f"│ Last Crash      │ {crash_info.get('last_crash_time', 'N/A'):<31} │")
+                print(
+                    f"│ Last Crash      │ {crash_info.get('last_crash_time', 'N/A'):<31} │"
+                )
                 print(f"│ Crash Count     │ {crash_info.get('crash_count', 0):<31} │")
-                print(f"│ Last Problem    │ {crash_info.get('last_problem_id', 'N/A'):<31} │")
+                print(
+                    f"│ Last Problem    │ {crash_info.get('last_problem_id', 'N/A'):<31} │"
+                )
                 print(f"│ Dump Directory  │ {crash_info.get('dump_dir', 'N/A'):<31} │")
                 print("└─────────────────┴─────────────────────────────────┘")
 
@@ -1073,7 +1079,9 @@ def _handle_object_command(
                     problem_type = str(prob.get("problem_type", ""))[:10]
                     status = str(prob.get("status", ""))[:8]
                     created_at = str(prob.get("created_at", ""))[:19]
-                    print(f"│ {problem_id:<10} │ {problem_type:<10} │ {status:<8} │ {created_at:<19} │")
+                    print(
+                        f"│ {problem_id:<10} │ {problem_type:<10} │ {status:<8} │ {created_at:<19} │"
+                    )
                 print("└────────────┴────────────┴──────────┴─────────────────────┘")
     elif "object" in result:
         print(json.dumps(result["object"], indent=2, ensure_ascii=False))
