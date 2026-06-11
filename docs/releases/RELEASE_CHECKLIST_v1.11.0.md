@@ -45,85 +45,75 @@ git pull origin feature/19-native-crash-capture
 git status
 ```
 
-### 2.2 创建发布分支
+### 2.2 创建 Pull Request
 
 ```bash
-# 1. 创建发布分支
-git checkout -b release/v1.11.0
+# 1. 推送分支到远程
+git push origin feature/19-native-crash-capture
 
-# 2. 推送发布分支
-git push origin release/v1.11.0
+# 2. 在 GitHub 上创建 Pull Request
+#    - 标题: feat: P5-D 受管对象 Crash 联动
+#    - 目标分支: main
+#    - 描述: 包含发布说明
 ```
 
-### 2.3 合并到 main
+### 2.3 合并 Pull Request
 
-```bash
-# 1. 切换到 main 分支
-git checkout main
+1. 在 GitHub 上审核 Pull Request
+2. 确认所有 CI 检查通过
+3. 合并 Pull Request 到 main
 
-# 2. 拉取最新代码
-git pull origin main
+### 2.4 自动发布机制
 
-# 3. 合并发布分支
-git merge release/v1.11.0
+**重要**: 本项目使用自动发布机制，无需手动创建 tag！
 
-# 4. 推送到远程
-git push origin main
-```
+当 `main` 分支的 `pyproject.toml` 或 `CHANGELOG.md` 变更时，会自动触发 `release-on-main.yml` 工作流：
 
-### 2.4 创建标签
+1. **检查版本号**: 从 `pyproject.toml` 读取版本号
+2. **检查标签**: 检查远端是否已存在该版本标签
+3. **CI 检查**: 运行完整的 CI 测试
+4. **构建包**: 构建 Python 包
+5. **发布到 PyPI**: 自动发布到 PyPI
+6. **创建标签**: 自动创建 `v1.11.0` 标签
+7. **创建 Release**: 自动创建 GitHub Release
 
-```bash
-# 1. 创建标签
-git tag -a v1.11.0 -m "Release v1.11.0: P5-D 受管对象 Crash 联动"
-
-# 2. 推送标签
-git push origin v1.11.0
-```
+**注意**: 
+- 标签由 GitHub Actions 自动创建，无需手动操作
+- 如果标签已存在，会跳过自动发布
+- Release notes 从 `.github/release-notes/v1.11.0.md` 读取
 
 ---
 
-## 3. 构建和发布
+## 3. 自动构建和发布
 
-### 3.1 构建包
+**重要**: 以下步骤由 GitHub Actions 自动执行，无需手动操作！
 
-```bash
-# 1. 清理旧构建
-rm -rf dist/ build/ *.egg-info
+### 3.1 自动触发条件
 
-# 2. 构建包
-uv build
+当 `main` 分支发生以下变更时，会自动触发发布：
+- `pyproject.toml` 文件变更
+- `CHANGELOG.md` 文件变更
 
-# 3. 检查包
-ls -la dist/
-```
+### 3.2 自动执行流程
 
-### 3.2 发布到 PyPI
+1. **CI 检查**: 运行完整的 CI 测试
+2. **构建包**: 自动构建 Python 包
+3. **发布到 PyPI**: 自动发布到 PyPI
+4. **创建标签**: 自动创建 `v1.11.0` 标签
+5. **创建 Release**: 自动创建 GitHub Release
 
-```bash
-# 1. 安装 twine
-uv pip install twine
+### 3.3 手动触发（可选）
 
-# 2. 检查包
-twine check dist/*
+如果需要手动触发发布，可以使用 `cd.yml` 工作流：
 
-# 3. 发布到 PyPI
-twine upload dist/*
-```
+1. 进入 GitHub 仓库
+2. 点击 "Actions"
+3. 选择 "CD - 发布到 PyPI"
+4. 点击 "Run workflow"
+5. 选择版本类型（patch/minor/major）
+6. 点击 "Run workflow"
 
-### 3.3 构建 Docker 镜像
-
-```bash
-# 1. 构建镜像
-docker build -t ptest:1.11.0 .
-
-# 2. 标记镜像
-docker tag ptest:1.11.0 ptest:latest
-
-# 3. 推送镜像
-docker push ptest:1.11.0
-docker push ptest:latest
-```
+**注意**: 手动触发会创建新的 Release，但不会自动更新版本号。
 
 ---
 
@@ -282,22 +272,28 @@ pip install ptestx==1.10.1
 - [x] 测试检查通过
 - [x] 文档检查通过
 - [x] 版本号检查通过
+- [x] CHANGELOG 更新
+- [x] Release Notes 准备
 
-### 8.2 发布中
+### 8.2 发布中（手动操作）
 
-- [ ] 分支创建
-- [ ] 代码合并
-- [ ] 标签创建
-- [ ] 包构建
-- [ ] PyPI 发布
-- [ ] Docker 发布
+- [ ] 创建 Pull Request
+- [ ] 审核 Pull Request
+- [ ] 合并 Pull Request 到 main
 
-### 8.3 发布后
+### 8.3 发布中（自动执行）
+
+- [ ] CI 检查通过
+- [ ] 包构建成功
+- [ ] PyPI 发布成功
+- [ ] 标签自动创建
+- [ ] GitHub Release 自动创建
+
+### 8.4 发布后
 
 - [ ] PyPI 验证
-- [ ] Docker 验证
+- [ ] GitHub Release 验证
 - [ ] 功能验证
-- [ ] GitHub Release 创建
 - [ ] 通知发送
 
 ---
